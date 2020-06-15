@@ -1,0 +1,2 @@
+rscript = Rscript
+reformat=/opt/bbmap/reformat.sh

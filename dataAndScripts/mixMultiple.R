@@ -1,27 +1,35 @@
-library(dplyr)
-library(stringr)
-library(tidyr)
+#!/usr/bin/env Rscript
+args = commandArgs(trailingOnly=TRUE)
+
+suppressPackageStartupMessages(library(dplyr))
+suppressPackageStartupMessages(library(stringr))
+suppressPackageStartupMessages(library(tidyr))
 
 message("WARNING REPLACE mnt")
 
 #Variables from script
-baseFolder = "/mnt/d/Documents/wslData/meta2amr"
-inputFile = "/mnt/d/Documents/wslData/test/input.csv"
-outputFile = "/mnt/d/Documents/wslData/test/mixedSample1.fastq.gz"
-bbmap = "/opt/bbmap"
+baseFolder = as.character(args[[1]])
+inputFile = as.character(args[[2]])
+outputFile = as.character(args[[3]])
+reformatScript = "/opt/bbmap/reformat.sh"
+readLimit = 0
 
-# baseFolder = "D:/Documents/wslData/meta2amr"
-# inputFile = "D:/Documents/wslData/test/input.csv"
-# outputFile = "D:/Documents/wslData/test/mixedSample1.fastq.gz"
+# baseFolder = "/mnt/d/Documents/wslData/meta2amr"
+# inputFile = "/mnt/d/Documents/wslData/test/input.csv"
+# outputFile = "/mnt/d/Documents/wslData/test/mixedSample1.fastq.gz"
+# reformatScript = "/opt/bbmap/reformat.sh"
+# readLimit = 0
 
 #Name of the temp folder
 tempName = paste0("mixedSample_", as.integer(Sys.time()))
+dir.create(paste0(baseFolder, "/temp/", tempName))
 
 if(file.exists(paste0(baseFolder, "/dataAndScripts/readCounts.csv"))){
   readCounts = read.csv(paste0(baseFolder, "/dataAndScripts/readCounts.csv"),
-                        colClasses = c("character", "character", "integer"))
+                        colClasses = c("character", "character", "integer", "integer"))
 } else {
-  readCounts = data.frame(fileName = character(), fileSize = integer(), modDate = character(), readCount = integer())
+  readCounts = data.frame(fileName = character(), modDate = character(), 
+                          fileSize = integer(), readCount = integer())
 }
 
 #Read the input file and remove unwanted whitespace
@@ -41,7 +49,10 @@ sumRA = ifelse(sum(files$relativeAbundance) != 1, "*** The sum of relative abund
 totalI = sum(str_detect(files$type, "i|I"))
 totalB = sum(str_detect(files$type, "b|B"))
 isoVsBack = ""
-if((totalI < 2 & totalB == 0) | (totalI == 0 & totalB > 0 | (totalB > 1))){
+if((totalI < 2 & totalB == 0) | 
+   (totalI == 0 & totalB > 0 | 
+    (totalB > 1) | 
+    sum(totalI, totalB) != nrow(files))){
   isoVsBack = "*** Incorrect combination of samples. Choose any of the following:
 - Two or more isolate(I) files\n- One background(B) and one or more isolate(I) files"
 }
@@ -50,10 +61,11 @@ if((totalI < 2 & totalB == 0) | (totalI == 0 & totalB > 0 | (totalB > 1))){
 files = files %>% 
   mutate(id = 1:n(), 
          sampleName = ifelse(sampleName == "", paste0("sample", 1:n()), sampleName)) %>% 
-  pivot_longer(c(readFile, readFile2), values_to = "filePath") %>% select(id, filePath) %>% 
+  pivot_longer(c(readFile, readFile2), values_to = "filePath") %>% 
+  select(id, type, relativeAbundance, filePath, sampleName) %>% 
   filter(filePath != "") %>% 
   mutate(modDate = file.info(filePath)$mtime %>% as.character(), 
-         correctType = str_detect(filePath, "\\.fastq\\.gz|\\.fastq")
+         correctType = str_detect(filePath, "\\.fastq\\.gz$|\\.fastq$")
          )
 
 
@@ -102,90 +114,97 @@ files = files %>% left_join(readCounts, by = c("fileName", "modDate", "fileSize"
 
 #If no read counts yet, count them
 newFiles = files %>% filter(is.na(readCount)) %>% pull(id) %>% unique()
-for(myId in newFiles){
-  myFile = files %>% filter(id == myId)
-  
-  print(paste("Count", myFile$filePath[1]))
-  #Count the lines in the file (4 lines = 1 read)
-  nReads = system(sprintf("zcat %s | wc -l", myFile$filePath[1]), intern = T) %>%
-    as.integer()
-  #If painr-end file, total reads id double from counted in one
-  nReads = ifelse(nrow(myFile) == 2, nReads / 2, nReads / 4)
-  
-  # #In case there are two files, interleave them and save in temp
-  # if(nrow(myFile) == 2){
-  #   reformatOut = system(sprintf("reformat.sh in1=%s in2=%s out=%s/temp/%s/tempFile%s.fastq.gz 2>&1", 
-  #                  myFile$filePath[1], myFile$filePath[1], baseFolder, sampleName, myId), 
-  #          intern = T)
-  #   reformatOut = str_match(reformatOut, "Output:\\s+(\\d+)\\s*reads")[,2]
-  #   nreads = reformatOut[!is.na(reformatOut)] %>% as.integer()
-  # } else {
-  #   nreads = system(sprintf("zcat %s | wc -l", myFile$filePath[1]), intern = T) %>% 
-  #     as.integer() / 2
-  # }
-  
-  files[files$id == myId, "readCount"] = nReads
-}
 
-#Update the readCounts file
-readCounts = rbind(readCounts, files %>% filter(id %in% newFiles) %>% 
-                     select(fileName, modDate, fileSize, readCount))
-write.csv(readCounts, paste0(baseFolder, "/dataAndScripts/readCounts.csv"), row.names = F)
+if(length(newFiles) > 0){
+  for(myId in newFiles){
+    myFile = files %>% filter(id == myId)
+    
+    print(paste("Count", myFile$filePath[1]))
+    #Count the lines in the file (4 lines = 1 read)
+    nReads = system(sprintf("zcat %s | wc -l", myFile$filePath[1]), intern = T) %>%
+      as.integer()
+    #If pair-end file, total reads id double from counted in one
+    nReads = ifelse(nrow(myFile) == 2, nReads / 2, nReads / 4)
+    
+    
+    files[files$id == myId, "readCount"] = nReads
+  }
+  
+  #Update the readCounts file
+  readCounts = rbind(readCounts, files %>% filter(id %in% newFiles) %>% 
+                       select(fileName, modDate, fileSize, readCount))
+  write.csv(readCounts, paste0(baseFolder, "/dataAndScripts/readCounts.csv"), row.names = F)
+}
 
 
 # ---- Calculate the reads needed for the correct RA ----
 #********************************************************
 
-# newCounts = files %>% filter(is.na(readCount)) %>% group_by(id) %>%
-#   summarise(filePath = filePath[1], nFiles = n())
-# 
-# newCounts$readCount = sapply(newCounts$filePath, function(filePath){
-# 
-#   # rCount = as.integer(system(sprintf("zcat %s | wc -l", filePath), intern = T))
-#   rCount = 1
-# 
-#   if(!is.na(rCount)){
-#     return(rCount)
-#   } else {
-#     stop(paste("The number of reads in", filePath, "can not be counted. Are you sure it is the correct format?"))
-#   }
-# })
-# 
-# file.info("D:/Documents/wslData/test/trimmed_read1_SRR4025842.fastq.gz")$size
-# 
-# files = files %>% left_join(newCounts %>% select(-filePath), by = "id") %>%
-#   mutate(readCount = ifelse(is.na(readCount.x), readCount.y, readCount.x)) %>%
-#   select(-readCount.x, -readCount.y)
-# 
-# readCounts = rbind(readCounts, files %>% filter(id %in% newCounts$id) %>% select(filePath, modDate, readCount))
-# 
-# files = rbind(files %>% filter(!is.na(readCount)), newCounts)
-# readCounts = rbind(readCounts, newCounts)
-# 
-# write.csv(readCounts, paste0(baseFolder, "/dataAndScripts/readCounts.csv"), row.names = F)
+# write.csv(files, "test.csv", row.names = F)
+# files = read.csv("dataAndScripts/test.csv")
+
+raData = files %>% group_by(id, type, relativeAbundance, readCount) %>% 
+  summarise(.groups = 'drop')
+
+#Get min reads per % 
+rpp = min(raData$readCount / (raData$relativeAbundance *  100))
+
+#Calculate the total number of reads
+totalReads = sum(raData$relativeAbundance * 100 * rpp)
+
+#If a total is set, adjust the rpp
+nReadsM = raData %>% filter(type == "B" | type == "b") %>% pull(readCount)
+readLimit = ifelse(readLimit == 0 & length(nReadsM) != 0, nReadsM, readLimit)
+if(readLimit != 0){
+  rpp = rpp * readLimit / totalReads
+}
+
+#Caluclate the times each input file is needed
+raData = raData %>% mutate(readsNeeded = relativeAbundance * 100 * rpp,
+                           fileNeeded = readsNeeded / readCount)
 
 
-# #----------------------------------------
-# shell("x=6")
-# 
-# 
-# reformatOut = system(sprintf("/opt/bbmap/reformat.sh in1=%s in2=%s out=%s/test/tempFile%s.fastq.gz 2>&1", 
-#                              "/mnt/d/Documents/temp/test/trimmed_read1_SRR4025842.fastq.gz", 
-#                              "/mnt/d/Documents/temp/test/trimmed_read2_SRR4025842.fastq.gz", 
-#                              "/mnt/d/Documents/temp", 1), 
-#                      intern = T)
-# 
-# 
-# reformatOut = system(sprintf("reformat.sh in1=%s in2=%s out=%s/temp/%s/tempFile%s.fastq.gz 2>&1", 
-#                              "/data/aplab/ARG_PJ/data/test/trimmed_read1_SRR4025842.fastq.gz", 
-#                              "/data/aplab/ARG_PJ/data/test/trimmed_read2_SRR4025842.fastq.gz", 
-#                              "/data/aplab/ARG_PJ/data/test", "testSample", 1), 
-#                      intern = T)
-# 
-# reformatOut = str_match(reformatOut, "Output:\\s+(\\d+)\\s*reads")[,2]
-# reformatOut[!is.na(reformatOut)] %>% as.integer()
-# 663986
-# 
-# system("/opt/bbmap/reformat.sh", intern = T)
-# 
-# system(sprintf("zcat %s | wc -l", "/data/aplab/ARG_PJ/data/test/trimmed_read1_SRR4025842.fastq.gz"), intern = T) 
+# ---- Filter and merge the files ----
+#*************************************
+toMerge = raData %>% left_join(files %>% select(id, filePath), by = "id") %>% 
+  group_by(id, fileNeeded) %>% 
+  summarise(file1 = filePath[1], file2 = ifelse(is.na(filePath[2]), "", filePath[2]), .groups = 'drop')
+
+for(i in 1:nrow(toMerge)){
+  
+  fullFile = floor(toMerge$fileNeeded[i])
+  partialFile = toMerge$fileNeeded[i] - floor(toMerge$fileNeeded[i])
+  
+  #Generate a full copy of the file with different ID if file needed more than once
+  if(fullFile > 0 & toMerge$fileNeeded[i] != 1.0){
+    for(j in 1:fullFile){
+      system(sprintf(
+        "%s in1=%s in2=%s out=stdout.fastq | awk 'NR %% 4 == 1{sub(/@/,\"@%i_\",$0);print;next}\
+        NR %% 2 == 1{print \"+\";next}{print}' | gzip -c > %s/temp/%s/tempFile%i_full%i.fastq.gz",
+        reformatScript, toMerge$file1[i], toMerge$file2[i],
+        i, baseFolder, tempName, i, j), intern = T)
+    }
+  } else if(toMerge$fileNeeded[i] == 1.0){
+    system(sprintf(
+      "%s in1=%s in2=%s out=%s/temp/%s/tempFile%i_partial.fastq.gz",
+      reformatScript, toMerge$file1[i], toMerge$file2[i],
+      baseFolder, tempName, i), intern = T)
+  }
+  
+  #Filter the fraction of reads needed 
+  if(partialFile != 0){
+    system(sprintf(
+      "%s --samplerate=%f in1=%s in2=%s out=%s/temp/%s/tempFile%i_partial.fastq.gz",
+      reformatScript, partialFile, toMerge$file1[i], toMerge$file2[i],
+      baseFolder, tempName, i), intern = T)
+  }
+  
+}
+
+#Merge the temp files into the final one
+system(paste0("cat ", baseFolder, "/temp/", tempName, "/*.fastq.gz > ", outputFile))
+
+#Remove temp files
+system(paste0("rm ", baseFolder, "/temp/", tempName, "/*"))
+system(paste0("rmdir ", baseFolder, "/temp/", tempName))
+
