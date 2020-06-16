@@ -8,8 +8,12 @@ Run the setup.sh script to verify all dependencies
 
 The following software needs to be installed:
 - R (version 4.0+ recommended)
+  * Packages: dplyr, stringr, tidyr
 - bbmap (https://jgi.doe.gov/data-and-tools/bbtools/bb-tools-user-guide/installation-guide/)
 - MetaCherchant (https://github.com/ctlab/metacherchant)
+
+Set the correct paths in the 'settings.txt' file if needed
+
 
 --- MIXMULTIPLE.SH ---
 Mix multiple isolate WGS files together to create artificial metagenomes 
@@ -21,8 +25,8 @@ Arguments [-i|o]
 Input file
 This is a .csv file with the following columns
 - type: either I for isolate file or B for background file
-	* Minimum of 2 I files if no B file
-	* Max 1 B file and 1 or more I files
+  * Minimum of 2 I files if no B file
+  * Max 1 B file and 1 or more I files
 - sampleName: optional name for the different input files
 - relativeAbundance: relative abundance of the file in the final metagenmome. The sum of all must be 1.0
 - readFile: full path to the read file (fastq.gz format)

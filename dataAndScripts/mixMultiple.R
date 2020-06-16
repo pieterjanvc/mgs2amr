@@ -1,26 +1,32 @@
 #!/usr/bin/env Rscript
 args = commandArgs(trailingOnly=TRUE)
 
+#Load packages
 suppressPackageStartupMessages(library(dplyr))
 suppressPackageStartupMessages(library(stringr))
 suppressPackageStartupMessages(library(tidyr))
+suppressPackageStartupMessages(library(jsonlite))
 
-message("WARNING REPLACE mnt")
+options(digits = 10)
 
-#Variables from script
+# ---- Setup variables and directories ----
+#******************************************
+
+#Variables from mixMultiple.sh script
 baseFolder = as.character(args[[1]])
 inputFile = as.character(args[[2]])
 outputFile = as.character(args[[3]])
-reformatScript = "/opt/bbmap/reformat.sh"
-readLimit = 0
+readLimit = as.integer(args[[4]])
+if(is.na(readLimit)){
+  stop("The read limit specified in -m argument needs to be a valid, positive integer")
+}
+metaData = as.logical(args[[5]])
 
-# baseFolder = "/mnt/d/Documents/wslData/meta2amr"
-# inputFile = "/mnt/d/Documents/wslData/test/input.csv"
-# outputFile = "/mnt/d/Documents/wslData/test/mixedSample1.fastq.gz"
-# reformatScript = "/opt/bbmap/reformat.sh"
-# readLimit = 0
+#Grab the location of the reformat script from the settings file
+reformatScript = system(sprintf("grep -oP \"reformat\\s*=\\s*\\K([^\\s]+)\" %s/settings.txt", 
+                                baseFolder), intern = T)
 
-#Name of the temp folder
+#Create temp folder
 tempName = paste0("mixedSample_", as.integer(Sys.time()))
 dir.create(paste0(baseFolder, "/temp/", tempName))
 
@@ -32,15 +38,14 @@ if(file.exists(paste0(baseFolder, "/dataAndScripts/readCounts.csv"))){
                           fileSize = integer(), readCount = integer())
 }
 
+
+# ---- Check the input file ----
+#*******************************
+
 #Read the input file and remove unwanted whitespace
 files = read.csv(inputFile, header = T, 
                  colClasses = c("character", "character", "numeric", "character", "character")) %>% 
   mutate(across(where(is.character), function(x) str_trim(x)))
-  # mutate(across(where(is.character), function(x) str_trim(x) %>% str_replace("/mnt/d/", "D:/")))
-
-
-# ---- Check the input file ----
-#*******************************
 
 #Check that sum of RA = 1
 sumRA = ifelse(sum(files$relativeAbundance) != 1, "*** The sum of relative abundances is not 1", "")
@@ -118,8 +123,7 @@ newFiles = files %>% filter(is.na(readCount)) %>% pull(id) %>% unique()
 if(length(newFiles) > 0){
   for(myId in newFiles){
     myFile = files %>% filter(id == myId)
-    
-    print(paste("Count", myFile$filePath[1]))
+
     #Count the lines in the file (4 lines = 1 read)
     nReads = system(sprintf("zcat %s | wc -l", myFile$filePath[1]), intern = T) %>%
       as.integer()
@@ -139,9 +143,6 @@ if(length(newFiles) > 0){
 
 # ---- Calculate the reads needed for the correct RA ----
 #********************************************************
-
-# write.csv(files, "test.csv", row.names = F)
-# files = read.csv("dataAndScripts/test.csv")
 
 raData = files %>% group_by(id, type, relativeAbundance, readCount) %>% 
   summarise(.groups = 'drop')
@@ -179,14 +180,14 @@ for(i in 1:nrow(toMerge)){
   if(fullFile > 0 & toMerge$fileNeeded[i] != 1.0){
     for(j in 1:fullFile){
       system(sprintf(
-        "%s in1=%s in2=%s out=stdout.fastq | awk 'NR %% 4 == 1{sub(/@/,\"@%i_\",$0);print;next}\
+        "%s in1=%s in2=%s out=stdout.fastq 2>/dev/null | awk 'NR %% 4 == 1{sub(/@/,\"@%i_\",$0);print;next}\
         NR %% 2 == 1{print \"+\";next}{print}' | gzip -c > %s/temp/%s/tempFile%i_full%i.fastq.gz",
         reformatScript, toMerge$file1[i], toMerge$file2[i],
-        i, baseFolder, tempName, i, j), intern = T)
+        i, baseFolder, tempName, i, j), intern = F)
     }
   } else if(toMerge$fileNeeded[i] == 1.0){
     system(sprintf(
-      "%s in1=%s in2=%s out=%s/temp/%s/tempFile%i_partial.fastq.gz",
+      "%s in1=%s in2=%s out=%s/temp/%s/tempFile%i_partial.fastq.gz 2>/dev/null",
       reformatScript, toMerge$file1[i], toMerge$file2[i],
       baseFolder, tempName, i), intern = T)
   }
@@ -194,7 +195,7 @@ for(i in 1:nrow(toMerge)){
   #Filter the fraction of reads needed 
   if(partialFile != 0){
     system(sprintf(
-      "%s --samplerate=%f in1=%s in2=%s out=%s/temp/%s/tempFile%i_partial.fastq.gz",
+      "%s --samplerate=%0.10f in1=%s in2=%s out=%s/temp/%s/tempFile%i_partial.fastq.gz 2>/dev/null",
       reformatScript, partialFile, toMerge$file1[i], toMerge$file2[i],
       baseFolder, tempName, i), intern = T)
   }
@@ -203,6 +204,25 @@ for(i in 1:nrow(toMerge)){
 
 #Merge the temp files into the final one
 system(paste0("cat ", baseFolder, "/temp/", tempName, "/*.fastq.gz > ", outputFile))
+
+#Write the meta data as JSON (if requested)
+if(metaData){
+  raData$readsNeeded = as.integer(raData$readsNeeded)
+  
+  metaData = list(
+    timestamp = Sys.time() %>% as.character(),
+    inputFile = inputFile,
+    outputFile = outputFile,
+    readLimit = readLimit,
+    totalReads = sum(raData$readsNeeded),
+    fileData = raData %>% left_join(files %>% select(-type, -relativeAbundance, -readCount), by = "id") %>% 
+      group_by(id, sampleName, type, relativeAbundance, readCount, readsNeeded, fileNeeded) %>% 
+      summarise(filePath1 = filePath[1], filePath2 = ifelse(is.na(filePath[2]), "", filePath[2]), .groups = 'drop')
+  )
+
+  write_json(metaData, paste0(str_extract(outputFile, ".*(?=\\.fastq\\.gz$)"), "_metaData.json"), pretty = T)
+  
+}
 
 #Remove temp files
 system(paste0("rm ", baseFolder, "/temp/", tempName, "/*"))

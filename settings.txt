@@ -1,2 +1,3 @@
 rscript = Rscript
 reformat=/opt/bbmap/reformat.sh
+mixMultipleMetaData = TRUE
