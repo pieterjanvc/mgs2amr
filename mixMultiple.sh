@@ -13,9 +13,11 @@ trap 'err_report $LINENO' ERR
 baseFolder=$(realpath -- "$(dirname -- "$0")")
 
 #Options when script is run
-while getopts ":h:i:o:r:m:f" opt; do
+while getopts ":hi:o:r:m:f" opt; do
   case $opt in
-	h) cat $baseFolder/readme.txt
+	h) echo -e "\n"
+	   grep -zo "\-\-\- MIXMULTIPLE\.SH.*\-\- END MIXMULTIPLE\.SH \-\-" $baseFolder/readme.txt 
+	   echo -e "\n"
 	   exit
     ;;	
 	i) inputFile=`realpath "${OPTARG}"`

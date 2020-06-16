@@ -38,5 +38,3 @@ cat $baseFolder/dataAndScripts/testData/input.csv | awk '{gsub(/~/,"'$baseFolder
 #Run mixMultiple.sh
 $baseFolder/mixMultiple.sh -f -i $baseFolder/dataAndScripts/testData/testInput.csv \
 	-o $baseFolder/dataAndScripts/testData/testOutput.fastq.gz
-
-
