@@ -39,8 +39,8 @@ This is a .csv file with the following columns
  - sampleName: optional name for the different input files
  - relativeAbundance: relative abundance of the file in the final metagenmome. 
     The sum of all must be 1.0
- - readFile: full path to the read file (fastq.gz format)
- - readFile2: (optional) full path to the second read file (fastq.gz format)
-    in case of non-interleaved pair-end data
+ - readFile: full path to the first read file (fastq.gz format)
+ - readFile2: full path to the second read file (fastq.gz format)
+    Leave empty in case of 1 interleaved data file
 
 -- END MIXMULTIPLE.SH --

@@ -2,6 +2,19 @@
 
 baseFolder=$(realpath -- "$(dirname -- "$0")")
 
+while getopts ":h" opt; do
+  case $opt in
+	h) echo -e "\n"
+	   grep -zo "\-\-\- SETUP\.SH.*\-\- END SETUP\.SH \-\-" $baseFolder/readme.txt 
+	   echo -e "\n"
+	   exit
+    ;;	
+    \?) echo "Unknown argument provided"
+	    exit
+	;;
+  esac  
+done
+
 echo "1) Check dependencies..."
 #Check is R is installed
 test=`grep -oP "rscript\s*=\s*\K([^\s]+)" $baseFolder/settings.txt`

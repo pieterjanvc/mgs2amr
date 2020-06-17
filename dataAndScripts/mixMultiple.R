@@ -8,6 +8,7 @@ suppressPackageStartupMessages(library(tidyr))
 suppressPackageStartupMessages(library(jsonlite))
 
 options(digits = 10)
+sTime = Sys.time()
 
 # ---- Setup variables and directories ----
 #******************************************
@@ -21,6 +22,7 @@ if(is.na(readLimit)){
   stop("The read limit specified in -m argument needs to be a valid, positive integer")
 }
 metaData = as.logical(args[[5]])
+verbose = as.logical(args[[6]])
 
 #Grab the location of the reformat script from the settings file
 reformatScript = system(sprintf("grep -oP \"reformat\\s*=\\s*\\K([^\\s]+)\" %s/settings.txt", 
@@ -41,6 +43,10 @@ if(file.exists(paste0(baseFolder, "/dataAndScripts/readCounts.csv"))){
 
 # ---- Check the input file ----
 #*******************************
+
+if(verbose){
+  cat(" Check the input file for errors ...")
+}
 
 #Read the input file and remove unwanted whitespace
 files = read.csv(inputFile, header = T, 
@@ -107,6 +113,9 @@ if(errorMessage != ""){
   stop(paste0("Incorrect input file\n\n", errorMessage))
 }
 
+if(verbose){
+  cat(" none found\n")
+}
 
 # ---- Get the read counts ----
 #*******************************
@@ -116,13 +125,23 @@ files = files %>% mutate(fileSize = file.info(filePath)$size,
                          fileName = str_extract(filePath, "[^/]+$"))
 files = files %>% left_join(readCounts, by = c("fileName", "modDate", "fileSize"))
 
+knownFiles = files %>% filter(!is.na(readCount)) %>% pull(fileName) %>% unique()
+
+if(verbose & length(knownFiles) > 0){
+  cat(" Use previous read-count for", knownFiles, "\n")
+}
 
 #If no read counts yet, count them
 newFiles = files %>% filter(is.na(readCount)) %>% pull(id) %>% unique()
 
 if(length(newFiles) > 0){
   for(myId in newFiles){
+    
     myFile = files %>% filter(id == myId)
+    
+    if(verbose){
+      cat(" Counting number of reads in",myFile$fileName, "... ")
+    }
 
     #Count the lines in the file (4 lines = 1 read)
     nReads = system(sprintf("zcat %s | wc -l", myFile$filePath[1]), intern = T) %>%
@@ -132,6 +151,10 @@ if(length(newFiles) > 0){
     
     
     files[files$id == myId, "readCount"] = nReads
+    
+    if(verbose){
+      cat(nReads, "\n")
+    }
   }
   
   #Update the readCounts file
@@ -144,6 +167,10 @@ if(length(newFiles) > 0){
 # ---- Calculate the reads needed for the correct RA ----
 #********************************************************
 
+if(verbose){
+  cat(" Calculate the number of reads needed from each file ... ")
+}
+
 raData = files %>% group_by(id, type, relativeAbundance, readCount) %>% 
   summarise(.groups = 'drop')
 
@@ -155,14 +182,18 @@ totalReads = sum(raData$relativeAbundance * 100 * rpp)
 
 #If a total is set, adjust the rpp
 nReadsM = raData %>% filter(type == "B" | type == "b") %>% pull(readCount)
-readLimit = ifelse(readLimit == 0 & length(nReadsM) != 0, nReadsM, readLimit)
-if(readLimit != 0){
-  rpp = rpp * readLimit / totalReads
+readLim = ifelse(readLimit == 0 & length(nReadsM) != 0, nReadsM, readLimit)
+if(readLim != 0){
+  rpp = rpp * readLim / totalReads
 }
 
 #Caluclate the times each input file is needed
 raData = raData %>% mutate(readsNeeded = relativeAbundance * 100 * rpp,
                            fileNeeded = readsNeeded / readCount)
+
+if(verbose){
+  cat("done\n")
+}
 
 
 # ---- Filter and merge the files ----
@@ -172,6 +203,10 @@ toMerge = raData %>% left_join(files %>% select(id, filePath), by = "id") %>%
   summarise(file1 = filePath[1], file2 = ifelse(is.na(filePath[2]), "", filePath[2]), .groups = 'drop')
 
 for(i in 1:nrow(toMerge)){
+  
+  if(verbose){
+    cat(" Extracting reads from", files %>% filter(id == toMerge$id[i]) %>% pull(fileName), "... ")
+  }
   
   fullFile = floor(toMerge$fileNeeded[i])
   partialFile = toMerge$fileNeeded[i] - floor(toMerge$fileNeeded[i])
@@ -200,9 +235,17 @@ for(i in 1:nrow(toMerge)){
       baseFolder, tempName, i), intern = T)
   }
   
+  if(verbose){
+    cat("done\n")
+  }
+  
 }
 
 #Merge the temp files into the final one
+if(verbose){
+  cat(" Merge all reads together and write final file ... ")
+}
+
 system(paste0("cat ", baseFolder, "/temp/", tempName, "/*.fastq.gz > ", outputFile))
 
 #Write the meta data as JSON (if requested)
@@ -228,3 +271,9 @@ if(metaData){
 system(paste0("rm ", baseFolder, "/temp/", tempName, "/*"))
 system(paste0("rmdir ", baseFolder, "/temp/", tempName))
 
+if(verbose){
+  cat("done\n\n Total time to run script:", 
+      round(difftime(Sys.time(), sTime, units = "mins"),2), "minutes",
+      "\n")
+  
+}
