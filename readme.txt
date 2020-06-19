@@ -21,7 +21,8 @@ Update the paths to dependencies in the 'settings.txt' file if needed
 --- MIXMULTIPLE.SH ---
 Mix multiple isolate WGS files together to create artificial metagenomes 
 
-Arguments [-i|o|r|m|f]
+Arguments [-h|i|o|r|m|f|v]
+ -h Read the help documentation
  -i The input file (.csv) containing all samples to be mixed
  -o The location to save the output file. Filename should end with a fastq.gz extension
  -r (Optional) Set the max number of reads the mixed file should contain. 
@@ -30,6 +31,9 @@ Arguments [-i|o|r|m|f]
  -m TRUE or FALSE. Generate a meta data JSON file in the same folder as the output file.
     Default = TRUE, but can be changed in the settings.txt file
  -f If set, force overwriting an exisitng output file
+ -v TRUE or FALSE. Progress is posted to stdout when TRUE.
+    Default = TRUE, but can be changed in the settings.txt file
+    
 
 Input file details --
 This is a .csv file with the following columns
@@ -44,3 +48,18 @@ This is a .csv file with the following columns
     Leave empty in case of 1 interleaved data file
 
 -- END MIXMULTIPLE.SH --
+
+
+--- META2AMR.SH ---
+Evaluate a metagenome for pathogenic bacterial species and their AMR
+
+Arguments [-h|i|o|v]
+ -h Read the help documentation
+ -i The input file in fastq.gz format
+ -o The folder to save the results. A subfolder will be created
+ -v 0: Nothing is written to stdout
+    1: General progress is posted to stdout
+    2: All available details are posted to stdout
+    Default: meta2amrVerbose = 1, but can be changed in the settings.txt file
+	
+-- END META2AMR.SH --

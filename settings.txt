@@ -1,4 +1,11 @@
+--- GENERAL SETTINGS
 rscript = Rscript
 reformat=/opt/bbmap/reformat.sh
+metacherchant = /opt/metacherchant/out/metacherchant.sh
+
+--- MIXMULTIPLE.SH
 mixMultipleMetaData = TRUE
 mixMultipleVerbose = TRUE
+
+--- META2AMR.SH
+meta2amrVerbose = 1

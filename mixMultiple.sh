@@ -62,7 +62,7 @@ fi
 
 if [ -z ${verbose+x} ]; then 
 	verbose=`grep -oP "mixMultipleVerbose\s*=\s*\K([^\s]+)" $baseFolder/settings.txt`
-elif ! grep -qE "^(true|T|TRUE|false|F|FALSE)$" <<< $metaData ; then	
+elif ! grep -qE "^(true|T|TRUE|false|F|FALSE)$" <<< $verbose ; then	
 	echo -e "\n\e[91mThe verbose option (-v) needs to be either TRUE or FALSE\e[0m"; exit 1; 
 fi
 
