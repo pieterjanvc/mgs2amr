@@ -1,7 +1,12 @@
 
-library(gfaTools)
+
 library(stringr)
 library(dplyr)
+library(purrr)
+library(igraph)
+library(gfaTools)
+library(tidyr)
+library(jsonlite)
 
 #cat $(find . -name '*.gfa') > masterGFA.gfa
 
@@ -52,6 +57,11 @@ gfa$links$geneId = rep(geneId, c(pos[-1], length(start)) - pos)
 
 #REMOVE LATER
 baseFolder = "D:/Documents/wslData/meta2amr"
+rm(myFile)
+
+#Save the intermediate gfa file 
+saveRDS(gfa, file = paste0(baseFolder, "/temp/", tempName, "/masterGFA.rds"))
+gfa = readRDS(paste0(baseFolder, "/temp/", tempName, "/masterGFA.rds"))
 
 
 # ---- Detect important ARG ----
@@ -84,50 +94,85 @@ cutOff = function(numbers){
 
 genesDetected = genesDetected %>% filter(covered >= cutOff(genesDetected$covered)) 
 
-write.csv(genesDetected, paste0(baseFolder, "/temp/", tempName, "/genesDetected.gfa"))
+write.csv(genesDetected, paste0(baseFolder, "/temp/", tempName, "/genesDetected.csv"))
 
 
 # ---- Extract reads for BLAST  ----
 #***********************************
-i = 12
+
+i = 5
 genesDetected %>% filter(geneId == genesDetected$geneId[i])
 
-#Get a specific GFA file from the masterGFA and simplify it
-myGFA = list(segments = gfa$segments %>% filter(geneId == genesDetected$geneId[i]) %>% select(-geneId),
-             links = gfa$links %>% filter(geneId == genesDetected$geneId[i]) %>% select(-geneId))
 
-myGFA = fixMetacherchant(myGFA)
-simpleGFA = simplifyGFA(myGFA, ratioCutOff = 0.3, trimLooseEnds = 60, returnMeta = T, separateStart = T)
-while(simpleGFA$changed){
-  simpleGFA = simplifyGFA(simpleGFA$gfa, ratioCutOff = 0.3, trimLooseEnds = 60, returnMeta = T, separateStart = T)
-}
+#Filters
+minStartLN = 250 #min lenght of start read
+minLN = 500 #min read length
+nStartPick = 5 #number of reads to pick closest to start (>= minLN)
+nDepthRange = 2 #Number of reads to pick closest to start depth (either side, so x2)
 
-writeGFA(simpleGFA$gfa, "D:/Desktop/mergedGFA.gfa")
-
-#Find the long reads/unitigs near to the start
-test = graph_from_data_frame(gfa$links %>% select(from, to))
-test = distances(test, 
-                 v = V(test)$name[str_detect(V(test)$name, "_start")], 
-                 mode = "all")
-
-test = test %>% apply(2, function(x) ifelse(sum(x == 1) == 2, 0, min(x)))
-
-
-#------------------------
-
-
-for(myGene in sampleGenes$geneId){ #myGene = sampleGenes$geneId[1]
-  #Load the GFA
-  gfa = fixMetacherchant(paste0(baseFolder, sample, "/", myGene, ".gfa"))
+blastReads = map_df(genesDetected$geneId, function(myGene){
+  #Get a specific GFA file from the masterGFA and simplify it
+  myGFA = list(segments = gfa$segments %>% filter(geneId == myGene) %>% select(-geneId),
+               links = gfa$links %>% filter(geneId == myGene) %>% select(-geneId))
   
-  #Simplify until no more reads to delete or merge
-  simpleGFA = simplifyGFA(gfa, ratioCutOff = 0.3, trimLooseEnds = 60, returnMeta = T, separateStart = T)
+  myGFA = fixMetacherchant(myGFA)
+  simpleGFA = simplifyGFA(myGFA, ratioCutOff = 0.3, trimLooseEnds = 60, returnMeta = T, separateStart = T)
   while(simpleGFA$changed){
     simpleGFA = simplifyGFA(simpleGFA$gfa, ratioCutOff = 0.3, trimLooseEnds = 60, returnMeta = T, separateStart = T)
   }
   
-  #Write new GFA
-  writeGFA(simpleGFA$gfa, paste0(baseFolder, sample, "/simplified/", myGene, "_new.gfa"))
+  simpleGFA = simpleGFA$gfa 
+  simpleGFA$segments = simpleGFA$segments %>% mutate(depth = KC / LN)
   
-}
+  # writeGFA(simpleGFA, "D:/Desktop/mergedGFA.gfa")
+  
+  #Generate a distance table from reads to start ARG
+  distTable = graph_from_data_frame(simpleGFA$links %>% select(from, to))
+  distTable = distances(distTable, 
+                        v = V(distTable)$name[str_detect(V(distTable)$name, "_start")], 
+                        mode = "all")
+  
+  distTable = distTable %>% apply(2, function(x) ifelse(sum(x == 1) == 2, 0, min(x)))
+  distTable = simpleGFA$segments %>% select(-sequence) %>% 
+    left_join(data.frame(name = names(distTable), distStart = distTable), by = "name") 
+  
+  #Select long reads close to the start
+  startMatch = distTable %>%
+    filter(LN >= minLN, distStart != 0) %>%
+    arrange(distStart) %>% 
+    mutate(type = "startMatch") %>% 
+    slice(1:nStartPick)
+  
+  #Select long reads with similar depth to start
+  depthMatch = distTable %>% filter(distStart == 0 | LN >= minLN) %>%  arrange(depth)
+  depthRange = depthMatch %>% filter(distStart == 0) %>% filter(depth == max(depth)) %>% pull(name)
+  depthMatch = depthMatch %>% filter(distStart != 0 | name == depthRange[1])
+  depthRange = which(depthMatch$name == depthRange[1])
+  
+  depthMatch = depthMatch[max((depthRange - nDepthRange), 0):min((depthRange + nDepthRange), nrow(depthMatch)),] %>% 
+    mutate(type = "depthMatch") %>% filter(distStart != 0)
+  
+  #Merge all results  and return df
+  rbind(depthMatch, startMatch) %>% group_by(name, LN, KC, depth, distStart) %>% 
+    summarise(type = ifelse(n() > 1, "bothMatch", type), .groups = 'drop') %>% 
+    rbind(distTable %>% filter(distStart == 0, LN >= minStartLN) %>% mutate(type = "ARG")) %>% 
+    left_join(simpleGFA$segments %>% select(name, sequence), by = "name") %>% 
+    mutate(geneId = myGene)
+})
+
+#Generate the FASTA for BLAST
+blastReads$blastId = paste0(">", blastReads$geneId, "_", blastReads$name)
+
+write.table(blastReads %>% select(blastId, sequence) %>% pivot_longer(everything()) %>% pull(value), 
+            file = paste0(baseFolder, "/temp/", tempName, "/blastReads.fasta"), 
+            sep = "\t", quote = F, col.names = F, row.names = F)
+
+# --- run BLAST -----
+
+# ---- Evaluate BLAST output ----
+#********************************
+blastOutput = read_json(paste0(baseFolder, "/temp/", tempName, "/blastOutput.json"))
+
+
+
 
