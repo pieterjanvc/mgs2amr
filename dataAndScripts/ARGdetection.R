@@ -1,5 +1,3 @@
-
-
 library(stringr)
 library(dplyr)
 library(purrr)
@@ -14,7 +12,6 @@ library(jsonlite)
 #******************************
 
 baseFolder = "D:/Documents/wslData/meta2amr"
-tempName = "testOutput_1592520811"
 tempName = "EC_KP_MC"
 
 #Read the master GFA file as gfa object
@@ -100,8 +97,9 @@ write.csv(genesDetected, paste0(baseFolder, "/temp/", tempName, "/genesDetected.
 # ---- Extract reads for BLAST  ----
 #***********************************
 
-i = 5
-genesDetected %>% filter(geneId == genesDetected$geneId[i])
+i = 9
+myGene = genesDetected$geneId[i]
+genesDetected %>% filter(geneId == myGene)
 
 
 #Filters
@@ -167,12 +165,62 @@ write.table(blastReads %>% select(blastId, sequence) %>% pivot_longer(everything
             file = paste0(baseFolder, "/temp/", tempName, "/blastReads.fasta"), 
             sep = "\t", quote = F, col.names = F, row.names = F)
 
+blastReads$blastId = paste0(blastReads$geneId, "_", blastReads$name)
+
+
 # --- run BLAST -----
 
 # ---- Evaluate BLAST output ----
 #********************************
 blastOutput = read_json(paste0(baseFolder, "/temp/", tempName, "/blastOutput.json"))
 
+#Extract the information on the high scoring pairs from the BLAST results
+blastOutput = map_df(sapply(blastOutput$BlastOutput2, "[", "report"), function(myResult){
+  hits = myResult$results$search$hits
+  map_df(hits, function(y){
+    cbind(
+      map_df(y$hsps, function(x) x[c(1:5, 12)] %>% as_tibble),
+      map_df(y$description[1], as_tibble)
+    )
+  }) %>% mutate(blastId = myResult$results$search$query_title)
+})
+
+#Only keep the best high-scoring pair for each sub-result 
+blastOutput = blastOutput %>% group_by(blastId) %>% 
+  filter(evalue == max(evalue)) %>% filter(bit_score == max(bit_score)) %>% 
+  mutate(bact = str_extract(sciname, "^\\w+\\s\\w+"), plasmid = str_detect(title, "plasmid|Plasmid")) %>% 
+  left_join(blastReads %>% select(-sequence), by = "blastId") %>% 
+  left_join(argGenes %>% select(geneId, gene), by = "geneId")
 
 
+
+#3797 blaEC
+test = blastOutput %>% filter(geneId == "3797")
+
+#Check the ARG itself
+startARG = test %>% filter(type == "ARG") %>% 
+  select(blastId, bit_score, evalue, sciname, bact, plasmid, LN:gene) %>% 
+  distinct() %>% group_by(blastId, plasmid) %>% 
+  filter(evalue == max(evalue)) %>% filter(bit_score == max(bit_score))
+  
+startARG = startARG %>% group_by(blastId, sciname, plasmid) %>% summarise() %>% 
+  group_by(sciname, plasmid) %>% summarise(n = n()) %>% ungroup() %>% 
+  filter(n == max(n))
+
+
+#Check the other reads
+otherReads = test %>% filter(type != "ARG") %>% 
+  select(blastId, bit_score, evalue, sciname, bact, plasmid, LN:gene) %>% 
+  distinct() %>% group_by(blastId, plasmid) %>% 
+  filter(evalue == max(evalue)) %>% filter(bit_score == max(bit_score))
+
+otherReads = otherReads %>% filter(type == "bothMatch") %>% 
+  group_by(blastId, sciname, plasmid, bit_score) %>% summarise() %>% 
+  group_by(sciname, plasmid) %>% summarise(n = n(), bit_score = sum(bit_score)) %>% ungroup() %>% 
+  filter(n == max(n))
+
+
+
+test = test %>% filter(bact != sciname) %>% group_by(geneId, gene, bact, plasmid) %>% 
+  count(sciname) %>% slice(which.max(n)) %>% arrange(geneId, desc(n))
 
