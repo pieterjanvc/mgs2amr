@@ -96,8 +96,8 @@ write.csv(genesDetected, paste0(baseFolder, "/temp/", tempName, "/genesDetected.
 
 # ---- Extract reads for BLAST  ----
 #***********************************
-
-i = 9
+genesDetected = read.csv(paste0(baseFolder, "/temp/", tempName, "/genesDetected.csv"))
+i = 2
 myGene = genesDetected$geneId[i]
 genesDetected %>% filter(geneId == myGene)
 
@@ -166,7 +166,9 @@ write.table(blastReads %>% select(blastId, sequence) %>% pivot_longer(everything
             sep = "\t", quote = F, col.names = F, row.names = F)
 
 blastReads$blastId = paste0(blastReads$geneId, "_", blastReads$name)
+blastReads$geneId = as.character(blastReads$geneId) 
 
+write.csv(blastReads, paste0(baseFolder, "/temp/", tempName, "/blastReads.csv"), row.names = F)
 
 # --- run BLAST -----
 
@@ -186,41 +188,57 @@ blastOutput = map_df(sapply(blastOutput$BlastOutput2, "[", "report"), function(m
 })
 
 #Only keep the best high-scoring pair for each sub-result 
-blastOutput = blastOutput %>% group_by(blastId) %>% 
-  filter(evalue == max(evalue)) %>% filter(bit_score == max(bit_score)) %>% 
+blastOutput = blastOutput %>% 
+  group_by(blastId) %>%
+  filter(evalue == min(evalue)) %>% filter(bit_score == max(bit_score)) %>%
   mutate(bact = str_extract(sciname, "^\\w+\\s\\w+"), plasmid = str_detect(title, "plasmid|Plasmid")) %>% 
   left_join(blastReads %>% select(-sequence), by = "blastId") %>% 
   left_join(argGenes %>% select(geneId, gene), by = "geneId")
 
 
 
-#3797 blaEC
-test = blastOutput %>% filter(geneId == "3797")
-
 #Check the ARG itself
-startARG = test %>% filter(type == "ARG") %>% 
-  select(blastId, bit_score, evalue, sciname, bact, plasmid, LN:gene) %>% 
-  distinct() %>% group_by(blastId, plasmid) %>% 
+startARG = blastOutput %>% group_by(geneId, gene) %>% filter(type == "ARG") %>% 
+  select(geneId, gene, blastId, bit_score, evalue, sciname, bact, plasmid, LN:gene) %>% 
+  distinct() %>% group_by(geneId, gene, blastId, plasmid) %>% 
   filter(evalue == max(evalue)) %>% filter(bit_score == max(bit_score))
-  
-startARG = startARG %>% group_by(blastId, sciname, plasmid) %>% summarise() %>% 
-  group_by(sciname, plasmid) %>% summarise(n = n()) %>% ungroup() %>% 
-  filter(n == max(n))
+
+startARG = startARG %>% group_by(geneId, gene, blastId, sciname, plasmid) %>% 
+  summarise(bit_score = max(bit_score), .groups = "drop") %>% 
+  group_by(geneId, gene, sciname, plasmid) %>% 
+  summarise(n = n(), bit_score = sum(bit_score), .groups = "drop") %>% 
+  ungroup() %>% group_by(geneId) %>% filter(n == max(n))
 
 
 #Check the other reads
-otherReads = test %>% filter(type != "ARG") %>% 
-  select(blastId, bit_score, evalue, sciname, bact, plasmid, LN:gene) %>% 
-  distinct() %>% group_by(blastId, plasmid) %>% 
+otherReads = blastOutput %>% group_by(geneId) %>% filter(type != "ARG") %>% 
+  select(geneId, blastId, bit_score, evalue, sciname, bact, plasmid, LN:gene) %>% 
+  distinct() %>% group_by(geneId, blastId, plasmid) %>% 
   filter(evalue == max(evalue)) %>% filter(bit_score == max(bit_score))
 
-otherReads = otherReads %>% filter(type == "bothMatch") %>% 
-  group_by(blastId, sciname, plasmid, bit_score) %>% summarise() %>% 
-  group_by(sciname, plasmid) %>% summarise(n = n(), bit_score = sum(bit_score)) %>% ungroup() %>% 
-  filter(n == max(n))
-
-
-
-test = test %>% filter(bact != sciname) %>% group_by(geneId, gene, bact, plasmid) %>% 
-  count(sciname) %>% slice(which.max(n)) %>% arrange(geneId, desc(n))
+otherReads = map_df(genesDetected$geneId, function(myGene){
+  
+  #Next to start 
+  nextToStart = otherReads %>% filter(distStart == 1, geneId == myGene) %>% 
+    group_by(geneId, gene, bact) %>% summarise(bit_score = sum(bit_score))
+ 
+  if(nrow(nextToStart) == 1){
+    otherReads = otherReads %>% filter(distStart == 1, geneId == myGene) %>% 
+      group_by(geneId, gene, sciname, plasmid) %>% summarise(n = n(), bit_score = sum(bit_score))
+  } else if("bothMatchx" %in% otherReads$type){
+    otherReads = otherReads %>% filter(geneId == myGene, type == "bothMatch") %>%
+      group_by(geneId, gene, blastId, sciname, plasmid) %>%
+      summarise(bit_score = max(bit_score), .groups = "drop") %>%
+      group_by(geneId, gene, sciname, plasmid) %>%
+      summarise(n = n(), bit_score = sum(bit_score), .groups = "drop") %>%
+      ungroup() %>% filter(n == max(n))
+  } else {
+    otherReads = otherReads %>% filter(geneId == myGene) %>% 
+      group_by(geneId, gene, sciname, plasmid) %>%
+      summarise(n = n(), bit_score = sum(bit_score), .groups = "drop") %>%
+      filter(bit_score == max(bit_score))
+  }
+  
+  return(otherReads)
+})
 
