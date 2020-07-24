@@ -6,16 +6,27 @@ library(gfaTools)
 library(tidyr)
 library(jsonlite)
 
-#cat $(find . -name '*.gfa') > masterGFA.gfa
+library(ssh)
+
+# ---- Set parameters ----
+#**************************
+HOME = T
+baseFolder = "./"
+tempFolder = ifelse(HOME, "D:/Documents/wslData/meta2amr/temp/EC_AB_1594755817/", "C:/Users/van9wf/Documents/wslData/meta2amrTemp/EC_AB_1594755817/")
+#Replace in final version with tempFolder
+tempFolderLinux = ifelse(HOME, "/mnt/d/Documents/wslData/meta2amr/temp/EC_AB_1594755817/", "/c/Users/van9wf/Documents/wslData/meta2amrTemp/EC_AB_1594755817/")
+tempName = "EC_AB_1594755817"
+winToLin = ifelse(HOME, "D:/Documents/wslData/tmp/", "S:/winToLin/")
+
+source(paste0(baseFolder, "dataAndScrips/extraFunctions.R"))
 
 # ---- Merge all MC output ----
 #******************************
 
-baseFolder = "D:/Documents/wslData/meta2amr"
-tempName = "EC_KP_MC"
+#cat $(find . -name '*.gfa') > masterGFA.gfa
 
 #Read the master GFA file as gfa object
-filePath = paste0(baseFolder, "/temp/", tempName, "/masterGFA.gfa")
+filePath = paste0(tempFolder, "masterGFA.gfa")
 gfa = readGFA(filePath)
 
 #Read the raw file
@@ -24,7 +35,7 @@ myFile = str_split(readLines(filePath), "\t")
 #Get all IDs for which the file is not empty
 message("REMOVE WSL ON LINUX")
 baseFolder = "/mnt/d/Documents/wslData/meta2amr"
-geneId = system(paste("wsl find ", paste0(baseFolder, "/temp/", tempName, "/"), 
+geneId = system(paste("wsl find ", tempFolder, 
                     " -name '*.gfa' | xargs wc -l"), intern = T)
 geneId = str_match(geneId, "(\\d+).*/(\\d+)/graph\\.gfa$")
 geneId = data.frame(geneId = geneId[,3], count = as.integer(geneId[,2])) %>% 
@@ -32,7 +43,7 @@ geneId = data.frame(geneId = geneId[,3], count = as.integer(geneId[,2])) %>%
 
 
 # #The folder number is the gene ID
-# geneId = system(paste0("ls -d ",baseFolder, "/temp/", tempName, "/*/"), intern = T) %>% 
+# geneId = system(paste0("ls -d ",tempFolder, "/*/"), intern = T) %>% 
 #   str_extract("\\d+(?=/$)") %>% as.integer()
 # geneId = geneId[!is.na(geneId)]
 
@@ -57,8 +68,8 @@ baseFolder = "D:/Documents/wslData/meta2amr"
 rm(myFile)
 
 #Save the intermediate gfa file 
-saveRDS(gfa, file = paste0(baseFolder, "/temp/", tempName, "/masterGFA.rds"))
-gfa = readRDS(paste0(baseFolder, "/temp/", tempName, "/masterGFA.rds"))
+saveRDS(gfa, file = paste0(tempFolder, "masterGFA.rds"))
+# gfa = readRDS(paste0(tempFolder, "masterGFA.rds"))
 
 
 # ---- Detect important ARG ----
@@ -70,16 +81,16 @@ kmerCounts = gfa$segments %>%
   rename(readId = name)
 
 #Get the ARG list
-argGenes = read.csv(paste0(baseFolder, "/dataAndScripts/argTable.csv"), 
+argGenes = read.csv(paste0(baseFolder, "dataAndScripts/argTable.csv"), 
                     colClasses = list(geneId = "character"))
 
 #Detect the most likely genes
 genesDetected = kmerCounts %>% filter(start) %>% 
-  left_join(argGenes %>% select(geneId, gene, subtype, nBases, name), by = c("geneId" = "geneId")) %>% 
-  group_by(geneId, gene, subtype, nBases, name) %>% 
+  left_join(argGenes %>% select(geneId, clusterNr, gene, subtype, nBases, name), by = c("geneId" = "geneId")) %>% 
+  group_by(geneId, clusterNr, gene, subtype, nBases, name) %>% 
   summarise(length = sum(LN), kmerCount = sum(KC), n = n(), .groups = 'drop') %>% rowwise() %>% 
   mutate(covered = min(1, length / nBases)) %>% 
-  group_by(gene) %>% filter(kmerCount == max(kmerCount))
+  group_by(clusterNr) %>% filter(kmerCount == max(kmerCount))
 
 #Make cut-offs based on steepest tangent in curve (maybe not best if very different RA)
 cutOff = function(numbers){
@@ -89,106 +100,278 @@ cutOff = function(numbers){
   myData %>% filter(diff == max(diff)) %>% pull(number) %>% unique()
 }
 
-genesDetected = genesDetected %>% filter(covered >= cutOff(genesDetected$covered)) 
-
-write.csv(genesDetected, paste0(baseFolder, "/temp/", tempName, "/genesDetected.csv"))
+genesDetected = genesDetected %>% filter(covered >= max(0.9, cutOff(genesDetected$covered)))
+write.csv(genesDetected, paste0(tempFolder, "genesDetected.csv"), row.names = F)
 
 
 # ---- Extract reads for BLAST  ----
 #***********************************
-genesDetected = read.csv(paste0(baseFolder, "/temp/", tempName, "/genesDetected.csv"))
-i = 2
-myGene = genesDetected$geneId[i]
-genesDetected %>% filter(geneId == myGene)
 
-
-#Filters
-minStartLN = 250 #min lenght of start read
-minLN = 500 #min read length
-nStartPick = 5 #number of reads to pick closest to start (>= minLN)
-nDepthRange = 2 #Number of reads to pick closest to start depth (either side, so x2)
+# genesDetected = read.csv(paste0(tempFolder, "genesDetected.csv"))
 
 blastReads = map_df(genesDetected$geneId, function(myGene){
-  #Get a specific GFA file from the masterGFA and simplify it
+  cat(paste0("Detecting all GFA paths for ", genesDetected[genesDetected$geneId == myGene, "gene"], " ..."))
+  
+  #Get the specific GFA file from the masterGFA
   myGFA = list(segments = gfa$segments %>% filter(geneId == myGene) %>% select(-geneId),
                links = gfa$links %>% filter(geneId == myGene) %>% select(-geneId))
   
   myGFA = fixMetacherchant(myGFA)
-  simpleGFA = simplifyGFA(myGFA, ratioCutOff = 0.3, trimLooseEnds = 60, returnMeta = T, separateStart = T)
-  while(simpleGFA$changed){
-    simpleGFA = simplifyGFA(simpleGFA$gfa, ratioCutOff = 0.3, trimLooseEnds = 60, returnMeta = T, separateStart = T)
-  }
+  # writeGFA(myGFA, "D:/Desktop/mergedGFA.gfa")
   
-  simpleGFA = simpleGFA$gfa 
-  simpleGFA$segments = simpleGFA$segments %>% mutate(depth = KC / LN)
+  #Get the longest start read (reference for now) -- !!! CHANGE LATER
+  startRead = myGFA$segments %>% select(name, LN, KC) %>% filter(str_detect(name, "_start$")) %>% 
+    filter(LN == max(LN)) %>% pull(name)
   
-  # writeGFA(simpleGFA, "D:/Desktop/mergedGFA.gfa")
+  pathsTable = pathsToRead(myGFA, startRead) %>%
+  mutate(geneId = myGene, id = paste0(">", myGene, "_", startRead, "_", endRead))
   
-  #Generate a distance table from reads to start ARG
-  distTable = graph_from_data_frame(simpleGFA$links %>% select(from, to))
-  distTable = distances(distTable, 
-                        v = V(distTable)$name[str_detect(V(distTable)$name, "_start")], 
-                        mode = "all")
+  cat(" done\n")
+  pathsTable
   
-  distTable = distTable %>% apply(2, function(x) ifelse(sum(x == 1) == 2, 0, min(x)))
-  distTable = simpleGFA$segments %>% select(-sequence) %>% 
-    left_join(data.frame(name = names(distTable), distStart = distTable), by = "name") 
-  
-  #Select long reads close to the start
-  startMatch = distTable %>%
-    filter(LN >= minLN, distStart != 0) %>%
-    arrange(distStart) %>% 
-    mutate(type = "startMatch") %>% 
-    slice(1:nStartPick)
-  
-  #Select long reads with similar depth to start
-  depthMatch = distTable %>% filter(distStart == 0 | LN >= minLN) %>%  arrange(depth)
-  depthRange = depthMatch %>% filter(distStart == 0) %>% filter(depth == max(depth)) %>% pull(name)
-  depthMatch = depthMatch %>% filter(distStart != 0 | name == depthRange[1])
-  depthRange = which(depthMatch$name == depthRange[1])
-  
-  depthMatch = depthMatch[max((depthRange - nDepthRange), 0):min((depthRange + nDepthRange), nrow(depthMatch)),] %>% 
-    mutate(type = "depthMatch") %>% filter(distStart != 0)
-  
-  #Merge all results  and return df
-  rbind(depthMatch, startMatch) %>% group_by(name, LN, KC, depth, distStart) %>% 
-    summarise(type = ifelse(n() > 1, "bothMatch", type), .groups = 'drop') %>% 
-    rbind(distTable %>% filter(distStart == 0, LN >= minStartLN) %>% mutate(type = "ARG")) %>% 
-    left_join(simpleGFA$segments %>% select(name, sequence), by = "name") %>% 
-    mutate(geneId = myGene)
 })
+
+write.csv(blastReads, paste0(tempFolder, "blastReads.csv"), row.names = F)
+# blastReads = read.csv(paste0(tempFolder, "blastReads.csv"))
+
+#Generate a FASTA FILE FROM THE PATHS
+fastaPaths = blastReads %>% #filter(geneId == "4967") %>% 
+  filter(pathLength > 2500) %>% #??? Should there be cut-off?
+  mutate(sequence = str_trunc(sequence, width = 5000, side = "right", ellipsis = "")) %>% # max 5000 bp?
+  select(id, sequence) %>% pivot_longer(cols = everything()) %>% select(value)
+
+write.table(fastaPaths, file = paste0(tempFolder, "allPaths.fasta"),
+            sep = "\t", quote = F, row.names = F, col.names = F)
+
+#Cluster the reads to reduce BLASTn search
+if(HOME){
+  system(sprintf("wsl /opt/usearch11.0.667 -cluster_fast %s -id 0.75 -sort size -uc %s",
+         paste0(str_replace(tempFolder, "D:/", "/mnt/d/"), "allPaths.fasta"), 
+         paste0(str_replace(tempFolder, "D:/", "/mnt/d/"), "allPaths.out")))
+} else {
+  mySSH = ssh_connect("van9wf@10.200.10.248:22")
+  ssh_exec_wait(mySSH, sprintf("/usr/local/usearch/10.0.240/bin/usearch -cluster_fast %s -sort size -id 0.75 -uc %s",
+                               paste0(str_replace(tempFolder, "D:/", "/mnt/d/"), "allPaths.fasta"), 
+                               paste0(str_replace(tempFolder, "D:/", "/mnt/d/"), "allPaths.out")))
+  ssh_disconnect(mySSH)
+}
+
+# Use the cluster file to filter the reads to submit to BLAST
+fastaPaths = read.table(paste0(str_replace(tempFolder, "D:/", "/mnt/d/"), "allPaths.out"))
+blastReads = blastReads %>% filter(pathLength > 2500) %>% 
+  mutate(
+    sequence = str_trunc(sequence, width = 5000, side = "right", ellipsis = ""),
+    id = str_remove(id, ">")
+  ) %>% 
+  left_join(fastaPaths %>% select(V9, V10), by = c("id" = "V9")) %>% select(-readOrder) %>% 
+  distinct() %>% filter(V10 == "*") %>%
+  select(id, sequence) %>% mutate(id = paste0(">", id)) %>% pivot_longer(cols = everything()) %>% select(value)
+
+write.table(blastReads, file = paste0(tempFolder, "blastReads.fasta"),
+            sep = "\t", quote = F, row.names = F, col.names = F)
+
+
+# ---- Perform BLASTn search and get results  ----
+#*************************************************
+
+#ONLINE SEARCH WITH API
+RID = BLASTapi(paste0(tempFolder, "blastReads.fasta"), tempFolder, waitUntilDone = F, secBetweenCheck = 30)
+
+#Unzip the result file (gz)
+system(sprintf("wsl cd %s; unzip %s -d %s; cd %s; rm %s; cat * > ../%s; rm -r ../%s", 
+               tempFolderLinux, paste0(RID, ".gz"), RID, RID, paste0(RID, ".json"), paste0(RID, ".json"), RID))
+
+# Merge all JSON files into one, and remove the sequences to save space (not needed for now)
+myJSON = readLines(paste0(tempFolder, RID, ".json"))
+  #Remove seq and other large attributes (not needed)
+findLines = str_detect(myJSON, "^\\s+(\"qseq\":)|(\"hseq\":)|(\"midline\":)")
+myJSON = myJSON[!findLines]
+  #Fix trailing comma on last one before removed
+findLines = str_detect(myJSON, "^\\s+\"gaps")
+myJSON[findLines] = str_remove(myJSON[findLines], ",$")
+  #Update the top names of the JSON files
+findLines = str_detect(myJSON, "^\\s+\"BlastOutput2")
+myJSON[findLines] = paste0("  \"read", 1:113, "\": {")
+  #Remove unwanted {
+findLines = str_detect(myJSON, "^\\{")
+myJSON = myJSON[!c(F, findLines[-1])]
+  #Remove unwanted }
+findLines = str_detect(myJSON, "^\\}")
+myJSON = myJSON[!c(findLines[-length(findLines)], F)]
+  #Add , to separate different files (ignore last)
+findLines = str_detect(myJSON, "^  \\}")
+findLines[length(findLines)-1] = F
+myJSON[findLines] = "  },"
+  #Save
+write(myJSON, paste0(tempFolder, RID, "_noSeq.json"))
+
+
+# ---- Evaluate results and assign bact to ARG  ----
+#***************************************************
+# RID = "HK1XVM4J016"
+# blastOutput = read_json(paste0(tempFolder, RID, "_noSeq.json"))
+
+#Extract the information on the high scoring pairs from the BLAST results
+blastOutput = map_df(sapply(myJSON, "[", "report"), function(myResult){
+  hits = myResult$results$search$hits
+  map_df(hits, function(y){
+    cbind(
+      map_df(y$hsps, function(x) x[c(1:7, 12)] %>% as_tibble),
+      map_df(y$description[1], as_tibble)
+    )
+  }) %>% mutate(blastId = myResult$results$search$query_title, 
+                qLength = myResult$results$search$query_len)
+}) %>% mutate(geneId = str_extract(blastId, "^[^_]+"))
+
+test = blastOutput %>% group_by(geneId, blastId, id, accession, title, taxid, sciname, qLength) %>% 
+  summarise(bit_score = max(bit_score), evalue = min(evalue), 
+            coverage = getCoverage(query_from, query_to, qLength[1]), .groups = "drop") %>% 
+  mutate(plasmid = str_detect(title, "plasmid"))
+
+
+# test2 = test %>% group_by(blastId, plasmid) %>% 
+#   filter(coverage >= quantile(test$coverage, 0.9), qLength >= max(2500, quantile(test$qLength, 0.5)))
+# 
+# test2 = test %>% group_by(blastId, plasmid, sciname) %>% 
+#   summarise(n = n(), coverage = max(coverage), readLength = max(qLength), bit_score = max(bit_score))
+
+
+fastaPaths = fastaPaths %>%
+  select(read = V9, cluster = V10) %>%
+  mutate(
+    cluster = ifelse(cluster == "*", read, cluster),
+    readGene = str_extract(read, "^[^_]+"), clusterGene = str_extract(cluster, "^[^_]+"))
+fastaPaths = fastaPaths %>% left_join(test, by = c("cluster" = "blastId"))
+
+unique(test$blastId) %in% 
+  unique(fastaPaths$cluster)
+
+test2 = data.frame(clust = sort(unique(fastaPaths$cluster)), blast = sort(unique(blastOutput$blastId)))
+
+fastaPaths$bact = str_extract(fastaPaths$sciname, "^[^\\s]+\\s[^\\s]+")
+
+# test3 = fastaPaths %>% filter(readGene == "4672") %>% group_by(read, plasmid) %>% 
+#   # filter(coverage >= 0.9) %>% group_by(read) %>% 
+#   mutate(score = as.integer(coverage == max(coverage)) + as.integer(bit_score == max(bit_score)),
+#          score2 = coverage * bit_score) %>% 
+#   filter(score == max(score) | score2 == max(score2)) %>% ungroup() %>% 
+#   filter(coverage >= quantile(coverage, 0.90) | bit_score >= quantile(bit_score, 0.90)) %>%
+#   mutate(newScore = bit_score / readLength) %>% 
+#   group_by(bact) %>% summarise(newScore = sum(newScore)) %>% 
+#   filter(newScore >= cutOff(newScore))
+
+
+test3 = fastaPaths %>% filter(readGene == "4673") %>% group_by(read, plasmid) %>% 
+  mutate(score = coverage * bit_score / readLength) %>% 
+  group_by(read) %>% mutate(nonDiscr = length(unique(score)) != 1) %>% filter(nonDiscr) %>% group_by(read, plasmid) %>% 
+  filter(score == max(score)) %>% ungroup() %>% 
+  filter(coverage >= quantile(coverage, 0.90) | score >= quantile(score, 0.90)) %>% distinct() %>% 
+  # mutate(newScore = bit_score / readLength) %>% 
+  group_by(bact, plasmid) %>%  filter(coverage == max(coverage)) %>% 
+  summarise(score = max(score), bit_score = max(bit_score)) %>% arrange(desc(score)) %>% 
+  ungroup() %>% filter(score >= cutOff(score))
+
+test3
+
+
+
+
+
+
+
+
+#---------- OLD
+
+# fastaPaths = read.table(paste0(winToLin, "allPaths.out")) %>% 
+#   select(read = V9, cluster = V10) %>% 
+#   mutate(
+#     cluster = ifelse(cluster == "*", read, cluster),
+#     readGene = str_extract(read, "^[^_]+"), clusterGene = str_extract(cluster, "^[^_]+"))
+# 
+# test = fastaPaths %>% group_by(readGene, clusterGene) %>% summarise(nCommon = n()) %>% 
+#   left_join(fastaPaths %>% group_by(readGene) %>% summarise(nReads = n())) %>% 
+#   mutate(procent = nCommon / nReads)
+
+#HK1XVM4J016
+
+
+
+fastaPath = paste0(tempFolder, "blastReads.fasta")
+
+test = test  %>% 
+  left_join(blastReads %>% select(id, sequence) %>% mutate(id = str_remove(id, ">")), by = "id")
+
+test = blastReads %>% group_by(sequence) %>% summarise(n = n())
+
+test2 = map_df(genesDetected$geneId, function(myGene){
+  
+  fastaPaths = test %>% filter(geneId == myGene) %>% 
+    select(id, sequence) %>% pivot_longer(cols = everything()) %>% select(value)
+  
+  write.table(fastaPaths, file = "D:/Desktop/allPaths.fasta",
+              sep = "\t", quote = F, row.names = F, col.names = F)
+  
+  system("wsl /opt/usearch11.0.667 -cluster_fast /mnt/d/Desktop/allPaths.fasta -id 0.8 -sort size -uc /mnt/d/Desktop/allPaths.out")
+
+  fastaPaths = read.table("D:/Desktop/allPaths.out") %>% filter(V1 == "C")
+
+  test %>% slice(which( str_remove(pathsTable$id, "^>") %in% fastaPaths$V9))  %>%
+    select(id, sequence) %>% pivot_longer(cols = everything())
+  
+})
+
+
+write.table(test, file = "D:/Desktop/allPaths2.fasta",
+            sep = "\t", quote = F, row.names = F, col.names = F)
+
+myGFA = fixMetacherchant("D:/Documents/wslData/meta2amr/temp/EC_AB_1594755817/multi/graph.gfa")
+writeGFA(myGFA, "D:/Desktop/mergedGFA.gfa")
+
+baseFolder = "/mnt/d/Documents/wslData/meta2amr"
+system(sprintf("wsl %s --tool environment-finder-multi --seq %s --work-dir %s --output %s --env %s",
+        "/opt/metacherchant/out/metacherchant.sh",
+        paste0(tempFolder, "/multi/checkGene.fasta"),
+        paste0(tempFolder, "/multi/"),
+        paste0(tempFolder, "/multi/"),
+        paste(paste0(tempFolder, "/", genesDetected$geneId, "/graph.txt"), collapse = " ")
+        ))
+
+system("wsl /opt/usearch11.0.667 -cluster_fast /mnt/d/Documents/wslData/meta2amr/temp/EC_AB_1594755817/multi/graph.fasta -id 0.75 -uc /mnt/d/Desktop/allPaths.out")
 
 #Generate the FASTA for BLAST
 blastReads$blastId = paste0(">", blastReads$geneId, "_", blastReads$name)
 
 write.table(blastReads %>% select(blastId, sequence) %>% pivot_longer(everything()) %>% pull(value), 
-            file = paste0(baseFolder, "/temp/", tempName, "/blastReads.fasta"), 
+            file = paste0(tempFolder, "/blastReads.fasta"), 
             sep = "\t", quote = F, col.names = F, row.names = F)
 
 blastReads$blastId = paste0(blastReads$geneId, "_", blastReads$name)
 blastReads$geneId = as.character(blastReads$geneId) 
 
-write.csv(blastReads, paste0(baseFolder, "/temp/", tempName, "/blastReads.csv"), row.names = F)
+write.csv(blastReads, paste0(tempFolder, "/blastReads.csv"), row.names = F)
 
 # --- run BLAST -----
 
 # ---- Evaluate BLAST output ----
 #********************************
-blastOutput = read_json(paste0(baseFolder, "/temp/", tempName, "/blastOutput.json"))
+blastOutput = read_json(paste0(tempFolder, "/blastOutput.json"))
+RID = "HK1XVM4J016"
+blastOutput = read_json(paste0(tempFolder, RID, "_noSeq.json"))
 
 #Extract the information on the high scoring pairs from the BLAST results
-blastOutput = map_df(sapply(blastOutput$BlastOutput2, "[", "report"), function(myResult){
+blastOutput = map_df(sapply(blastOutput, "[", "report"), function(myResult){
   hits = myResult$results$search$hits
   map_df(hits, function(y){
     cbind(
-      map_df(y$hsps, function(x) x[c(1:5, 12)] %>% as_tibble),
+      map_df(y$hsps, function(x) x[c(1:7, 12)] %>% as_tibble),
       map_df(y$description[1], as_tibble)
     )
-  }) %>% mutate(blastId = myResult$results$search$query_title)
+  }) %>% mutate(blastId = myResult$results$search$query_title, 
+                qLength = myResult$results$search$query_len)
 })
 
 #Only keep the best high-scoring pair for each sub-result 
-blastOutput = blastOutput %>% 
+test = blastOutput %>% 
   group_by(blastId) %>%
   filter(evalue == min(evalue)) %>% filter(bit_score == max(bit_score)) %>%
   mutate(bact = str_extract(sciname, "^\\w+\\s\\w+"), plasmid = str_detect(title, "plasmid|Plasmid")) %>% 
