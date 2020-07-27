@@ -18,7 +18,9 @@ tempFolderLinux = ifelse(HOME, "/mnt/d/Documents/wslData/meta2amr/temp/EC_AB_159
 tempName = "EC_AB_1594755817"
 winToLin = ifelse(HOME, "D:/Documents/wslData/tmp/", "S:/winToLin/")
 
-source(paste0(baseFolder, "dataAndScrips/extraFunctions.R"))
+#Load extra functions (if this becomes package check which ones are internal/external)
+source(paste0(baseFolder, "dataAndScripts/extraFunctions.R"))
+
 
 # ---- Merge all MC output ----
 #******************************
@@ -40,12 +42,6 @@ geneId = system(paste("wsl find ", tempFolder,
 geneId = str_match(geneId, "(\\d+).*/(\\d+)/graph\\.gfa$")
 geneId = data.frame(geneId = geneId[,3], count = as.integer(geneId[,2])) %>% 
   na.omit() %>% filter(count != 0) %>% pull(geneId)
-
-
-# #The folder number is the gene ID
-# geneId = system(paste0("ls -d ",tempFolder, "/*/"), intern = T) %>% 
-#   str_extract("\\d+(?=/$)") %>% as.integer()
-# geneId = geneId[!is.na(geneId)]
 
 #Add the gene ID to the segments
 start = which(sapply(myFile, "[[", 1) == "S")
@@ -90,27 +86,22 @@ genesDetected = kmerCounts %>% filter(start) %>%
   group_by(geneId, clusterNr, gene, subtype, nBases, name) %>% 
   summarise(length = sum(LN), kmerCount = sum(KC), n = n(), .groups = 'drop') %>% rowwise() %>% 
   mutate(covered = min(1, length / nBases)) %>% 
+  extract(name, into = c("ncbi", "descr"), regex = ">([^\\s]+)\\s+(.*)") %>% 
   group_by(clusterNr) %>% filter(kmerCount == max(kmerCount))
 
-#Make cut-offs based on steepest tangent in curve (maybe not best if very different RA)
-cutOff = function(numbers){
-  numbers = sort(numbers)
-  myData = data.frame(number = numbers[-1],
-                      diff = diff(numbers) / diff(1:length(numbers))) 
-  myData %>% filter(diff == max(diff)) %>% pull(number) %>% unique()
-}
-
+#Only keep genes that are minimum 90% covered (or use cut-off when higher) 
 genesDetected = genesDetected %>% filter(covered >= max(0.9, cutOff(genesDetected$covered)))
 write.csv(genesDetected, paste0(tempFolder, "genesDetected.csv"), row.names = F)
+# genesDetected = read.csv(paste0(tempFolder, "genesDetected.csv"))
 
 
 # ---- Extract reads for BLAST  ----
 #***********************************
 
-# genesDetected = read.csv(paste0(tempFolder, "genesDetected.csv"))
-
 blastReads = map_df(genesDetected$geneId, function(myGene){
-  cat(paste0("Detecting all GFA paths for ", genesDetected[genesDetected$geneId == myGene, "gene"], " ..."))
+  cat("Detecting all GFA paths for\n")
+  cat(sprintf(" %s (%s) ...", genesDetected[genesDetected$geneId == myGene, "ncbi"],
+      genesDetected[genesDetected$geneId == myGene, "gene"]))
   
   #Get the specific GFA file from the masterGFA
   myGFA = list(segments = gfa$segments %>% filter(geneId == myGene) %>% select(-geneId),
@@ -123,8 +114,9 @@ blastReads = map_df(genesDetected$geneId, function(myGene){
   startRead = myGFA$segments %>% select(name, LN, KC) %>% filter(str_detect(name, "_start$")) %>% 
     filter(LN == max(LN)) %>% pull(name)
   
+  #Use the pathsToRead from gfaTools to detect all shortest paths from the read to ends of the graph
   pathsTable = pathsToRead(myGFA, startRead) %>%
-  mutate(geneId = myGene, id = paste0(">", myGene, "_", startRead, "_", endRead))
+  mutate(geneId = myGene, id = paste0(myGene, "_", startRead, "_", endRead))
   
   cat(" done\n")
   pathsTable
@@ -134,14 +126,12 @@ blastReads = map_df(genesDetected$geneId, function(myGene){
 write.csv(blastReads, paste0(tempFolder, "blastReads.csv"), row.names = F)
 # blastReads = read.csv(paste0(tempFolder, "blastReads.csv"))
 
-#Generate a FASTA FILE FROM THE PATHS
+#Generate a FASTA file
 fastaPaths = blastReads %>% #filter(geneId == "4967") %>% 
   filter(pathLength > 2500) %>% #??? Should there be cut-off?
-  mutate(sequence = str_trunc(sequence, width = 5000, side = "right", ellipsis = "")) %>% # max 5000 bp?
-  select(id, sequence) %>% pivot_longer(cols = everything()) %>% select(value)
+  mutate(sequence = str_trunc(sequence, width = 5000, side = "right", ellipsis = "")) # max 5000 bp?
 
-write.table(fastaPaths, file = paste0(tempFolder, "allPaths.fasta"),
-            sep = "\t", quote = F, row.names = F, col.names = F)
+writeFasta(fastaPaths$id, fastaPaths$sequence, type = "dna", paste0(tempFolder, "allPaths.fasta"))
 
 #Cluster the reads to reduce BLASTn search
 if(HOME){
@@ -149,62 +139,48 @@ if(HOME){
          paste0(str_replace(tempFolder, "D:/", "/mnt/d/"), "allPaths.fasta"), 
          paste0(str_replace(tempFolder, "D:/", "/mnt/d/"), "allPaths.out")))
 } else {
+  writeFasta(fastaPaths$id, fastaPaths$sequence, type = "dna", paste0(winToLin, "allPaths.fasta"))
   mySSH = ssh_connect("van9wf@10.200.10.248:22")
   ssh_exec_wait(mySSH, sprintf("/usr/local/usearch/10.0.240/bin/usearch -cluster_fast %s -sort size -id 0.75 -uc %s",
-                               paste0(str_replace(tempFolder, "D:/", "/mnt/d/"), "allPaths.fasta"), 
-                               paste0(str_replace(tempFolder, "D:/", "/mnt/d/"), "allPaths.out")))
+                               paste0(str_replace(winToLin, "S:/", "/scratch/van9wf/"), "allPaths.fasta"), 
+                               paste0(str_replace(winToLin, "S:/", "/scratch/van9wf/"), "allPaths.out")))
   ssh_disconnect(mySSH)
+  file.copy(paste0(winToLin, "allPaths.out"), paste0(tempFolder, "allPaths.out"))
 }
 
 # Use the cluster file to filter the reads to submit to BLAST
-fastaPaths = read.table(paste0(str_replace(tempFolder, "D:/", "/mnt/d/"), "allPaths.out"))
+fastaPaths = read.table(paste0(tempFolder, "allPaths.out"))
 blastReads = blastReads %>% filter(pathLength > 2500) %>% 
   mutate(
     sequence = str_trunc(sequence, width = 5000, side = "right", ellipsis = ""),
     id = str_remove(id, ">")
   ) %>% 
   left_join(fastaPaths %>% select(V9, V10), by = c("id" = "V9")) %>% select(-readOrder) %>% 
-  distinct() %>% filter(V10 == "*") %>%
-  select(id, sequence) %>% mutate(id = paste0(">", id)) %>% pivot_longer(cols = everything()) %>% select(value)
+  distinct() %>% filter(V10 == "*") 
 
-write.table(blastReads, file = paste0(tempFolder, "blastReads.fasta"),
-            sep = "\t", quote = F, row.names = F, col.names = F)
+writeFasta(blastReads$id, blastReads$sequence, type = "dna", paste0(tempFolder, "blastReads.fasta"))
 
 
 # ---- Perform BLASTn search and get results  ----
 #*************************************************
 
 #ONLINE SEARCH WITH API
-RID = BLASTapi(paste0(tempFolder, "blastReads.fasta"), tempFolder, waitUntilDone = F, secBetweenCheck = 30)
 
-#Unzip the result file (gz)
-system(sprintf("wsl cd %s; unzip %s -d %s; cd %s; rm %s; cat * > ../%s; rm -r ../%s", 
-               tempFolderLinux, paste0(RID, ".gz"), RID, RID, paste0(RID, ".json"), paste0(RID, ".json"), RID))
+#Submit the blast and get the RID
+RID = submitBlast(paste0(tempFolder, "blastReads.fasta"),
+                  entrez_query = "&(txid2+%5BORGN%5D)+NOT(environmental+samples%5Borganism%5D+OR+metagenomes%5Borgn%5D+OR+txid32644%5Borgn%5D)",
+                  entrez_query_preset_excl = "environmental+samples%5Borganism%5D+OR+metagenomes%5Borgn%5D+OR+txid32644%5Borgn%5D",
+                  eq_menu = "bacteria+(taxid%3A2)",
+                  eq_op = "AND",
+                  EXCLUDE_SEQ_UNCULT = "on")
 
-# Merge all JSON files into one, and remove the sequences to save space (not needed for now)
-myJSON = readLines(paste0(tempFolder, RID, ".json"))
-  #Remove seq and other large attributes (not needed)
-findLines = str_detect(myJSON, "^\\s+(\"qseq\":)|(\"hseq\":)|(\"midline\":)")
-myJSON = myJSON[!findLines]
-  #Fix trailing comma on last one before removed
-findLines = str_detect(myJSON, "^\\s+\"gaps")
-myJSON[findLines] = str_remove(myJSON[findLines], ",$")
-  #Update the top names of the JSON files
-findLines = str_detect(myJSON, "^\\s+\"BlastOutput2")
-myJSON[findLines] = paste0("  \"read", 1:113, "\": {")
-  #Remove unwanted {
-findLines = str_detect(myJSON, "^\\{")
-myJSON = myJSON[!c(F, findLines[-1])]
-  #Remove unwanted }
-findLines = str_detect(myJSON, "^\\}")
-myJSON = myJSON[!c(findLines[-length(findLines)], F)]
-  #Add , to separate different files (ignore last)
-findLines = str_detect(myJSON, "^  \\}")
-findLines[length(findLines)-1] = F
-myJSON[findLines] = "  },"
-  #Save
-write(myJSON, paste0(tempFolder, RID, "_noSeq.json"))
+#Wait for the result to finish
+checkBlastSubmission(RID, verbose = T)
 
+#Download and process the JSON
+myJSON = getBlastResults(RID, outputFolder = tempFolder, omitSeqData = T, verbose = T)
+
+#RID = "HXY305AU014"
 
 # ---- Evaluate results and assign bact to ARG  ----
 #***************************************************
