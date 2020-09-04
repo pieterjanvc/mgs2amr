@@ -10,7 +10,7 @@ trap 'err_report $LINENO' ERR
 baseFolder=$(realpath -- "$(dirname -- "$0")")
 
 #Options when script is run
-while getopts ":hi:o:r:m:fv:" opt; do
+while getopts ":hi:o:t:r:m:fv:" opt; do
   case $opt in
 	h) echo -e "\n"
 	   grep -zo "\-\-\- MIXMULTIPLE\.SH.*\-\- END MIXMULTIPLE\.SH \-\-" $baseFolder/readme.txt 
@@ -20,6 +20,8 @@ while getopts ":hi:o:r:m:fv:" opt; do
 	i) inputFile=`realpath "${OPTARG}"`
     ;;
 	o) outputFile=`realpath "${OPTARG}"`
+    ;;
+	t) tempFolder=`realpath "${OPTARG}"`
     ;;
 	r) readLimit="${OPTARG}"
     ;;
@@ -54,6 +56,17 @@ if [ -z ${readLimit+x} ]; then
 	readLimit=0
 fi
 
+if [ -z ${tempFolder+x} ]; then 
+	tempFolder=`grep -oP "mixMultipleTemp\s*=\s*\K([^\s]+)" $baseFolder/settings.txt`
+	if [ -z ${tempFolder} ]; then
+		tempFolder=$baseFolder/temp #Use default temp if none assigned
+	elif [ ! -d `dirname $tempFolder` ]; then	
+		echo -e "\n\e[91mThe default temp directory set in the settings file does not exist\e[0m"; exit 1;
+	fi
+elif [ ! -d `dirname $tempFolder` ]; then	
+	echo -e "\n\e[91mThe temp directory does not exist\e[0m"; exit 1;
+fi
+
 if [ -z ${metaData+x} ]; then 
 	metaData=`grep -oP "mixMultipleMetaData\s*=\s*\K([^\s]+)" $baseFolder/settings.txt`
 elif ! grep -qE "^(true|T|TRUE|false|F|FALSE)$" <<< $metaData ; then	
@@ -69,5 +82,5 @@ fi
 echo -e "\e[32mStart mixing ...\e[0m"
 #Run the R script
 rPath=`grep -oP "rscript\s*=\s*\K([^\s]+)" $baseFolder/settings.txt`
-$rPath $baseFolder/dataAndScripts/mixMultiple.R $baseFolder $inputFile $outputFile $readLimit $metaData $verbose
+$rPath $baseFolder/dataAndScripts/mixMultiple.R $baseFolder $inputFile $outputFile $readLimit $metaData $verbose $tempFolder
 echo -e "\e[32mFinished mixing reads\n\e[0m"

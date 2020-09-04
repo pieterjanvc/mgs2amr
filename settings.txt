@@ -1,11 +1,14 @@
 --- GENERAL SETTINGS
-rscript = Rscript
-reformat=/opt/bbmap/reformat.sh
-metacherchant = /opt/metacherchant/out/metacherchant.sh
+rscript = /usr/local/R/4.0.0/bin/Rscript
+reformat=/usr/local/bbmap/38.32.0/reformat.sh
+metacherchant = /usr/local/metacherchant/1.0.0/out/metacherchant.sh
 
 --- MIXMULTIPLE.SH
 mixMultipleMetaData = TRUE
 mixMultipleVerbose = TRUE
+mixMultipleTemp = /scratch/van9wf/pipelineTemp/
 
 --- META2AMR.SH
 meta2amrVerbose = 1
+#The temp folder needs around 5GB per file processed
+meta2amrTemp = /scratch/van9wf/meta2amrTemp/

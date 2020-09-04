@@ -2,10 +2,11 @@
 args = commandArgs(trailingOnly=TRUE)
 
 #Load packages
-suppressPackageStartupMessages(library(dplyr))
 suppressPackageStartupMessages(library(stringr))
 suppressPackageStartupMessages(library(tidyr))
+suppressPackageStartupMessages(library(readr))
 suppressPackageStartupMessages(library(jsonlite))
+suppressPackageStartupMessages(library(dplyr))
 
 options(digits = 10)
 sTime = Sys.time()
@@ -13,8 +14,21 @@ sTime = Sys.time()
 # ---- Setup variables and directories ----
 #******************************************
 
+#Function to ensure that paths always/never end with '/'
+formatPath = function(path, endWithSlash = F){
+  
+  if(str_detect(path, "\\/$") & endWithSlash){
+    return(path)
+  } else if(endWithSlash == F){
+    return(str_remove(path, "\\/$"))
+  } else {
+    return(paste0(path, "/"))
+  }
+  
+}
+
 #Variables from mixMultiple.sh script
-baseFolder = as.character(args[[1]])
+baseFolder = formatPath(as.character(args[[1]]))
 inputFile = as.character(args[[2]])
 outputFile = as.character(args[[3]])
 readLimit = as.integer(args[[4]])
@@ -23,6 +37,7 @@ if(is.na(readLimit)){
 }
 metaData = as.logical(args[[5]])
 verbose = as.logical(args[[6]])
+tempFolder = formatPath(as.character(args[[7]]))
 
 #Grab the location of the reformat script from the settings file
 reformatScript = system(sprintf("grep -oP \"reformat\\s*=\\s*\\K([^\\s]+)\" %s/settings.txt", 
@@ -30,7 +45,8 @@ reformatScript = system(sprintf("grep -oP \"reformat\\s*=\\s*\\K([^\\s]+)\" %s/s
 
 #Create temp folder
 tempName = paste0("mixedSample_", as.integer(Sys.time()))
-dir.create(paste0(baseFolder, "/temp/", tempName))
+tempFolder = paste0(tempFolder, "/", tempName)
+dir.create(tempFolder)
 
 if(file.exists(paste0(baseFolder, "/dataAndScripts/readCounts.csv"))){
   readCounts = read.csv(paste0(baseFolder, "/dataAndScripts/readCounts.csv"),
@@ -49,8 +65,7 @@ if(verbose){
 }
 
 #Read the input file and remove unwanted whitespace
-files = read.csv(inputFile, header = T, 
-                 colClasses = c("character", "character", "numeric", "character", "character")) %>% 
+files = read_csv(inputFile, col_names = T, col_types = cols()) %>%  
   mutate(across(where(is.character), function(x) str_trim(x)))
 
 #Check that sum of RA = 1
@@ -216,23 +231,23 @@ for(i in 1:nrow(toMerge)){
     for(j in 1:fullFile){
       system(sprintf(
         "%s in1=%s in2=%s out=stdout.fastq 2>/dev/null | awk 'NR %% 4 == 1{sub(/@/,\"@%i_\",$0);print;next}\
-        NR %% 2 == 1{print \"+\";next}{print}' | gzip -c > %s/temp/%s/tempFile%i_full%i.fastq.gz",
+        NR %% 2 == 1{print \"+\";next}{print}' | gzip -c > %s/tempFile%i_full%i.fastq.gz",
         reformatScript, toMerge$file1[i], toMerge$file2[i],
-        i, baseFolder, tempName, i, j), intern = F)
+        i, tempFolder, i, j), intern = F)
     }
   } else if(toMerge$fileNeeded[i] == 1.0){
     system(sprintf(
-      "%s in1=%s in2=%s out=%s/temp/%s/tempFile%i_partial.fastq.gz 2>/dev/null",
+      "%s in1=%s in2=%s out=%s/tempFile%i_partial.fastq.gz 2>/dev/null",
       reformatScript, toMerge$file1[i], toMerge$file2[i],
-      baseFolder, tempName, i), intern = T)
+      tempFolder, i), intern = T)
   }
   
   #Filter the fraction of reads needed 
   if(partialFile != 0){
     system(sprintf(
-      "%s --samplerate=%0.10f in1=%s in2=%s out=%s/temp/%s/tempFile%i_partial.fastq.gz 2>/dev/null",
+      "%s --samplerate=%0.10f in1=%s in2=%s out=%s/tempFile%i_partial.fastq.gz 2>/dev/null",
       reformatScript, partialFile, toMerge$file1[i], toMerge$file2[i],
-      baseFolder, tempName, i), intern = T)
+      tempFolder, i), intern = T)
   }
   
   if(verbose){
@@ -246,7 +261,7 @@ if(verbose){
   cat(" Merge all reads together and write final file ... ")
 }
 
-system(paste0("cat ", baseFolder, "/temp/", tempName, "/*.fastq.gz > ", outputFile))
+system(paste0("cat ", tempFolder, "/*.fastq.gz > ", outputFile))
 
 #Write the meta data as JSON (if requested)
 if(metaData){
@@ -259,8 +274,11 @@ if(metaData){
     readLimit = readLimit,
     totalReads = sum(raData$readsNeeded),
     fileData = raData %>% left_join(files %>% select(-type, -relativeAbundance, -readCount), by = "id") %>% 
-      group_by(id, sampleName, type, relativeAbundance, readCount, readsNeeded, fileNeeded) %>% 
-      summarise(filePath1 = filePath[1], filePath2 = ifelse(is.na(filePath[2]), "", filePath[2]), .groups = 'drop')
+      group_by(across(c(-filePath, -modDate, -fileSize, -fileName))) %>%
+      summarise(fileName1 = fileName[1], 
+                filePath1 = filePath[1], 
+                fileName2 = ifelse(is.na(fileName[2]), "", fileName[2]), 
+                filePath2 = ifelse(is.na(filePath[2]), "", filePath[2]), .groups = "drop")
   )
 
   write_json(metaData, paste0(str_extract(outputFile, ".*(?=\\.fastq\\.gz$)"), "_metaData.json"), pretty = T)
@@ -268,8 +286,7 @@ if(metaData){
 }
 
 #Remove temp files
-system(paste0("rm ", baseFolder, "/temp/", tempName, "/*"))
-system(paste0("rmdir ", baseFolder, "/temp/", tempName))
+system(paste("rm -r", tempFolder))
 
 if(verbose){
   cat("done\n\n Total time to run script:", 
