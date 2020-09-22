@@ -1,14 +1,18 @@
 --- GENERAL SETTINGS
-rscript = /usr/local/R/4.0.0/bin/Rscript
+sqlite3=/usr/local/sqlite3/3.33.0/bin/sqlite3
+rscript=/usr/local/R/4.0.2/bin/Rscript
 reformat=/usr/local/bbmap/38.32.0/reformat.sh
-metacherchant = /usr/local/metacherchant/1.0.0/out/metacherchant.sh
+metacherchant=/usr/local/metacherchant/1.0.0/out/metacherchant.sh
+usearch=/usr/local/usearch/10.0.240/bin/usearch
 
 --- MIXMULTIPLE.SH
-mixMultipleMetaData = TRUE
-mixMultipleVerbose = TRUE
-mixMultipleTemp = /scratch/van9wf/pipelineTemp/
+mixMultipleMetaData=TRUE
+mixMultipleVerbose=TRUE
+mixMultipleTemp=/scratch/van9wf/pipelineTemp/
 
 --- META2AMR.SH
-meta2amrVerbose = 1
+meta2amrVerbose=1
 #The temp folder needs around 5GB per file processed
-meta2amrTemp = /scratch/van9wf/meta2amrTemp/
+meta2amrTemp=/scratch/van9wf/pipelineTemp
+meta2amrVerbose=1
+meta2amrForceOverwrite=FALSE

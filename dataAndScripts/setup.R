@@ -12,7 +12,7 @@ if(as.integer(R.version$major) < 4){
 }
 
 #Check R packages
-packages = c("dplyr", "stringr", "tidyr", "jsonlite")
+packages = c("dplyr", "stringr", "tidyr", "jsonlite", "RSQLite", "purrr", "igraph")
 installed = packages %in% installed.packages()[,1]
 
 if(!all(installed)){

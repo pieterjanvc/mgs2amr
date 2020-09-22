@@ -1,64 +1,104 @@
 #!/bin/bash
-#BSUB -W 00:10
-#BSUB -n 1
-#BSUB -M 8000
+#BSUB -W 00:30
+#BSUB -n 4
+#BSUB -M 16000
 #BSUB -o /data/aplab/ARG_PJ/clusterLogs/%J_pipelineWithMix.out
 #BSUB -e /data/aplab/ARG_PJ/clusterLogs/%J_pipelineWithMix.err
 
+module load R/4.0.2
+module load sqlite3
 source /data/aplab/ARG_PJ/pushover.sh
+
+baseFolder=/data/aplab/ARG_PJ/aim2/meta2amr
 
 #When error occurs, notify and exit
 err_report() {
-    pushMessage "ERROR line $1 - exit" "pipelineWithMix"
+    errMsg=`cat $baseFolder/dataAndScripts/lastError`
+    echo -e "$errMsg" #report error to stdout too
+    updateDBwhenError "Error Line $1 $errMsg"
 	exit
 }
-trap 'err_report $LINENO' ERR
+trap 'err_report ${LINENO}' ERR
 
-# pushMessage "Start Pipeline" "pipelineWithMix"
+updateDBwhenError() {
+	#Update the DB
+    $sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
+	"UPDATE scriptUse
+	SET end = '$(date '+%F %T')', status = 'error',
+	info = '$1'
+	WHERE runId = $runId"	
+}
 
-module load R/4.0.0
+exec 2>$baseFolder/dataAndScripts/lastError
 
-#General settings
-baseFolder=/data/aplab/ARG_PJ/aim2/meta2amr
-tempFolder=/scratch/van9wf/pipelineTemp
+pushMessage "Start Pipeline" "pipelineWithMix"
 
-mkdir -p $tempFolder/mixedMetagenomes
+#Folders
+mixTempFolder=/scratch/van9wf/pipelineTemp
+meta2amrTempFolder=/scratch/van9wf/pipelineTemp
+genomesFolder=$mixTempFolder/mixedMetagenomes #Folder to save the mixed files to or get existing ones
+bgFolder=/data/aplab/ARG_PJ/data/haslamData/normalMetagenomes/ #Background metagenomes folder
+iFolder=/data/aplab/ARG_PJ/data/publicData #Isolates folder
 
-# STEP 1 - Generate the mixing input file
-bgName="D5Heidi011" #Name of the background metagenome
-iNames="ERR304796" #Name(s) of the isolate(s). Comma separate (no space) if multiple
-relAb="0.2" #Sum = 1 if no bgMeta or <1 otherwise. Comma separate (no space) if multiple
-fileName=testFile #Will get a timestamp extension in case name is used multiple times 
+#Variables
+fileName=testMix #Set to a specific filename if starting from existing mixed file (rest below is ignored then)
+bgName="" #Name of the background metagenome
+iNames="SRR2976831" #Name(s) of the isolate(s). Comma separate (no space) if multiple
+relAb="1.0" #Sum = 1 if no bgMeta or <1 otherwise. Comma separate (no space) if multip
 
-#Folders where to find the files
-bgFolder=/data/aplab/ARG_PJ/data/haslamData/normalMetagenomes/
-iFolder=/data/aplab/ARG_PJ/data/publicData
+sqlite3=`grep -oP "sqlite3\s*=\s*\K([^\s]+)" $baseFolder/settings.txt`
 
-fileName=$fileName\_`date '+%s'`
-
-# # STEP 1 - Generate the mixing input file
-# bgName=background #Name of the background metagenome
-# iNames="isolate1,isolate2" #Name(s) of the isolate(s)
-# relAb="0.1,0.1" #Relative abundance of each isolate (sum must be 1 if no bgMeta or <1 otherwise)
-# fileName=testFile #Will get a timestamp extension in case name is used multiple times 
-# fileName=$fileName\_`date '+%s'`
-
-# #Folders where to find the files
-# bgFolder=$baseFolder/dataAndScripts/testData
-# iFolder=$baseFolder/dataAndScripts/testData
-
-#Generate the csv file that will serve as input
-Rscript $baseFolder/dataAndScripts/generateMixInput.R \
-	$tempFolder/mixedMetagenomes $bgFolder $bgName $iFolder \
-	$iNames $relAb $fileName
-
-# STEP 2 - Create the mixed file
-$baseFolder/mixMultiple.sh \
-	-i $tempFolder/mixedMetagenomes/$fileName.csv \
-	-o $tempFolder/mixedMetagenomes/$fileName.fastq.gz \
-	-t $tempFolder
+#Register the start of the script in the DB
+runId=$($sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
+	"INSERT INTO scriptUse (scriptName,start,status) \
+	values('pipelineWithMix.sh','$(date '+%F %T')','running'); \
+	SELECT runId FROM scriptUse WHERE runId = last_insert_rowid()")
 	
+echo -e "\n\e[32m"`date "+%T"`" - Starting pipeline with mix ...\e[0m";
 
+if [ ! -f $genomesFolder/$fileName.fastq.gz ]; then
+
+	# STEP 1 - Generate the mixing input file
+	#-----------------------------------------
+	
+	echo -e `date "+%T"`" Generate the mixing input file ...";
+
+	#Generate the csv file that will serve as input
+	Rscript $baseFolder/dataAndScripts/generateMixInput.R \
+		"$genomesFolder" "$bgFolder" "$bgName" "$iFolder" \
+		"$iNames" "$relAb" "$fileName"
+		
+	echo -e `date "+%T"` "done"
+		
+		
+	# STEP 2 - Create the mixed file
+	#-------------------------------
+	
+	$baseFolder/mixMultiple.sh \
+		-i $genomesFolder/$fileName.csv \
+		-o $genomesFolder/$fileName.fastq.gz \
+		-t $mixTempFolder
+	
+else
+	
+	echo -e `date "+%T"` "-" $fileName.fastq.gz "already exists, not creating new one"
+fi
+
+
+# STEP 3 - meta2amr
+# ------------------
+$baseFolder/meta2amr.sh \
+	-i $genomesFolder/$fileName.fastq.gz \
+	-o $meta2amrTempFolder \
+    -t $meta2amrTempFolder \
+	-v 1
+
+#Update the DB
+$sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
+	"UPDATE scriptUse
+	SET end = '$(date '+%F %T')', status = 'finished'
+	WHERE runId = $runId"
+	
 # cd /database/ncbi/
 # myFasta=/data/aplab/ARG_PJ/aim2/mixedSample_1581975575_toBlast.fasta
 # outputFolder=/data/aplab/ARG_PJ/aim2
@@ -71,25 +111,5 @@ $baseFolder/mixMultiple.sh \
 
 # blastn -db /data/aplab/ARG_PJ/aim2/testBlastDB -query $myFasta -task megablast -num_threads 1 -evalue 0.0001 -out "/data/aplab/ARG_PJ/aim2/1581975575_selfAlign.out" \
 	# -outfmt "6 qseqid qlen sacc evalue bitscore length pident nident gaps gapopen staxids scomnames sskingdoms stitle qcovs qcovhsp qcovus" 
-
-# metacherchant=/usr/local/metacherchant/1.0.0/out/metacherchant.sh
-# inputFile=/data/aplab/ARG_PJ/data/test/CJ_EC.fastq.gz
-# baseFolder=/data/aplab/ARG_PJ/aim2/meta2amr
-# tempFolder=/scratch/van9wf/meta2amrTemp
-# tempName=test
-
-
-# module load R/4.0.0
-
-# /data/aplab/ARG_PJ/aim2/meta2amr/mixMultiple.sh \
-	# -i /data/aplab/ARG_PJ/data/test/SE_KP2.csv \
-	# -o /data/aplab/ARG_PJ/data/test/SE_KP2.fastq.gz \
-	# -f
-
-
-
-# /data/aplab/ARG_PJ/aim2/meta2amr/meta2amr.sh \
-	# -i /data/aplab/ARG_PJ/data/test/SE_KP2.fastq.gz \
-	# -o /data/aplab/ARG_PJ/aim2/meta2amr/temp
 
 pushMessage "Finished" "pipelineWithMix"
