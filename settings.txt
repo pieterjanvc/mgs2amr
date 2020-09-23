@@ -4,6 +4,7 @@ rscript=/usr/local/R/4.0.2/bin/Rscript
 reformat=/usr/local/bbmap/38.32.0/reformat.sh
 metacherchant=/usr/local/metacherchant/1.0.0/out/metacherchant.sh
 usearch=/usr/local/usearch/10.0.240/bin/usearch
+blastn=https://blast.ncbi.nlm.nih.gov/Blast.cgi
 
 --- MIXMULTIPLE.SH
 mixMultipleMetaData=TRUE

@@ -9,14 +9,27 @@ module load R/4.0.2
 module load sqlite3
 source /data/aplab/ARG_PJ/pushover.sh
 
-baseFolder=/data/aplab/ARG_PJ/aim2/meta2amr
+baseFolder=$(realpath -- "$(dirname -- "$0")")
+
+#Save error to temp file to it can be both displayed to user and put in DB
+exec 2>$baseFolder/dataAndScripts/lastError
 
 #When error occurs, notify and exit
 err_report() {
-    errMsg=`cat $baseFolder/dataAndScripts/lastError`
-    echo -e "$errMsg" #report error to stdout too
-    updateDBwhenError "Error Line $1 $errMsg"
-	exit
+
+    #Use the line number where error occured and the saved error message
+    errMsg=`cat $baseFolder/dataAndScripts/lastError` 
+	
+	#Insert into DB (make sure quoting is all right)
+	errMsg=$(sed 's/'\''/&&/g' <<< "$errMsg")
+    updateDBwhenError "$runId" "ERROR LINE $1: $errMsg"
+	
+	#Report error to stdout too 
+	echo -e "\n\e[91m--- ERROR LINE $1 ---\n"
+	echo -n "$errMsg"
+	echo -e "\e[0m"
+	
+	exit 1;
 }
 trap 'err_report ${LINENO}' ERR
 
@@ -25,11 +38,9 @@ updateDBwhenError() {
     $sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
 	"UPDATE scriptUse
 	SET end = '$(date '+%F %T')', status = 'error',
-	info = '$1'
-	WHERE runId = $runId"	
+	info = '$2'
+	WHERE runId = $1"
 }
-
-exec 2>$baseFolder/dataAndScripts/lastError
 
 pushMessage "Start Pipeline" "pipelineWithMix"
 

@@ -7,13 +7,18 @@ Developed by PJ Van Camp
 Run the setup.sh script to verify all dependencies and to test the pipeline
 
 The following software needs to be installed:
-- R (version 4.0+ recommended)
-  * Packages: dplyr, stringr, tidyr, jsonlite
+- SQLite3 (https://www.sqlite.org/download.html)
+- R version 4.0+ (https://www.r-project.org/) 
+  * Packages: dplyr(1.0+), stringr, tidyr, jsonlite
 - bbmap (https://jgi.doe.gov/data-and-tools/bbtools/bb-tools-user-guide/installation-guide/)
   * If unzipped in custom folder, set the path to the reformat.sh script in the settings.txt
 - MetaCherchant (https://github.com/ctlab/metacherchant)
-
-Update the paths to dependencies in the 'settings.txt' file if needed
+- BLASTn: two options available
+  * Use a local blastn tool (https://blast.ncbi.nlm.nih.gov/Blast.cgi?PAGE_TYPE=BlastDocs&DOC_TYPE=Download)
+    Make sure to download the nucleotide (nt) database or a subset containing all bacteria
+  * Use a cloud instance of BLAST (e.g. https://blast.ncbi.nlm.nih.gov/Blast.cgi)	
+   
+IMPORTANT: Update the paths to all dependencies in the 'settings.txt' file if needed
 
 -- END SETUP.SH --
 

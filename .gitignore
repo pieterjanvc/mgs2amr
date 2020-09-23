@@ -3,6 +3,7 @@
 !.gitignore
 !*.R
 !*.sh
+!*.sql
 !*.txt
 .Rproj.user
 /temp/*
