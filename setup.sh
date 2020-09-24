@@ -3,6 +3,7 @@
 baseFolder=$(realpath -- "$(dirname -- "$0")")
 
 #Save error to temp file to it can be both displayed to user and put in DB
+touch $baseFolder/dataAndScripts/lastError
 exec 2>$baseFolder/dataAndScripts/lastError
 
 #When error occurs, notify and exit
@@ -46,6 +47,7 @@ while getopts ":h" opt; do
   esac  
 done
 
+echo -e "\e[32m"`date "+%T"`" - Start the setup check...\e[0m\n"
 
 # STEP 1 - Check dependencies
 #----------------------------
@@ -132,7 +134,7 @@ $sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
 echo -e " - "$message
 
 
-echo -e "\e[32m\n   All dependencies seem to be present\e[0m\n"
+echo -e "\e[32m   All dependencies seem to be present\e[0m\n"
 
 
 #STEP 2 - Test the whole pipeline
@@ -144,17 +146,20 @@ cat $baseFolder/dataAndScripts/testData/input.csv | awk '{gsub(/~/,"'$baseFolder
 	$baseFolder/dataAndScripts/testData/testInput.csv
 
 #Run mixMultiple.sh
-$baseFolder/mixMultiple.sh -f -i $baseFolder/dataAndScripts/testData/testInput.csv \
-	-o $baseFolder/dataAndScripts/testData/testOutput.fastq.gz
+$baseFolder/mixMultiple.sh -f \
+	-i $baseFolder/dataAndScripts/testData/testInput.csv \
+	-o $baseFolder/dataAndScripts/testData/testOutput.fastq.gz \
+	-v FALSE
 
 $sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
 	"INSERT INTO logs (runId,tool,timeStamp,actionId,actionName)
 	VALUES($runId,'setup.sh',$(date '+%s'),4,'mixMultiple test succesful')"
-
+echo -e "\e[32m   Mixing test successful\e[0m\n"
 
 #Finish script
 $sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
 	"UPDATE scriptUse
 	SET end = '$(date '+%F %T')', status = 'finished'
 	WHERE runId = $runId"
-echo -e "\e[32mThe test of the entire pipeline was successful\e[0m\n"
+	
+echo -e "\e[32m"`date "+%T"`" - Setup check finished: The entire pipeline seems to be working correctly\e[0m\n"

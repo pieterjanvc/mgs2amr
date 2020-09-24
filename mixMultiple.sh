@@ -4,6 +4,7 @@ baseFolder=$(realpath -- "$(dirname -- "$0")")
 sqlite3=`grep -oP "sqlite3\s*=\s*\K([^\s]+)" $baseFolder/settings.txt`
 
 #Save error to temp file to it can be both displayed to user and put in DB
+touch $baseFolder/dataAndScripts/lastError
 exec 2>$baseFolder/dataAndScripts/lastError
 
 #When error occurs, notify and exit
@@ -99,14 +100,16 @@ fi
 
 if [ -z ${metaData+x} ]; then 
 	metaData=`grep -oP "mixMultipleMetaData\s*=\s*\K([^\s]+)" $baseFolder/settings.txt`
-elif ! grep -qE "^(true|T|TRUE|false|F|FALSE)$" <<< $metaData ; then	
+elif ! grep -qE "^(true|T|TRUE|false|F|FALSE)$" <<< $metaData; then	
 	echo -e "\n\e[91mThe metaData option (-m) needs to be either TRUE or FALSE\e[0m"; exit 1; 
 fi
 
 if [ -z ${verbose+x} ]; then 
 	verbose=`grep -oP "mixMultipleVerbose\s*=\s*\K([^\s]+)" $baseFolder/settings.txt`
-elif ! grep -qE "^(true|T|TRUE|false|F|FALSE)$" <<< $verbose ; then	
-	echo -e "\n\e[91mThe verbose option (-v) needs to be either TRUE or FALSE\e[0m"; exit 1; 
+elif ! grep -qE "^(true|T|TRUE|false|F|FALSE)$" <<< $verbose; then	
+	echo -e "\n\e[91mThe verbose option (-v) needs to be either TRUE or FALSE\e[0m"; exit 1;
+else
+	verbose=`if grep -qE "^(true|T|TRUE)$" <<< $verbose; then echo T; else echo F; fi`
 fi
 
 #Register the start of the script in the DB
@@ -126,7 +129,9 @@ $sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
 	($runId,'mixMultiple.sh','forceOverwrite', '$forceOverwrite'),
 	($runId,'mixMultiple.sh','verbose', '$verbose')"
 
-echo -e "\n\e[32m"`date "+%T"`" - Start mixing reads into" `basename $outputFile` "...\e[0m"
+if [ $verbose == T ]; then
+	echo -e "\n\e[32m"`date "+%T"`" - Start mixing reads into" `basename $outputFile` "...\e[0m"
+fi
 
 #Run the R script
 rPath=`grep -oP "rscript\s*=\s*\K([^\s]+)" $baseFolder/settings.txt`
@@ -134,7 +139,9 @@ $rPath $baseFolder/dataAndScripts/mixMultiple.R \
 	$baseFolder $inputFile $outputFile $readLimit \
 	$metaData $verbose $tempFolder $runId
 
-echo -e "\e[32m"`date "+%T"`" - Finished mixing reads\n\e[0m"
+if [ $verbose == T ]; then
+	echo -e "\e[32m"`date "+%T"`" - Finished mixing reads\n\e[0m"
+fi
 
 #Update the DB
 $sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \

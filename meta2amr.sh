@@ -4,6 +4,7 @@ baseFolder=$(realpath -- "$(dirname -- "$0")")
 sqlite3=`grep -oP "sqlite3\s*=\s*\K([^\s]+)" $baseFolder/settings.txt`
 
 #Save error to temp file to it can be both displayed to user and put in DB
+touch $baseFolder/dataAndScripts/lastError
 exec 2>$baseFolder/dataAndScripts/lastError
 
 #When error occurs, notify and exit
@@ -128,6 +129,7 @@ fi
 if [ -z ${verbose+x} ]; then 
 	verbose=`grep -oP "meta2amrVerbose\s*=\s*\K([^\s]+)" $baseFolder/settings.txt`
 elif ! grep -qE "^(0|1|2)$" <<< $verbose ; then
+echo verbose = ${verbose[@]}
 	echo -e "\n\e[91mThe verbose option (-v) needs to be 0, 1 or 2\n Read the help file (-h) for more info\e[0m"; exit 1; 
 fi
 
@@ -193,7 +195,7 @@ if [ -z "$MCsuccess" ]; then
 		--maxkmers=100000 \
 		--bothdirs=False \
 		--chunklength=250 \
-		-m 12G
+		-m 16G
 		
     $sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
 	"INSERT INTO logs (runId,tool,timeStamp,actionId,actionName)
@@ -220,7 +222,6 @@ if [ $verbose != "0" ]; then echo -e `date "+%T"`" - Start BLAST preparations  .
 
 #Get paths from the settings
 Rscript=`grep -oP "rscript\s*=\s*\K([^\s]+)" $baseFolder/settings.txt`
-usearch=`grep -oP "usearch\s*=\s*\K([^\s]+)" $baseFolder/settings.txt`
 
 #Set any option to modify the script
 scriptOptions=(keepAllMetacherchantData maxPathDist minBlastLength trimLength clusterIdentidy forceRedo)
@@ -245,7 +246,7 @@ $sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
 	"INSERT INTO blastPrepOptions (runId,option,value) VALUES $values"
 
 $Rscript $baseFolder/dataAndScripts/blastPrep.R \
-	$baseFolder $tempFolder	$tempName $usearch $verbose $runId \
+	"$baseFolder" "$tempFolder"	"$tempName" "$verbose" "$runId" \
 	${scriptValues[@]}
 
 if [ $verbose != "0" ]; then echo -e `date "+%T"`" - Finished BLAST preparations"; fi;

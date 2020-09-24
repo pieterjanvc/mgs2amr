@@ -1,7 +1,7 @@
 #!/bin/bash
 #BSUB -W 00:30
 #BSUB -n 4
-#BSUB -M 16000
+#BSUB -M 20000
 #BSUB -o /data/aplab/ARG_PJ/clusterLogs/%J_pipelineWithMix.out
 #BSUB -e /data/aplab/ARG_PJ/clusterLogs/%J_pipelineWithMix.err
 
@@ -9,9 +9,10 @@ module load R/4.0.2
 module load sqlite3
 source /data/aplab/ARG_PJ/pushover.sh
 
-baseFolder=$(realpath -- "$(dirname -- "$0")")
+baseFolder=/data/aplab/ARG_PJ/aim2/meta2amr
 
 #Save error to temp file to it can be both displayed to user and put in DB
+touch $baseFolder/dataAndScripts/lastError
 exec 2>$baseFolder/dataAndScripts/lastError
 
 #When error occurs, notify and exit
@@ -28,6 +29,8 @@ err_report() {
 	echo -e "\n\e[91m--- ERROR LINE $1 ---\n"
 	echo -n "$errMsg"
 	echo -e "\e[0m"
+	
+	pushMessage "Error in line $1" "pipelineWithMix"
 	
 	exit 1;
 }
