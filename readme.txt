@@ -68,7 +68,7 @@ Arguments [h|i|o|v]
  -t (optional) The location of the temp folder (files removed once completed). 
      Default = meta2amr/temp unless 'meta2amrTemp' is set in the setting file
  -v (optional) Default can be changed in the settings file
-    0: Nothing is written to stdout
+    0: Nothing is written to stdout (exception of errors)
     1: General progress is posted to stdout
     2: All available details are posted to stdout    
 

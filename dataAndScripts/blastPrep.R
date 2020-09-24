@@ -32,27 +32,21 @@ args = commandArgs(trailingOnly = TRUE) #arguments specified in the shell file
 baseFolder = formatPath(args[[1]], endWithSlash = T)
 tempFolder = formatPath(args[[2]], endWithSlash = T)
 tempName = args[[3]]
-usearch = args[[4]]
-verbose = args[[5]]
-runId = as.integer(args[[6]])
-keepAllMetacherchantData = as.logical(args[[7]])
-maxPathDist = as.integer(args[[8]]) #Distance from ARG to crop the GFA file (reduces blast search)
-minBlastLength = as.integer(args[[9]]) #Min segment length to submit to blast
-trimLength = as.integer(args[[10]]) #Loose segments smaller than this will be cut from thr GFA
-clusterIdentidy  = as.numeric(args[[11]]) #The cluster identity percent used in usearch
-forceRedo = as.logical(args[[12]]) #If parts of the code have successfully run before a crash, do not repeat unless forceRedo = T
+verbose = args[[4]]
+runId = as.integer(args[[5]])
+keepAllMetacherchantData = as.logical(args[[6]])
+maxPathDist = as.integer(args[[7]]) #Distance from ARG to crop the GFA file (reduces blast search)
+minBlastLength = as.integer(args[[8]]) #Min segment length to submit to blast
+trimLength = as.integer(args[[9]]) #Loose segments smaller than this will be cut from thr GFA
+clusterIdentidy  = as.numeric(args[[10]]) #The cluster identity percent used in usearch
+forceRedo = as.logical(args[[11]]) #If parts of the code have successfully run before a crash, do not repeat unless forceRedo = T
 
-# baseFolder = "/data/aplab/ARG_PJ/aim2/meta2amr/"
-# tempFolder = "/scratch/van9wf/pipelineTemp/testFile_1599247967_1599248674/"
-# tempName = "testFile_1599247967_1599248674"
-# usearch =  "/usr/local/usearch/10.0.240/bin/usearch"
-# verbose = 1
-# keepAllMetacherchantData = T
-# maxPathDist = 5000 #Distance from ARG to crop the GFA file (reduces blast search)
-# minBlastLength = 250 #Min segment length to submit to blast
-# trimLength = 100 #Loose segments smaller than this will be cut from thr GFA
-# clusterIdentidy  = 0.95 #The cluster identity percent used in usearch
-# forceRedo = F #If parts of the code have successfully run before a crash, do not repeat unless forceRedo = T
+#Generate a list out of the settings file
+settings = readLines(paste0(baseFolder, "settings.txt"))
+settings = settings[str_detect(settings,"^\\s*[^=#]+=.*$")]
+settings = str_match(settings, "\\s*([^=\\s]+)\\s*=\\s*(.*)")
+settings = setNames(str_trim(settings[,3]), settings[,2])
+
 tempFolder = formatPath(paste0(tempFolder, tempName), endWithSlash = T)
 logPath = sprintf("%s%s_log.csv", tempFolder,tempName)
 prevRunId = ifelse(file.exists(paste0(tempFolder,"runId")),
@@ -270,7 +264,7 @@ tryCatch({
     
     #Use cluster_fast to reduce number of segments by grouping in identity clusters
     system(sprintf("%s -cluster_fast %s -sort size -id %f -uc %s%s",
-                   usearch,
+                   settings["usearch"],
                    sprintf("%sblastSegments.fasta", tempFolder),
                    clusterIdentidy,
                    sprintf("%sblastSegments.out", tempFolder),
@@ -294,56 +288,37 @@ tryCatch({
   }
   
   
-  # ---- Submit to BLAST  ---
-  #**************************
-  if(nrow(logs %>% filter(actionId == 16)) > 0 & !forceRedo){
+  # ---- Finalise preparation ---
+  #******************************
+  myConn = dbConnect(SQLite(), sprintf("%sdataAndScripts/meta2amr.db", baseFolder))
+  
+  if(nrow(logs %>% filter(actionId == 15)) > 0 & !forceRedo){
     
     if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S   "), 
-                        "Skip submitting FASTA files to BLAST, already done\n\nEverything has been successfully run already.",
+                        "No new FASTA files to prepare for BLAST, already done\n\nEverything has been successfully run already.",
                         "Set forceRedo = TRUE and run again if needed\n")}
-    newLogs = rbind(newLogs, list(as.integer(Sys.time()), 14, "Skip submitting FASTA files to BLAST, already done"))
+    newLogs = rbind(newLogs, list(as.integer(Sys.time()), 14, "No new files to prepare for BLAST"))
     
   } else {
     
-    if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S   "),"Submitting FASTA files to BLAST ... ")}
-    newLogs = rbind(newLogs, list(as.integer(Sys.time()), 15, "Start submitting FASTA files to BLAST"))
+    if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S   "),"Updating database with new files to BLAST ... ")}
     
     blastSubmissions = data.frame()
     for(i in 1:nFiles){
       
-      Sys.sleep(3) #Prevent too fast sequential submissions (api will block those)
-      
-      #Submit to the blast API with limits to bacterial genomes (taxid2)
-      # RID = blast_submit(sprintf("%sblastSegmentsClustered%i.fasta", tempFolder, i),
-      #                    program = "blastn", megablast = T, database = "nt", expect = 1e-25, word_size = 64, max_num_seq = 50,
-      #                    entrez_query = "txid2 [ORGN]", verbose = 1)
-      RID = "FAKEID"
-      
-      #Save the RID info to a central file (following up the submission is not done in this process as it can take a while)
+      #Prepare the table to insert into blastSubmissions
       blastSubmissions = rbind(
         blastSubmissions,
-        list(RID = RID,
+        list(RID = "",
              timeStamp = as.integer(Sys.time()), 
              tempName = tempName, 
              fastaFile = sprintf("blastSegmentsClustered%i.fasta", i), 
-             statusCode = ifelse(is.na(RID), 1, 2), 
-             statusMessage = ifelse(is.na(RID), "Failed submission", "Successful submission"), 
+             statusCode = 0, 
+             statusMessage = "Awaiting submission", 
              folder = tempFolder))
-    }
+    } 
     
-    if(verbose > 0){cat("done\n")}
-    newLogs = rbind(newLogs, list(as.integer(Sys.time()), 16, "Finished submitting FASTA files to BLAST"))
-  }
-  
-  newLogs = rbind(newLogs, list(as.integer(Sys.time()), 17, "Finished BLAST prep"))
-}, 
-finally = {
-  
-  
-  myConn = dbConnect(SQLite(), sprintf("%sdataAndScripts/meta2amr.db", baseFolder))
-  
-  #Submit the info on BALST submissions (if no fail)
-  if(exists("blastSubmissions")){
+    #Insert into DB
     blastSubmissions$runId = runId
     blastSubmissions = blastSubmissions %>% 
       select(runId,RID,timeStamp,tempName,fastaFile,statusCode,statusMessage,folder)
@@ -352,7 +327,17 @@ finally = {
                                       "VALUES (?,?,?,?,?,?,?,?)"), 
                         params = unname(as.list(blastSubmissions)))
     dbClearResult(q)
+
+    if(verbose > 0){cat("done\n")}
+    newLogs = rbind(newLogs, list(as.integer(Sys.time()), 15, "Updated database with new files to BLAST"))
+    
   }
+  
+  newLogs = rbind(newLogs, list(as.integer(Sys.time()), 16, "Finished BLAST prep"))
+}, 
+finally = {
+  
+  myConn = dbConnect(SQLite(), sprintf("%sdataAndScripts/meta2amr.db", baseFolder))
   
   #Submit the logs, even in case of error so we know where to resume
   newLogs$runId = runId
@@ -366,4 +351,5 @@ finally = {
   
   #Add the runId to the temp folder
   write(runId, paste0(tempFolder, "runId"))
+  
 })
