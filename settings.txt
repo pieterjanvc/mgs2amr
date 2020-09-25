@@ -1,11 +1,9 @@
---- GENERAL SETTINGS
+--- GENERAL DEPENDENCIES
 sqlite3=/usr/local/sqlite3/3.33.0/bin/sqlite3 
 rscript=/usr/local/R/4.0.2/bin/Rscript
 reformat=/usr/local/bbmap/38.32.0/reformat.sh
 metacherchant=/usr/local/metacherchant/1.0.0/out/metacherchant.sh
 usearch=/usr/local/usearch/10.0.240/bin/usearch
-blastn=https://blast.ncbi.nlm.nih.gov/Blast.cgi
-blastDB=nt
 
 --- MIXMULTIPLE.SH
 mixMultipleMetaData=TRUE
@@ -16,3 +14,13 @@ mixMultipleTemp=/scratch/van9wf/pipelineTemp/
 meta2amrTemp=/scratch/van9wf/pipelineTemp
 meta2amrVerbose=1
 meta2amrForceOverwrite=FALSE
+
+--- LOCALBLAST.SH
+localBlastVerbose=1
+localBlastBlastn=/usr/local/blast/2.10.0/bin/blastn
+localBlastDB=/database/ncbi/nt
+
+--- REMOTEBLAST.SH
+remoteBlastVerbose=1
+remoteBlastBlastn=https://blast.ncbi.nlm.nih.gov/Blast.cgi
+remoteBlastEntrez="bact[taxid2]"

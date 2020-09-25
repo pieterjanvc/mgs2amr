@@ -20,7 +20,7 @@ The following software needs to be installed:
    
 IMPORTANT: Update the paths to all dependencies in the 'settings.txt' file if needed
 
--- END SETUP.SH --
+-- END SETUP.SH ---
 
 
 --- MIXMULTIPLE.SH ---
@@ -55,7 +55,7 @@ This is a .csv file with the following columns
     Leave empty in case of 1 interleaved data file
  - Any other columns will be ignored, but put in the meta-data JSON file if generated
 
--- END MIXMULTIPLE.SH --
+-- END MIXMULTIPLE.SH ---
 
 
 --- META2AMR.SH ---
@@ -68,7 +68,7 @@ Arguments [h|i|o|v]
  -t (optional) The location of the temp folder (files removed once completed). 
      Default = meta2amr/temp unless 'meta2amrTemp' is set in the setting file
  -v (optional) Default can be changed in the settings file
-    0: Nothing is written to stdout (exception of errors)
+    0: Nothing is written to stdout
     1: General progress is posted to stdout
     2: All available details are posted to stdout    
 
@@ -77,4 +77,23 @@ Special case when resuming previous run
      Only set if an error occured and you like to resume from a specific temp file
 	 All other parameters but verbose will be ignored
 	
--- END META2AMR.SH --
+-- END META2AMR.SH ---
+
+
+--- LOCALBLAST.SH ---
+Run local BLASTn for files in the meta2amr database awaiting alignment
+
+Arguments [b|d|h|r|v]
+ -h Read the help documentation
+ -b (optional) The path to the local blastn module
+	 Default = value from 'localBlastBlastn' in the setting file
+ -d (optional) Set the BLAST database to use (should be nt or custom set of bacteria)
+	 Default = value from 'localBlastDB' in the setting file
+ -r (optional) Run the BLAST search only for these runIds 
+     Default = all runIds in the blastSubmissions table of the meta2amr database 
+	 that have not been blasted yet
+ -v (optional) Default can be changed in the settings file
+    0: Nothing is written to stdout (except errors)
+    1: General progress is posted to stdout
+	
+-- END LOCALBLAST.SH ---

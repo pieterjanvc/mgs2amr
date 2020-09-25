@@ -37,7 +37,7 @@ updateDBwhenError() {
 while getopts ":h" opt; do
   case $opt in
 	h) echo -e "\n"
-	   grep -zo "\-\-\- SETUP\.SH.*\-\- END SETUP\.SH \-\-" $baseFolder/readme.txt 
+	   awk '/--- SETUP.SH ---/,/-- END SETUP.SH ---/' $baseFolder/readme.txt
 	   echo -e "\n"
 	   exit
     ;;	
@@ -114,7 +114,7 @@ echo -e " - bbmap is present"
 
 
 #Check if BLASTn is either a local tool or link to a remote service
-blastPath=`grep -oP "blastn\s*=\s*\K([^\s]+)" $baseFolder/settings.txt`
+blastPath=`grep -oP "localBlastBlastn\s*=\s*\K([^\s]+)" $baseFolder/settings.txt`
 if [ -z `command -v $blastPath` ]; then 
 	curl -s --head $blastPath| head -n 1 | grep "HTTP/1.[01] [23].." > /dev/null
 	if [ "$?" != 0 ]; then

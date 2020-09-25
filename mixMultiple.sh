@@ -39,7 +39,7 @@ updateDBwhenError() {
 while getopts ":hi:o:t:r:m:fv:" opt; do
   case $opt in
 	h) echo -e "\n"
-	   grep -zo "\-\-\- MIXMULTIPLE\.SH.*\-\- END MIXMULTIPLE\.SH \-\-" $baseFolder/readme.txt 
+	   awk '/--- MIXMULTIPLE.SH ---/,/-- END MIXMULTIPLE.SH ---/' $baseFolder/readme.txt 
 	   echo -e "\n"
 	   exit
     ;;	

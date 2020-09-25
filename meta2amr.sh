@@ -39,7 +39,7 @@ updateDBwhenError() {
 while getopts ":hi:o:t:fv:r:" opt; do
   case $opt in
 	h) echo -e "\n"
-	   grep -zo "\-\-\- META2AMR\.SH.*\-\- END META2AMR\.SH \-\-" $baseFolder/readme.txt 
+	   awk '/--- META2AMR.SH ---/,/-- END META2AMR.SH ---/' $baseFolder/readme.txt  
 	   echo -e "\n"
 	   exit
     ;;	
