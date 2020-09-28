@@ -1,8 +1,8 @@
 #!/usr/bin/env Rscript
 
-#*****************************
+#******************************
 # ---- Local BLASTn search ----
-#*****************************
+#******************************
 suppressPackageStartupMessages(library(stringr))
 suppressPackageStartupMessages(library(dplyr))
 suppressPackageStartupMessages(library(gfaTools))
@@ -23,16 +23,19 @@ args = commandArgs(trailingOnly = TRUE) #arguments specified in the bash file
 baseFolder = formatPath(args[[1]], endWithSlash = T)
 runId = as.integer(args[[2]])
 verbose = args[[3]]
+blastn = args[[4]]
+blastDB = args[[5]]
+prevRunId = as.numeric(strsplit(args[[6]], " "))
 
-#Generate a list out of the settings file
-settings = readLines(paste0(baseFolder, "settings.txt"))
-settings = settings[str_detect(settings,"^\\s*[^=#]+=.*$")]
-settings = str_match(settings, "\\s*([^=\\s]+)\\s*=\\s*(.*)")
-settings = setNames(str_trim(settings[,3]), settings[,2])
+#Limit the searched for specific runIds if set, else do all
+prevRunId = ifelse(!is.na(prevRunId),
+	sprintf("AND runId in ('%s')", paste(prevRunId, collapse = "','")),
+	"")
 
 #Get all blast submissions that need further follow-up
 myConn = dbConnect(SQLite(), paste0(baseFolder, "dataAndScripts/meta2amr.db"))
-submTable = dbGetQuery(myConn, "SELECT * FROM blastSubmissions WHERE statusCode in (0,1,3,4)")
+submTable = dbGetQuery(myConn, paste("SELECT * FROM blastSubmissions WHERE statusCode in (0,1,3,4)",
+									  prevRunId)) %>% arrange(timeStamp)
 dbDisconnect(myConn) 
 
 #Status codes
@@ -44,17 +47,17 @@ statusCodes = data.frame(
               "remote results downloaded and processed", "remote download or post-processing failed", 
               "local search started", "local search finished and processed sucessfully", "local search failed"))
 
-if(system(paste0("if [ -z `command -v ", settings["blastn"], "` ]; then echo T; else echo F; fi"), intern = T)){
+if(system(paste0("if [ -z `command -v ", blastn, "` ]; then echo T; else echo F; fi"), intern = T)){
   stop("The local blastn module cannot be located.\n ",
-       "Please check the settings file to update the location if needed.\n ",
-       "Set 'blastn=https://blast.ncbi.nlm.nih.gov/Blast.cgi' if you want to use NCBI's remote blastn")
+       "Please check the settings file and update the localBlastBlastn to the blastn module if needed.\n ",
+       "Or run remoteBlast.sh if you don't have blast installed (or the resources)")
 }
 
 tryCatch({
   # ---- Local BLAST ----
   #**********************
   
-  if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S - "), "Start local BLASTn ...\n")}
+  if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S "), "Start local BLASTn ...\n")}
   newLogs = data.frame(timeStamp = as.integer(Sys.time()), actionId = 1, actionName = "Start local BLASTn")
   
   #Get all files to submit
@@ -67,20 +70,20 @@ tryCatch({
       q = dbSendStatement(
         myConn, 
         "UPDATE blastSubmissions SET runId = ?, timeStamp = ?, statusCode  = ?, statusMessage = ?",
-        params = list(runId, as.integer(Sys.time()), 11, statusCodes$message[11]))
+        params = list(runId, as.integer(Sys.time()), 12, statusCodes$message[12]))
       dbClearResult(q)
       dbDisconnect(myConn)
       
       newLogs = rbind(newLogs, list(as.integer(Sys.time()), 2, 
-                                    sprintf("%s (submId %i) blastn started",toSubmit$fastaFile[i], toSubmit$submId[i])))
+                                    sprintf("Start BLASTn for submId %i", toSubmit$submId[i])))
       if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S  "), 
-                          sprintf("  Progress %i/%i Blastn for submId %i ... ",toSubmit$submId[i], i, nrow(toSubmit)))}
+                          sprintf("- Progress %i/%i Blastn for submId %i ... ",toSubmit$submId[i], i, nrow(toSubmit)))}
       
-      # #Run local blastn
-      # system(sprintf('%s -db "%s" -query "%s" -task megablast -evalue %s -word_size %i outfmt 15 -out "%s"',
-                     # settings["blastn"], settings["blastDB"], paste0(toSubmit$folder[i], toSubmit$fastaFile[i]),
-                     # blastArgs$evalue, blastArgs$word_size, 
-                     # paste0(toSubmit$folder[i], str_replace(toSubmit$fastaFile[i], ".fasta", ".json"))))
+      #Run local blastn
+      system(sprintf('%s -db "%s" -query "%s" -task megablast -evalue %s -word_size %i -outfmt 15 -out "%s"',
+                     blastn, blastDB, paste0(toSubmit$folder[i], toSubmit$fastaFile[i]),
+                     blastArgs$evalue, blastArgs$word_size, 
+                     paste0(toSubmit$folder[i], str_replace(toSubmit$fastaFile[i], ".fasta", ".json"))))
       
       #Update the blastSubmissions table
       myConn = dbConnect(SQLite(), paste0(baseFolder, "dataAndScripts/meta2amr.db"))
@@ -88,7 +91,7 @@ tryCatch({
         myConn, 
         "UPDATE blastSubmissions SET runId = ?, timeStamp = ?, statusCode  = ?, statusMessage = ?
       WHERE submId = ?",
-        params = list(runId, as.integer(Sys.time()), 12, statusCodes$message[12], toSubmit$submId[i]))
+        params = list(runId, as.integer(Sys.time()), 13, statusCodes$message[13], toSubmit$submId[i]))
       dbClearResult(q)
       dbDisconnect(myConn)
       
@@ -96,7 +99,7 @@ tryCatch({
       write(runId, paste0(toSubmit$folder[i], "runId"))
       
       newLogs = rbind(newLogs, list(as.integer(Sys.time()), 3, 
-                                    sprintf("%s (submId %s) blastn finished",toSubmit$fastaFile[i], toSubmit$submId[i])))
+                                    sprintf("Finished BLASTn for submId %s",toSubmit$submId[i])))
       if(verbose > 0){cat("done\n")}
       
     }
@@ -108,7 +111,7 @@ tryCatch({
   }
 
   newLogs = rbind(newLogs, list(as.integer(Sys.time()), 5, "Finished local BLASTn"))
-  if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S - "), "Finished local BLASTn\n")}
+  if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S "), "Finished local BLASTn\n")}
   
 }, 
 finally = {

@@ -1,5 +1,12 @@
+#------------------------------------------------
+# DEPENDENCIES & DEFAULT PARAMETERS FOR META2AMR
+#------------------------------------------------
+# NOTE: Do NOT quote values unless quotation is part of it
+#  ex.1: var=test 1; NOT var="test 1"
+#  ex.2: var=test "test" test; NOT "test \"test\" test"
+
 --- GENERAL DEPENDENCIES
-sqlite3=/usr/local/sqlite3/3.33.0/bin/sqlite3 
+sqlite3=/usr/local/sqlite3/3.33.0/bin/sqlite3
 rscript=/usr/local/R/4.0.2/bin/Rscript
 reformat=/usr/local/bbmap/38.32.0/reformat.sh
 metacherchant=/usr/local/metacherchant/1.0.0/out/metacherchant.sh
@@ -19,8 +26,10 @@ meta2amrForceOverwrite=FALSE
 localBlastVerbose=1
 localBlastBlastn=/usr/local/blast/2.10.0/bin/blastn
 localBlastDB=/database/ncbi/nt
+localBlastTimeout=7200
+localBlastCheckFreq=120
 
 --- REMOTEBLAST.SH
 remoteBlastVerbose=1
 remoteBlastBlastn=https://blast.ncbi.nlm.nih.gov/Blast.cgi
-remoteBlastEntrez="bact[taxid2]"
+remoteBlastEntrez=txid2 [ORGN]

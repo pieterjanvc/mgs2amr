@@ -1,7 +1,7 @@
 #!/bin/bash
 
 baseFolder=$(realpath -- "$(dirname -- "$0")")
-sqlite3=`grep -oP "sqlite3\s*=\s*\K([^\s]+)" $baseFolder/settings.txt`
+sqlite3=`grep -oP "sqlite3\s*=\s*\K(.*)" $baseFolder/settings.txt`
 
 #Save error to temp file to it can be both displayed to user and put in DB
 touch $baseFolder/dataAndScripts/lastError
@@ -87,7 +87,7 @@ elif [[ ! $test =~ ^[0-9]+$ ]]; then
 fi
 
 if [ -z ${tempFolder+x} ]; then 
-	tempFolder=`grep -oP "mixMultipleTemp\s*=\s*\K([^\s]+)" $baseFolder/settings.txt`
+	tempFolder=`grep -oP "mixMultipleTemp\s*=\s*\K(.*)" $baseFolder/settings.txt`
 	tempFolder=${tempFolder%/}
 	if [ -z ${tempFolder} ]; then
 		tempFolder=$baseFolder/temp #Use default temp if none assigned
@@ -99,13 +99,13 @@ elif [ ! -d `dirname $tempFolder` ]; then
 fi
 
 if [ -z ${metaData+x} ]; then 
-	metaData=`grep -oP "mixMultipleMetaData\s*=\s*\K([^\s]+)" $baseFolder/settings.txt`
+	metaData=`grep -oP "mixMultipleMetaData\s*=\s*\K(.*)" $baseFolder/settings.txt`
 elif ! grep -qE "^(true|T|TRUE|false|F|FALSE)$" <<< $metaData; then	
 	echo -e "\n\e[91mThe metaData option (-m) needs to be either TRUE or FALSE\e[0m"; exit 1; 
 fi
 
 if [ -z ${verbose+x} ]; then 
-	verbose=`grep -oP "mixMultipleVerbose\s*=\s*\K([^\s]+)" $baseFolder/settings.txt`
+	verbose=`grep -oP "mixMultipleVerbose\s*=\s*\K(.*)" $baseFolder/settings.txt`
 elif ! grep -qE "^(true|T|TRUE|false|F|FALSE)$" <<< $verbose; then	
 	echo -e "\n\e[91mThe verbose option (-v) needs to be either TRUE or FALSE\e[0m"; exit 1;
 else
@@ -134,7 +134,7 @@ if [ $verbose == T ]; then
 fi
 
 #Run the R script
-rPath=`grep -oP "rscript\s*=\s*\K([^\s]+)" $baseFolder/settings.txt`
+rPath=`grep -oP "rscript\s*=\s*\K(.*)" $baseFolder/settings.txt`
 $rPath $baseFolder/dataAndScripts/mixMultiple.R \
 	$baseFolder $inputFile $outputFile $readLimit \
 	$metaData $verbose $tempFolder $runId

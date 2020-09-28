@@ -58,9 +58,9 @@ iFolder=/data/aplab/ARG_PJ/data/publicData #Isolates folder
 fileName=testMix #Set to a specific filename if starting from existing mixed file (rest below is ignored then)
 bgName="" #Name of the background metagenome
 iNames="SRR2976831" #Name(s) of the isolate(s). Comma separate (no space) if multiple
-relAb="1.0" #Sum = 1 if no bgMeta or <1 otherwise. Comma separate (no space) if multip
+relAb="1.0" #Sum = 1 if no bgMeta or <1 otherwise. Comma separate (no space) if multiple
 
-sqlite3=`grep -oP "sqlite3\s*=\s*\K([^\s]+)" $baseFolder/settings.txt`
+sqlite3=`grep -oP "sqlite3\s*=\s*\K(.*)" $baseFolder/settings.txt`
 
 #Register the start of the script in the DB
 runId=$($sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \

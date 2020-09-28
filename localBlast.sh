@@ -1,8 +1,8 @@
 #!/bin/bash
 
 baseFolder=$(realpath -- "$(dirname -- "$0")")
-sqlite3=`grep -oP "sqlite3\s*=\s*\K([^\s]+)" $baseFolder/settings.txt`
-Rscript=`grep -oP "rscript\s*=\s*\K([^\s]+)" $baseFolder/settings.txt`
+sqlite3=`grep -oP "sqlite3\s*=\s*\K(.*)" $baseFolder/settings.txt`
+Rscript=`grep -oP "rscript\s*=\s*\K(.*)" $baseFolder/settings.txt`
 
 #Save error to temp file to it can be both displayed to user and put in DB
 touch $baseFolder/dataAndScripts/lastError
@@ -62,11 +62,11 @@ exec 2>$baseFolder/dataAndScripts/lastError
 
 #Check all the input arguments
 if [ -z ${blastn+x} ]; then 
-	blastn=`grep -oP "localBlastBlastn\s*=\s*\K([^\s]+)" $baseFolder/settings.txt`
+	blastn=`grep -oP "localBlastBlastn\s*=\s*\K(.*)" $baseFolder/settings.txt`
 fi
 
 if [ -z ${blastDB+x} ]; then 
-	blastDB=`grep -oP "localBlastDB\s*=\s*\K([^\s]+)" $baseFolder/settings.txt`
+	blastDB=`grep -oP "localBlastDB\s*=\s*\K(.*)" $baseFolder/settings.txt`
 fi
 
 # if [ -z ${prevRunId+x} ]; then 
@@ -74,7 +74,7 @@ fi
 # fi
 
 if [ -z ${verbose+x} ]; then 
-	verbose=`grep -oP "localBlastVerbose\s*=\s*\K([^\s]+)" $baseFolder/settings.txt`
+	verbose=`grep -oP "localBlastVerbose\s*=\s*\K(.*)" $baseFolder/settings.txt`
 elif ! grep -qE "^(0|1)$" <<< $verbose; then	
 	echo -e "\n\e[91mThe verbose option (-v) needs to be either 0 or 1\e[0m"; exit 1;
 fi

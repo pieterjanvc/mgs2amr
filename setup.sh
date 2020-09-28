@@ -54,7 +54,7 @@ echo -e "\e[32m"`date "+%T"`" - Start the setup check...\e[0m\n"
 echo "1) Check dependencies..."
 
 #Check if sqlite3 is installed
-sqlite3=`grep -oP "sqlite3\s*=\s*\K([^\s]+)" $baseFolder/settings.txt`
+sqlite3=`grep -oP "sqlite3\s*=\s*\K(.*)" $baseFolder/settings.txt`
 testTool=`command -v $sqlite3`
 if [ -z "$testTool" ]; then 
     message="SQLite 3 does not seem to be installed.\n If it is, set the path to 'sqlite3' in the settings file"
@@ -79,7 +79,7 @@ runId=$($sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
 	SELECT runId FROM scriptUse WHERE runId = last_insert_rowid()")
 	
 #Check if R is installed
-Rscript=`grep -oP "rscript\s*=\s*\K([^\s]+)" $baseFolder/settings.txt`
+Rscript=`grep -oP "rscript\s*=\s*\K(.*)" $baseFolder/settings.txt`
 if [ -z `command -v $Rscript` ]; then 
     message="R does not seem to be installed.\n If it is, set the path to 'Rscript' in the settings file"
 	echo -e "\e[91m$message\n" $baseFolder/settings.txt"\e[0m"
@@ -99,7 +99,7 @@ echo -e " - R and dependent packages are present"
 
 
 #Check if bbmap is installed or the reformat.sh script can be reached
-bbmap=`grep -oP "reformat\s*=\s*\K([^\s]+)" $baseFolder/settings.txt`
+bbmap=`grep -oP "reformat\s*=\s*\K(.*)" $baseFolder/settings.txt`
 if [ -z `command -v $bbmap` ]; then 
 	echo -e "\e[91mThe bbmap package does not seem to be installed as a system application\n"\
 	"If you have unzipped the package in a custom folder,\n update the path to the 'reformat.sh' script in the settings file\n"\
@@ -114,7 +114,7 @@ echo -e " - bbmap is present"
 
 
 #Check if BLASTn is either a local tool or link to a remote service
-blastPath=`grep -oP "localBlastBlastn\s*=\s*\K([^\s]+)" $baseFolder/settings.txt`
+blastPath=`grep -oP "localBlastBlastn\s*=\s*\K(.*)" $baseFolder/settings.txt`
 if [ -z `command -v $blastPath` ]; then 
 	curl -s --head $blastPath| head -n 1 | grep "HTTP/1.[01] [23].." > /dev/null
 	if [ "$?" != 0 ]; then

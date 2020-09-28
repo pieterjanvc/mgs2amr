@@ -1,7 +1,7 @@
 #!/bin/bash
 
 baseFolder=$(realpath -- "$(dirname -- "$0")")
-sqlite3=`grep -oP "sqlite3\s*=\s*\K([^\s]+)" $baseFolder/settings.txt`
+sqlite3=`grep -oP "sqlite3\s*=\s*\K(.*)" $baseFolder/settings.txt`
 
 #Save error to temp file to it can be both displayed to user and put in DB
 touch $baseFolder/dataAndScripts/lastError
@@ -81,7 +81,7 @@ if [ -z ${prevRunId+x} ]; then
 	fi
 
 	if [ -z ${tempFolder+x} ]; then 
-		tempFolder=`grep -oP "meta2amrTemp\s*=\s*\K([^\s]+)" $baseFolder/settings.txt`
+		tempFolder=`grep -oP "meta2amrTemp\s*=\s*\K(.*)" $baseFolder/settings.txt`
 		tempFolder=${tempFolder%/}
 		if [ -z ${tempFolder} ]; then
 			tempFolder=$baseFolder/temp #Use default temp if none assigned
@@ -123,11 +123,11 @@ else
 fi
 
 if [ -z ${forceOverwrite+x} ]; then 
-	forceOverwrite=`grep -oP "meta2amrForceOverwrite\s*=\s*\K([^\s]+)" $baseFolder/settings.txt`
+	forceOverwrite=`grep -oP "meta2amrForceOverwrite\s*=\s*\K(.*)" $baseFolder/settings.txt`
 fi
 
 if [ -z ${verbose+x} ]; then 
-	verbose=`grep -oP "meta2amrVerbose\s*=\s*\K([^\s]+)" $baseFolder/settings.txt`
+	verbose=`grep -oP "meta2amrVerbose\s*=\s*\K(.*)" $baseFolder/settings.txt`
 elif ! grep -qE "^(0|1|2)$" <<< $verbose ; then
 echo verbose = ${verbose[@]}
 	echo -e "\n\e[91mThe verbose option (-v) needs to be 0, 1 or 2\n Read the help file (-h) for more info\e[0m"; exit 1; 
@@ -179,7 +179,7 @@ if [ -z "$MCsuccess" ]; then
 		exec 2>&1 #Rederect stream to stdout
     fi
 	
-	metacherchant=`grep -oP "metacherchant\s*=\s*\K([^\s]+)" $baseFolder/settings.txt`
+	metacherchant=`grep -oP "metacherchant\s*=\s*\K(.*)" $baseFolder/settings.txt`
 	
 	$sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
 	"INSERT INTO logs (runId,tool,timeStamp,actionId,actionName)
@@ -221,7 +221,7 @@ fi
 if [ $verbose != "0" ]; then echo -e `date "+%T"`" - Start BLAST preparations  ..."; fi;
 
 #Get paths from the settings
-Rscript=`grep -oP "rscript\s*=\s*\K([^\s]+)" $baseFolder/settings.txt`
+Rscript=`grep -oP "rscript\s*=\s*\K(.*)" $baseFolder/settings.txt`
 
 #Set any option to modify the script
 scriptOptions=(keepAllMetacherchantData maxPathDist minBlastLength trimLength clusterIdentidy forceRedo)
