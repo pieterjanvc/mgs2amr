@@ -67,7 +67,6 @@ tryCatch({
   newLogs = data.frame(timeStamp = as.integer(Sys.time()), actionId = 1, actionName = "Start remote BLASTn")
   if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S "), "Start remote BLASTn ...\n")}
   
-  newLogs = rbind(newLogs, list(as.integer(Sys.time()), 2, "Start submitting pending BLASTn jobs"))
   
   #Get all files that need to be submitted
   myConn = dbConnect(SQLite(), paste0(baseFolder, "dataAndScripts/meta2amr.db"))
@@ -79,6 +78,8 @@ tryCatch({
   if(nrow(toSubmit) > 0){
     
     #Feedback and Logs
+    newLogs = rbind(newLogs, list(as.integer(Sys.time()), 2, 
+                                  sprintf("Start submitting %i pending BLASTn jobs", nrow(toSubmit))))
     if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S "), 
                         sprintf("Start submitting %i pending BLASTn jobs ...\n", nrow(toSubmit)))}
     
@@ -86,7 +87,7 @@ tryCatch({
       
       #Feedback and Logs
       if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S "),
-                          sprintf(" - Submitting %s (submId %s) ...", toSubmit$fastaFile, toSubmit$submId))}
+                          sprintf(" - %i/%i Submitting submId %s ...", i, nrow(toSubmit), toSubmit$submId))}
       Sys.sleep(2) #Prevent too fast consecutive submissions (api will block those)
       
       #Submit to the blast API 
@@ -126,8 +127,8 @@ tryCatch({
     
   } else {
     #Feedback and Logs
-    newLogs = rbind(newLogs, list(as.integer(Sys.time()), 6, "No pending BLASTn jobs"))
-    if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S "), "No pending BLASTn jobs\n")}
+    newLogs = rbind(newLogs, list(as.integer(Sys.time()), 6, "No pending BLASTn jobs, skipping"))
+    if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S "), "No pending BLASTn jobs, skipping\n")}
   }
   
   

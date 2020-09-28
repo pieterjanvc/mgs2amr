@@ -10,15 +10,17 @@ The following software needs to be installed:
 - SQLite3 (https://www.sqlite.org/download.html)
 - R version 4.0+ (https://www.r-project.org/) 
   * Packages: dplyr(1.0+), stringr, tidyr, jsonlite
-- bbmap (https://jgi.doe.gov/data-and-tools/bbtools/bb-tools-user-guide/installation-guide/)
-  * If unzipped in custom folder, set the path to the reformat.sh script in the settings.txt
+- bbmap 
+  (https://jgi.doe.gov/data-and-tools/bbtools/bb-tools-user-guide/installation-guide/)
+  * If unzipped in custom folder, set the path to the reformat.sh script in the settingss.txt
 - MetaCherchant (https://github.com/ctlab/metacherchant)
 - BLASTn: two options available
-  * Use a local blastn tool (https://blast.ncbi.nlm.nih.gov/Blast.cgi?PAGE_TYPE=BlastDocs&DOC_TYPE=Download)
+  * Use a local blastn tool 
+   (https://blast.ncbi.nlm.nih.gov/Blast.cgi?PAGE_TYPE=BlastDocs&DOC_TYPE=Download)
     Make sure to download the nucleotide (nt) database or a subset containing all bacteria
   * Use a cloud instance of BLAST (e.g. https://blast.ncbi.nlm.nih.gov/Blast.cgi)	
    
-IMPORTANT: Update the paths to all dependencies in the 'settings.txt' file if needed
+IMPORTANT: Update the paths to all dependencies in the 'settingss.txt' file if needed
 
 -- END SETUP.SH ---
 
@@ -32,14 +34,15 @@ Arguments [h|i|o|r|m|t|f|v]
  -o The location to save the output file. Filename should end with a fastq.gz extension
  -r (optional) The max number of reads the mixed file should contain. 
      By default, the number of reads in the background file is chosen.
-     If no background file is present, the limit is the sum of the fractions needed from each isolate file.
+     If no background file is present, the limit is the sum of 
+	 the fractions needed from each isolate file.
  -m (optional) TRUE or FALSE. Generate a meta-data JSON file in the same folder as the output file.
-     Default can be changed in the settings.txt file
+     Default can be changed in the settingss.txt file
  -t (optional) The location of the temp folder (files removed once completed). 
-     Default can be changed in the settings file
+     Default can be changed in the settingss file
  -f (optional) If set, force overwriting an exisiting output file
  -v (optional) TRUE or FALSE. Progress is posted to stdout when TRUE.
-     Default can be changed in the settings.txt file
+     Default can be changed in the settingss.txt file
 
 
 Input file details --
@@ -66,8 +69,8 @@ Arguments [h|i|o|v]
  -i The input file in fastq.gz format
  -o The folder to save the results. A subfolder will be created
  -t (optional) The location of the temp folder (files removed once completed). 
-     Default = meta2amr/temp unless 'meta2amrTemp' is set in the setting file
- -v (optional) Default can be changed in the settings file
+     Default = meta2amr/temp unless 'meta2amrTemp' is set in the settings file
+ -v (optional) Default can be changed in the settingss file
     0: Nothing is written to stdout
     1: General progress is posted to stdout
     2: All available details are posted to stdout    
@@ -81,19 +84,49 @@ Special case when resuming previous run
 
 
 --- LOCALBLAST.SH ---
-Run local BLASTn for files in the meta2amr database awaiting alignment
+Run local BLASTn for files in the meta2amr database awaiting alignment.
+
+This script is separate from the main pipeline as local BLASTn searches require
+a large amount of memory and thus can be run in a separate process
 
 Arguments [b|d|h|r|v]
  -h Read the help documentation
- -b (optional) The path to the local blastn module
-	 Default = value from 'localBlastBlastn' in the setting file
+ -b (optional) The link to the remote blastn API
+	 Default = value from 'localBlastBlastn' in the settings file
  -d (optional) Set the BLAST database to use (should be nt or custom set of bacteria)
-	 Default = value from 'localBlastDB' in the setting file
+	 Default = value from 'localBlastDB' in the settings file
  -r (optional) Run the BLAST search only for these runIds 
      Default = all runIds in the blastSubmissions table of the meta2amr database 
 	 that have not been blasted yet
- -v (optional) Default can be changed in the settings file
+ -v (optional) Default can be changed in the settingss file
     0: Nothing is written to stdout (except errors)
     1: General progress is posted to stdout
 	
 -- END LOCALBLAST.SH ---
+
+
+--- REMOTEBLAST.SH ---
+Run a remote BLASTn service for files in the meta2amr database awaiting alignment
+The script will keep running until all searches have been completed or
+a timeout has been reached.
+
+Arguments [b|e|f|r|t|v]
+ -h Read the help documentation
+ -b (optional) The path to the local blastn module
+	 Default = value from 'remoteBlastBlastn' in the settings file
+ -e (optional) Entrez query to filter the nt database
+	 Default = value from 'remoteBlastEntrez' in the settings file
+	 Note: changing this might have unforeseen effects on the correct species calling
+ -f (optional) The frequency (sec) with which the the script looks for updates on searches 
+	 Default = value from 'remoteBlastCheckFreq' in the settings file
+ -r (optional) Run the BLAST search only for these runIds 
+     Default = all runIds in the blastSubmissions table of the meta2amr database 
+	 that have not been blasted yet
+ -t (optional) The timeout (sec) after which the the script stops looking new results
+	 The script will end before the timeout if all searches have been completed
+	 Default = value from 'remoteBlastTimeout' in the settings file
+ -v (optional) Default can be changed in the settingss file
+    0: Nothing is written to stdout (except errors)
+    1: General progress is posted to stdout
+	
+-- END REMOTEBLAST.SH ---

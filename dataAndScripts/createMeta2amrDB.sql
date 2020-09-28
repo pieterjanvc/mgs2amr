@@ -70,7 +70,7 @@ CREATE TABLE IF NOT EXISTS "blastPrepOptions" (
 CREATE TABLE IF NOT EXISTS "blastSubmissions" (
     "submId" integer primary key,
 	"runId"	integer NOT NULL,
-	"RID" text NOT NULL,
+	"RID" text,
 	"timeStamp" integer,
 	"tempName" text,
 	"fastaFile" text,

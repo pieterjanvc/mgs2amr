@@ -26,10 +26,10 @@ meta2amrForceOverwrite=FALSE
 localBlastVerbose=1
 localBlastBlastn=/usr/local/blast/2.10.0/bin/blastn
 localBlastDB=/database/ncbi/nt
-localBlastTimeout=7200
-localBlastCheckFreq=120
 
 --- REMOTEBLAST.SH
 remoteBlastVerbose=1
 remoteBlastBlastn=https://blast.ncbi.nlm.nih.gov/Blast.cgi
 remoteBlastEntrez=txid2 [ORGN]
+remoteBlastTimeout=7200
+remoteBlastCheckFreq=120
