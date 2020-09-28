@@ -57,6 +57,7 @@ tryCatch({
   # ---- Local BLAST ----
   #**********************
   
+  #Feedback and Logs
   if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S "), "Start local BLASTn ...\n")}
   newLogs = data.frame(timeStamp = as.integer(Sys.time()), actionId = 1, actionName = "Start local BLASTn")
   
@@ -74,6 +75,7 @@ tryCatch({
       dbClearResult(q)
       dbDisconnect(myConn)
       
+      #Feedback and Logs
       newLogs = rbind(newLogs, list(as.integer(Sys.time()), 2, 
                                     sprintf("Start BLASTn for submId %i", toSubmit$submId[i])))
       if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S  "), 
@@ -98,18 +100,21 @@ tryCatch({
       #Add the runId to the temp folder
       write(runId, paste0(toSubmit$folder[i], "runId"))
       
+      #Feedback and Logs
       newLogs = rbind(newLogs, list(as.integer(Sys.time()), 3, 
                                     sprintf("Finished BLASTn for submId %s",toSubmit$submId[i])))
       if(verbose > 0){cat("done\n")}
       
     }
   } else {
-
+    
+    #Feedback and Logs
     newLogs = rbind(newLogs, list(as.integer(Sys.time()), 4, "There were no new files to BLAST"))
-	if(verbose > 0){cat(" There were no new files to BLAST\n")}
+	  if(verbose > 0){cat(" There were no new files to BLAST\n")}
     
   }
-
+  
+  #Feedback and Logs
   newLogs = rbind(newLogs, list(as.integer(Sys.time()), 5, "Finished local BLASTn"))
   if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S "), "Finished local BLASTn\n")}
   
