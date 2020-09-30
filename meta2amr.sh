@@ -95,6 +95,24 @@ if [ -z ${prevRunId+x} ]; then
 	tempName=`grep -oP "\K([^\/]+)(?=.fastq.gz)" <<< $inputFile`_`date '+%s'`
 	
 else
+
+	#Get the first runId
+    prevRunId=$($sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
+	"SELECT value FROM scriptArguments \
+	WHERE scriptName = 'meta2amr.sh' AND argument = 'prevRunId' AND runId = $prevRunId")
+	
+	tempFolder=$($sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
+	"SELECT value FROM scriptArguments \
+	WHERE scriptName = 'meta2amr.sh' AND argument = 'tempFolder' AND runId = $prevRunId")
+	
+	tempName=$($sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
+	"SELECT value FROM scriptArguments \
+	WHERE scriptName = 'meta2amr.sh' AND argument = 'tempName' AND runId = $prevRunId")
+	
+	if [ ! -f "$tempFolder/$tempName/runId" ]; then
+		echo -e "\n\e[91mThe the previous runId provided does not point to a valid folder \e[0m"; exit 1; 
+	fi
+	
     #In case of a previous runId, load all the arguments fromt the database
     inputFile=$($sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
 	"SELECT value FROM scriptArguments \
@@ -104,21 +122,9 @@ else
 	"SELECT value FROM scriptArguments \
 	WHERE scriptName = 'meta2amr.sh' AND argument = 'outputFolder' AND runId = $prevRunId")
 
-	tempFolder=$($sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
-	"SELECT value FROM scriptArguments \
-	WHERE scriptName = 'meta2amr.sh' AND argument = 'tempFolder' AND runId = $prevRunId")
-	
-	tempName=$($sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
-	"SELECT value FROM scriptArguments \
-	WHERE scriptName = 'meta2amr.sh' AND argument = 'tempName' AND runId = $prevRunId")
-	
 	MCsuccess=$($sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
 	"SELECT logId FROM logs
 	WHERE runId = $prevRunId AND actionId = 2")
-	
-	if [ ! -f "$tempFolder/$tempName/runId" ]; then
-		echo -e "\n\e[91mThe the previous runId provided does not point to a valid folder \e[0m"; exit 1; 
-	fi
 	
 fi
 
@@ -163,6 +169,9 @@ $sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
 #---------------------------------
 	
 #Only run if MetaCherchant has not been run before for this sample (i.e. the temp folder has MC data)
+echo -e "\n*****************************\n"\
+	"--- STEP 1: MetaCherchant ---\n"\
+	"*****************************"
 if [ -z "$MCsuccess" ]; then 
 	
 	if [ $verbose != "0" ]; then echo -e `date "+%T"`" - Start MetaCherchant ..."; fi;
@@ -218,6 +227,9 @@ fi
 
 #--- PART 2 BLAST PREP ---
 #-------------------------
+echo -e "\n***********************************\n"\
+	"--- STEP 2: BLASTn Preparations ---\n"\
+	"***********************************"
 if [ $verbose != "0" ]; then echo -e `date "+%T"`" - Start BLAST preparations  ..."; fi;
 
 #Get paths from the settings

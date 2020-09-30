@@ -47,7 +47,7 @@ while getopts ":h" opt; do
   esac  
 done
 
-echo -e "\e[32m"`date "+%T"`" - Start the setup check...\e[0m\n"
+echo -e `date "+%T"`"\e[32m - Start the setup check...\e[0m\n"
 
 # STEP 1 - Check dependencies
 #----------------------------
@@ -175,4 +175,4 @@ $sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
 	SET end = '$(date '+%F %T')', status = 'finished'
 	WHERE runId = $runId"
 	
-echo -e "\e[32m"`date "+%T"`" - Setup check finished\n The entire pipeline seems to be working correctly\e[0m\n"
+echo -e `date "+%T"`"\e[32m - Setup check finished\n The entire pipeline seems to be working correctly\e[0m\n"

@@ -63,7 +63,8 @@ tryCatch({
   #*************************************
   if(nrow(logs %>% filter(actionId %in% c(2, 4))) > 0){
     
-    if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S   "), "Skip MetaCherchant cleanup: Can only be done once (read previous GFA file)\n")}
+    if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S   "), "Skip MetaCherchant cleanup:\n",
+                        "           can only be done once (read previous GFA file)\n")}
     
     newLogs = rbind(newLogs, list(as.integer(Sys.time()), 2, "Skip MetaCherchant cleanup: Can only be done once"))
   
@@ -137,8 +138,7 @@ tryCatch({
     dbDisconnect(myConn)
     
     #Feedback and Logs
-    if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S   "), "Skip ARG detection, already done\n")}
-    newLogs = rbind(newLogs, list(as.integer(Sys.time()), 4, "Finished merging MetaCherchant output"))
+    if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S -"), "Skip ARG detection, already done\n")}
     newLogs = rbind(newLogs, list(as.integer(Sys.time()), 5, "Skip ARG detection, already done"))
     
     genesDetected = read.csv(paste0(tempFolder, "genesDetected/genesDetected.csv"))
@@ -146,7 +146,7 @@ tryCatch({
   } else {
     
     #Feedback and Logs
-    if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S   "), "Detect ARG in the data ... ")}
+    if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S -"), "Detect ARG in the data ... ")}
     newLogs = rbind(newLogs, list(as.integer(Sys.time()), 6, "Start detecting ARG"))
     
     #Extract the kmercounts
@@ -164,9 +164,9 @@ tryCatch({
       left_join(argGenes, by = c("geneId" = "geneId")) %>% 
       group_by(geneId, clusterNr, nBases) %>% 
       summarise(segmentLength = sum(LN), kmerCount = sum(KC), n = n(), .groups = 'drop') %>% rowwise() %>% 
-      mutate(coverage = min(1, segmentLength / nBases)) %>% 
+      mutate(coverage = round(min(1, segmentLength / nBases)), 4) %>% 
       group_by(clusterNr) %>% 
-      filter(kmerCount == max(kmerCount)) %>% 
+      filter(kmerCount == max(kmerCount)) %>% ungroup() %>% 
       mutate(runId = runId, geneId = as.integer(geneId)) %>% 
       select(runId, geneId, segmentLength, kmerCount, n, coverage)
     
@@ -206,7 +206,7 @@ tryCatch({
   if(nrow(logs %>% filter(actionId %in% c(8, 10))) > 0 & !forceRedo){
     
     #Feedback and Logs
-    if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S   "), "Skip GFA simplification, already done\n")}
+    if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S -"), "Skip GFA simplification, already done\n")}
     newLogs = rbind(newLogs, list(as.integer(Sys.time()), 8, "Skip GFA simplification, already done"))
     
     blastSegments = read.csv(sprintf("%sblastSegments.csv", tempFolder))
@@ -214,7 +214,7 @@ tryCatch({
   } else {
     
     #Feedback and Logs
-    if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S   "), "Simplify GFA files ... ")}
+    if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S -"), "Simplify GFA files ... ")}
     newLogs = rbind(newLogs, list(as.integer(Sys.time()), 9, "Start simplifying GFA files"))
     
     dir.create(sprintf("%sgenesDetected/simplifiedGFA", tempFolder), showWarnings = F)
@@ -271,10 +271,10 @@ tryCatch({
   
   # ---- Extract segments for BLAST  ---
   #*************************************
-  if(nrow(logs %>% filter(actionId == 13)) > 0 & !forceRedo){
+  if(nrow(logs %>% filter(actionId %in% c(11, 13))) > 0 & !forceRedo){
     
     #Feedback and Logs
-    if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S   "), 
+    if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S -"), 
                         "Skip clustering segments and fasta generation, already done\n")}
     newLogs = rbind(newLogs, list(as.integer(Sys.time()), 11, "Skip clustering segments and fasta generation, already done"))
     
@@ -283,7 +283,7 @@ tryCatch({
   } else {
     
     #Feedback and Logs
-    if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S   "), "Cluster segments and generate FASTA for BLAST ... ")}
+    if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S -"), "Cluster segments and generate FASTA for BLAST ... ")}
     newLogs = rbind(newLogs, list(as.integer(Sys.time()), 12, "Start clustering segments and generate FASTA for BLAST"))
     
     #Use cluster_fast to reduce number of segments by grouping in identity clusters
@@ -317,17 +317,18 @@ tryCatch({
   #******************************
   myConn = dbConnect(SQLite(), sprintf("%sdataAndScripts/meta2amr.db", baseFolder))
   
-  if(nrow(logs %>% filter(actionId == 15)) > 0 & !forceRedo){
+  if(nrow(logs %>% filter(actionId %in% c(14, 15))) > 0 & !forceRedo){
     
     #Feedback and Logs
-    if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S   "), 
-                        "No new FASTA files to prepare for BLAST, already done\n\nEverything has been successfully run already.",
-                        "Set forceRedo = TRUE and run again if needed\n")}
+    if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S -"), 
+                        "No new FASTA files to prepare for BLAST, already done\n\n",
+                        "Everything has been successfully run already.\n",
+                        " Set forceRedo = TRUE and run again if needed\n\n")}
     newLogs = rbind(newLogs, list(as.integer(Sys.time()), 14, "No new files to prepare for BLAST"))
     
   } else {
     
-    if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S   "),"Updating database with new files to BLAST ... ")}
+    if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S -"),"Updating database with new files to BLAST ... ")}
     
     blastSubmissions = data.frame()
     for(i in 1:nFiles){
