@@ -55,10 +55,10 @@ bgFolder=/data/aplab/ARG_PJ/data/haslamData/normalMetagenomes/ #Background metag
 iFolder=/data/aplab/ARG_PJ/data/publicData #Isolates folder
 
 #Variables
-fileName=testMix #Set to a specific filename if starting from existing mixed file (rest below is ignored then)
+fileName=testMix2 #Set to a specific filename if starting from existing mixed file (rest below is ignored then)
 bgName="" #Name of the background metagenome
-iNames="SRR2976831" #Name(s) of the isolate(s). Comma separate (no space) if multiple
-relAb="1.0" #Sum = 1 if no bgMeta or <1 otherwise. Comma separate (no space) if multiple
+iNames="SRR2976831,SRR4025843" #Name(s) of the isolate(s). Comma separate (no space) if multiple
+relAb="0.3,0.7" #Sum = 1 if no bgMeta or <1 otherwise. Comma separate (no space) if multiple
 
 sqlite3=`grep -oP "sqlite3\s*=\s*\K(.*)" $baseFolder/settings.txt`
 

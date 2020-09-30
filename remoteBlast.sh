@@ -66,11 +66,11 @@ exec 2>$baseFolder/dataAndScripts/lastError
 
 #Check all the input arguments
 if [ -z ${blastn+x} ]; then 
-	blastn=`grep -oP "localBlastBlastn\s*=\s*\K(.*)" $baseFolder/settings.txt`
+	blastn=`grep -oP "remoteBlastBlastn\s*=\s*\K(.*)" $baseFolder/settings.txt`
 fi
 
-if [ -z ${blastDB+x} ]; then 
-	blastDB=`grep -oP "localBlastDB\s*=\s*\K(.*)" $baseFolder/settings.txt`
+if [ -z ${entrezQ+x} ]; then 
+	entrezQ=`grep -oP "remoteBlastEntrez\s*=\s*\K(.*)" $baseFolder/settings.txt`
 fi
 
 if [ -z ${verbose+x} ]; then 

@@ -61,7 +61,7 @@ newLogs = data.frame(timeStamp = as.integer(Sys.time()), actionId = 1, actionNam
 tryCatch({
   # ---- Clean up files and folders ----
   #*************************************
-  if(nrow(logs %>% filter(actionId == 4)) > 0){
+  if(nrow(logs %>% filter(actionId %in% c(2, 4))) > 0){
     
     if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S   "), "Skip MetaCherchant cleanup: Can only be done once (read previous GFA file)\n")}
     
@@ -127,7 +127,7 @@ tryCatch({
   
   # ---- Detect important ARG ----
   #*******************************
-  if(nrow(logs %>% filter(actionId == 7)) > 0 & !forceRedo){
+  if(nrow(logs %>% filter(actionId %in% c(5, 7))) > 0 & !forceRedo){
     
     if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S   "), "Skip ARG detection, already done\n")}
     newLogs = rbind(newLogs, list(as.integer(Sys.time()), 4, "Finished merging MetaCherchant output"))
@@ -184,7 +184,7 @@ tryCatch({
   
   # ---- Simplify the GFA files  ---
   #*************************************
-  if(nrow(logs %>% filter(actionId == 10)) > 0 & !forceRedo){
+  if(nrow(logs %>% filter(actionId %in% c(8, 10))) > 0 & !forceRedo){
     
     if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S   "), "Skip GFA simplification, already done\n")}
     newLogs = rbind(newLogs, list(as.integer(Sys.time()), 8, "Skip GFA simplification, already done"))

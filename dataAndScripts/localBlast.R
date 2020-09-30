@@ -16,7 +16,8 @@ suppressPackageStartupMessages(library(RSQLite))
 blastArgs = list(
   db = "nt",
   evalue = "1e-10",
-  word_size = 64
+  word_size = 64,
+  max_target_seqs = 50
 )
 
 args = commandArgs(trailingOnly = TRUE) #arguments specified in the bash file
@@ -70,8 +71,8 @@ tryCatch({
       myConn = dbConnect(SQLite(), paste0(baseFolder, "dataAndScripts/meta2amr.db"))
       q = dbSendStatement(
         myConn, 
-        "UPDATE blastSubmissions SET runId = ?, timeStamp = ?, statusCode  = ?, statusMessage = ?",
-        params = list(runId, as.integer(Sys.time()), 12, statusCodes$message[12]))
+        "UPDATE blastSubmissions SET runId = ?, timeStamp = ?, statusCode  = ?, statusMessage = ? WHERE submId = ?",
+        params = list(runId, as.integer(Sys.time()), 12, statusCodes$message[12], toSubmit$submId[i]))
       dbClearResult(q)
       dbDisconnect(myConn)
       
@@ -79,19 +80,19 @@ tryCatch({
       newLogs = rbind(newLogs, list(as.integer(Sys.time()), 2, 
                                     sprintf("Start BLASTn for submId %i", toSubmit$submId[i])))
       if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S  "), 
-                          sprintf("- Progress %i/%i Blastn for submId %i ... ",toSubmit$submId[i], i, nrow(toSubmit)))}
+                          sprintf("- Progress %i/%i Blastn for submId %i ... ",toSubmit$submId[i], nrow(toSubmit), i))}
       
       #Run local blastn
-      system(sprintf('%s -db "%s" -query "%s" -task megablast -evalue %s -word_size %i -outfmt 15 -out "%s"',
+      system(sprintf('%s -db "%s" -query "%s" -task megablast -evalue %s -word_size %i -max_target_seqs %i -outfmt 15 -out "%s"',
                      blastn, blastDB, paste0(toSubmit$folder[i], toSubmit$fastaFile[i]),
-                     blastArgs$evalue, blastArgs$word_size, 
+                     blastArgs$evalue, blastArgs$word_size, blastArgs$max_target_seqs, 
                      paste0(toSubmit$folder[i], str_replace(toSubmit$fastaFile[i], ".fasta", ".json"))))
       
       #Update the blastSubmissions table
       myConn = dbConnect(SQLite(), paste0(baseFolder, "dataAndScripts/meta2amr.db"))
       q = dbSendStatement(
         myConn, 
-        "UPDATE blastSubmissions SET runId = ?, timeStamp = ?, statusCode  = ?, statusMessage = ?
+        "UPDATE blastSubmissions SET runId = ?, timeStamp = ?, statusCode = ?, statusMessage = ?
       WHERE submId = ?",
         params = list(runId, as.integer(Sys.time()), 13, statusCodes$message[13], toSubmit$submId[i]))
       dbClearResult(q)

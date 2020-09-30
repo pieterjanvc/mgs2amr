@@ -82,22 +82,23 @@ tryCatch({
                                   sprintf("Start submitting %i pending BLASTn jobs", nrow(toSubmit))))
     if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S "), 
                         sprintf("Start submitting %i pending BLASTn jobs ...\n", nrow(toSubmit)))}
-    
+
     for(i in 1:nrow(toSubmit)){
       
       #Feedback and Logs
       if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S "),
-                          sprintf(" - %i/%i Submitting submId %s ...", i, nrow(toSubmit), toSubmit$submId))}
+                          sprintf(" - %i/%i Submitting submId %s ... ", i, nrow(toSubmit), toSubmit$submId[i]))}
       Sys.sleep(2) #Prevent too fast consecutive submissions (api will block those)
-      
+
       #Submit to the blast API 
       RID = blast_submit(paste0(formatPath(toSubmit$folder[i], endWithSlash = T), toSubmit$fastaFile[i]),
                          program = "blastn", megablast = T, database = "nt", 
                          expect = blastArgs$evalue, word_size = blastArgs$word_size, max_num_seq = blastArgs$max_num_seq,
                          entrez_query = entrezQ, url = blastn, verbose = verbose)
+
       #Status depends on (un)successful submission
-      statusCode = ifelse(is.na(RID), 2, 1)
-      
+      statusCode = ifelse(is.na(RID), 2, 1)      
+	  
       #Update the blastSubmissions table
       myConn = dbConnect(SQLite(), paste0(baseFolder, "dataAndScripts/meta2amr.db"))
       q = dbSendStatement(
@@ -108,16 +109,16 @@ tryCatch({
                       statusCodes$message[statusCode+1], toSubmit$submId[i]))
       dbClearResult(q)
       dbDisconnect(myConn) 
-      
+
       #Feedback and Logs
       if(statusCode == 1){
         newLogs = rbind(newLogs, list(as.integer(Sys.time()), 3, 
-                                      sprintf("Successful remote submission of %s (submId %s)", toSubmit$fastaFile, toSubmit$submId)))
-        if(verbose > 0){"done\n"}
+                                      sprintf("Successful remote submission of %s (submId %s)", toSubmit$fastaFile[i], toSubmit$submId[i])))
+        if(verbose > 0){cat("done\n")}
       } else {
         newLogs = rbind(newLogs, list(as.integer(Sys.time()), 4, 
-                                      sprintf("Failed remote submission of %s (submId %s)", toSubmit$fastaFile, toSubmit$submId)))
-        if(verbose > 0){"failed\n"}
+                                      sprintf("Failed remote submission of %s (submId %s)", toSubmit$fastaFile[i], toSubmit$submId[i])))
+        if(verbose > 0){cat("failed\n")}
       }
       
     }
@@ -149,7 +150,7 @@ tryCatch({
       #Feedback and Logs
       newLogs = rbind(newLogs, list(as.integer(Sys.time()), 7, "Start checking active searches"))
       if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S "), 
-                          sprintf("Checking the status of %i active searches ...", nrow(submTable)))}
+                          sprintf("Checking the status of %i active searches ... ", nrow(submTable)))}
       
       #Update submission states
       submTable = submTable %>% rowwise() %>% 
@@ -168,7 +169,7 @@ tryCatch({
       
       #Feedback and Logs
       newLogs = rbind(newLogs, list(as.integer(Sys.time()), 8, "Finished checking active searches"))
-      if(verbose > 0){"done\n"}
+      if(verbose > 0){cat("done\n")}
       
       #Get the submissions that are finished and ready for download 
       submTable = submTable %>% filter(statusCode == 4)
@@ -184,8 +185,8 @@ tryCatch({
           
           #Feedback and Logs
           if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S "),
-                              sprintf(" - %i/%i Downloading results for submId %s ...", 
-                                      i, nrow(submTable), toSubmit$submId))}
+                              sprintf(" - %i/%i Downloading results for submId %s ... ", 
+                                      i, nrow(submTable), submTable$submId[i]))}
           
           #Get results (success = 9, fail = 10)
           statusCode = ifelse(blast_getResults(submTable$RID[i], submTable$folder[i], omitSeqData = T, verbose = 1, returnJSON = F),
@@ -203,13 +204,13 @@ tryCatch({
           if(statusCode == 9){
             newLogs = rbind(newLogs, list(as.integer(Sys.time()), 10, 
                                           sprintf("Download/processing successful for BLAST results of %s (submId %s)", 
-                                                  submTable$fastaFile, submTable$submId)))
-            if(verbose > 0){"done\n"}
+                                                  submTable$fastaFile[i], submTable$submId[i])))
+            if(verbose > 0){cat("done\n")}
           } else {
             newLogs = rbind(newLogs, list(as.integer(Sys.time()), 11, 
                                           sprintf("Download/processing failed for BLAST results of %s (submId %s)", 
-                                                  submTable$fastaFile, submTable$submId)))
-            if(verbose > 0){"failed\n"}
+                                                  submTable$fastaFile[i], submTable$submId[i])))
+            if(verbose > 0){cat("failed\n")}
           }
         }
         #Feedback and Logs
