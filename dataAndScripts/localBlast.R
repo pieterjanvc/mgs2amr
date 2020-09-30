@@ -83,10 +83,10 @@ tryCatch({
                           sprintf("- Progress %i/%i Blastn for submId %i ... ",toSubmit$submId[i], nrow(toSubmit), i))}
       
       #Run local blastn
-      system(sprintf('%s -db "%s" -query "%s" -task megablast -evalue %s -word_size %i -max_target_seqs %i -outfmt 15 -out "%s"',
+      system(sprintf('%s -db "%s" -query "%s" -task megablast -evalue %s -word_size %i -max_target_seqs %i -outfmt 15 | gzip > "%s"',
                      blastn, blastDB, paste0(toSubmit$folder[i], toSubmit$fastaFile[i]),
                      blastArgs$evalue, blastArgs$word_size, blastArgs$max_target_seqs, 
-                     paste0(toSubmit$folder[i], str_replace(toSubmit$fastaFile[i], ".fasta", ".json"))))
+                     paste0(toSubmit$folder[i], str_replace(toSubmit$fastaFile[i], ".fasta", ".json.gz"))))
       
       #Update the blastSubmissions table
       myConn = dbConnect(SQLite(), paste0(baseFolder, "dataAndScripts/meta2amr.db"))

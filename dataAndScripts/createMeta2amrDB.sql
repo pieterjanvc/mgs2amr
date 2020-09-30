@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS "scriptUse" (
 	"status" text,
 	"info" text
 );
--- Save the arguments with which eachh script runs
+-- Save the arguments with which each script runs
 CREATE TABLE IF NOT EXISTS "scriptArguments" (
 	"argId"	integer primary key,
 	"runId"	integer NOT NULL,
@@ -77,6 +77,28 @@ CREATE TABLE IF NOT EXISTS "blastSubmissions" (
 	"statusCode" integer,
 	"statusMessage" text,
 	"folder" text,
+	FOREIGN KEY("runId") REFERENCES "scriptUse"("runId") ON UPDATE CASCADE ON DELETE CASCADE
+);
+-- Table that stores all ARG
+CREATE TABLE IF NOT EXISTS "ARG" (
+    "geneId" integer primary key,
+	"refId" text,
+	"gene" test,
+	"subtype" text,
+	"info" text,
+	"nBases" integer,
+	"clusterNr" integer
+);
+-- Table that stores all ARG detected in a sample
+CREATE TABLE IF NOT EXISTS "detectedARG" (
+	"runId"	integer NOT NULL,
+    "geneId" integer NOT NULL,
+	"segmentLength" integer,
+	"kmerCount" integer,
+	"n" integer,
+	"coverage" real,
+	PRIMARY KEY("runId", "geneId"),
+	FOREIGN KEY("geneId") REFERENCES "ARG"("geneId") ON UPDATE CASCADE ON DELETE CASCADE,
 	FOREIGN KEY("runId") REFERENCES "scriptUse"("runId") ON UPDATE CASCADE ON DELETE CASCADE
 );
 COMMIT;

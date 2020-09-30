@@ -65,8 +65,9 @@ echo -e " - SQLite 3 is present"
 
 #Check the meta2amr database and create if needed
 if [ ! -f "$baseFolder/dataAndScripts/meta2amr.db" ]; then
-	$sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
-	".read $baseFolder/dataAndScripts/createMeta2amrDB.sql"
+	$sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" -cmd \
+	".read $baseFolder/dataAndScripts/createMeta2amrDB.sql" \
+	".mode csv" ".import $baseFolder/dataAndScripts/argTable.csv ARG"
 	echo -e " - No meta2amr database found, a new database was created"
 else 
 	echo -e " - The meta2amr database is present"
@@ -116,6 +117,7 @@ echo -e " - bbmap is present"
 #Check if BLASTn is either a local tool or link to a remote service
 blastPath=`grep -oP "localBlastBlastn\s*=\s*\K(.*)" $baseFolder/settings.txt`
 if [ -z `command -v $blastPath` ]; then 
+	blastPath=`grep -oP "remoteBlastBlastn\s*=\s*\K(.*)" $baseFolder/settings.txt`
 	curl -s --head $blastPath| head -n 1 | grep "HTTP/1.[01] [23].." > /dev/null
 	if [ "$?" != 0 ]; then
 		message="No valid path to either a local or remote BLASTn service is set\n Set the path to 'blastn' in the settings file"
@@ -123,15 +125,26 @@ if [ -z `command -v $blastPath` ]; then
 		updateDBwhenError "$runId" "No valid path to either a local or remote BLASTn"
 		exit 1;
 	fi
-	message="BLASTn present: A cloud instance will be used"
+	message="local BLASTn present - "
+	echo -e " - Local BLASTn instance not found: localBlast.sh can NOT be used"
 else
-	message="BLASTn present: A local instance will be used"
+	message="local BLASTn NOT present - "
+	echo -e " - Local BLASTn instance present: localBlast.sh can be used"
+fi
+
+blastPath=`grep -oP "remoteBlastBlastn\s*=\s*\K(.*)" $baseFolder/settings.txt`
+curl -s --head $blastPath| head -n 1 | grep "HTTP/1.[01] [23].." > /dev/null
+if [ "$?" != 0 ]; then
+	message=$message"remote BLASTn present"
+	echo -e " - Remote BLASTn service present: remoteBlast.sh can be used"
+else
+	message=$message"remote BLASTn NOT present"
+	echo -e " - Remote BLASTn service present: remoteBlast.sh can be used"
 fi
 
 $sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
 	"INSERT INTO logs (runId,tool,timeStamp,actionId,actionName)
 	VALUES($runId,'setup.sh',$(date '+%s'),3,'$message')"
-echo -e " - "$message
 
 
 echo -e "\e[32m   All dependencies seem to be present\e[0m\n"
@@ -162,4 +175,4 @@ $sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
 	SET end = '$(date '+%F %T')', status = 'finished'
 	WHERE runId = $runId"
 	
-echo -e "\e[32m"`date "+%T"`" - Setup check finished: The entire pipeline seems to be working correctly\e[0m\n"
+echo -e "\e[32m"`date "+%T"`" - Setup check finished\n The entire pipeline seems to be working correctly\e[0m\n"

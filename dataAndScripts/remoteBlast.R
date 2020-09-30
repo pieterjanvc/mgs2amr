@@ -128,8 +128,8 @@ tryCatch({
     
   } else {
     #Feedback and Logs
-    newLogs = rbind(newLogs, list(as.integer(Sys.time()), 6, "No pending BLASTn jobs, skipping"))
-    if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S "), "No pending BLASTn jobs, skipping\n")}
+    newLogs = rbind(newLogs, list(as.integer(Sys.time()), 6, "No new pending BLASTn jobs, skipping"))
+    if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S "), "No new pending BLASTn jobs, skipping\n")}
   }
   
   
@@ -189,7 +189,7 @@ tryCatch({
                                       i, nrow(submTable), submTable$submId[i]))}
           
           #Get results (success = 9, fail = 10)
-          statusCode = ifelse(blast_getResults(submTable$RID[i], submTable$folder[i], omitSeqData = T, verbose = 1, returnJSON = F),
+          statusCode = ifelse(blast_getResults(submTable$RID[i], submTable$folder[i], unzip = F, verbose = 1),
                               9, 10)
           
           #Update the blastSubmissions table in the DB
@@ -249,14 +249,12 @@ tryCatch({
   } else {
     
     #Feedback and Logs
-    newLogs = rbind(newLogs, list(as.integer(Sys.time()), 16, "No active searches to check"))
-    if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S "), "No active searches to check\n")}
-    newLogs = rbind(newLogs, list(as.integer(Sys.time()), 17, "Skip downloading as there are no active searches"))
-    if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S "), "Skip downloading as there are no active searches\n")}
+    newLogs = rbind(newLogs, list(as.integer(Sys.time()), 16, "No active searches to check, skipping"))
+    if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S "), "No active searches to check, skipping\n")}
   }
   
   #Feedback and Logs
-  newLogs = rbind(newLogs, list(as.integer(Sys.time()), 18, "Finished remote BLASTn"))
+  newLogs = rbind(newLogs, list(as.integer(Sys.time()), 17, "Finished remote BLASTn"))
   if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S "), "Finished remote BLASTn\n")}
   
 }, 

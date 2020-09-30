@@ -129,6 +129,14 @@ tryCatch({
   #*******************************
   if(nrow(logs %>% filter(actionId %in% c(5, 7))) > 0 & !forceRedo){
     
+    #Update the runId for the detectedARG in the database
+    myConn = dbConnect(SQLite(), sprintf("%sdataAndScripts/meta2amr.db", baseFolder))
+    q = dbSendStatement(myConn, "UPDATE detectedARG SET runId = ? WHERE runId = ?", 
+                        params = list(runId, prevRunId))
+    dbClearResult(q)
+    dbDisconnect(myConn)
+    
+    #Feedback and Logs
     if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S   "), "Skip ARG detection, already done\n")}
     newLogs = rbind(newLogs, list(as.integer(Sys.time()), 4, "Finished merging MetaCherchant output"))
     newLogs = rbind(newLogs, list(as.integer(Sys.time()), 5, "Skip ARG detection, already done"))
@@ -137,6 +145,7 @@ tryCatch({
     
   } else {
     
+    #Feedback and Logs
     if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S   "), "Detect ARG in the data ... ")}
     newLogs = rbind(newLogs, list(as.integer(Sys.time()), 6, "Start detecting ARG"))
     
@@ -146,26 +155,35 @@ tryCatch({
       rename(segmentId = name)
     
     #Get the ARG list
-    argGenes = read.csv(paste0(baseFolder, "dataAndScripts/argTable.csv"), 
-                        colClasses = list(geneId = "character"))
+    myConn = dbConnect(SQLite(), sprintf("%sdataAndScripts/meta2amr.db", baseFolder))
+    argGenes = dbGetQuery(myConn, "SELECT geneId, clusterNr, nBases FROM ARG") %>%
+      mutate(geneId = as.character(geneId))
     
     #Detect the most likely genes
     genesDetected = kmerCounts %>% filter(start) %>% 
-      left_join(argGenes %>% select(geneId, clusterNr, gene, subtype, nBases, name), by = c("geneId" = "geneId")) %>% 
-      group_by(geneId, clusterNr, gene, subtype, nBases, name) %>% 
-      summarise(length = sum(LN), kmerCount = sum(KC), n = n(), .groups = 'drop') %>% rowwise() %>% 
-      mutate(covered = min(1, length / nBases)) %>% 
-      extract(name, into = c("ncbi", "descr"), regex = ">([^\\s]+)\\s+(.*)") %>% 
+      left_join(argGenes, by = c("geneId" = "geneId")) %>% 
+      group_by(geneId, clusterNr, nBases) %>% 
+      summarise(segmentLength = sum(LN), kmerCount = sum(KC), n = n(), .groups = 'drop') %>% rowwise() %>% 
+      mutate(coverage = min(1, segmentLength / nBases)) %>% 
       group_by(clusterNr) %>% 
-      filter(kmerCount == max(kmerCount))
+      filter(kmerCount == max(kmerCount)) %>% 
+      mutate(runId = runId, geneId = as.integer(geneId)) %>% 
+      select(runId, geneId, segmentLength, kmerCount, n, coverage)
     
     
     #Only keep genes that are minimum 90% covered (or use cut-off when higher) 
-    genesDetected = genesDetected %>% filter(covered >= max(0.9, cutOff(genesDetected$covered)))
+    genesDetected = genesDetected %>% 
+      filter(coverage >= max(0.9, cutOff(genesDetected$covered)))
     
     #Save results 
+    q = dbSendStatement(myConn, "INSERT INTO detectedARG VALUES(?,?,?,?,?,?)", 
+                        params = unname(as.list(genesDetected)))
+    dbClearResult(q)
+    dbDisconnect(myConn)
+    
     dir.create(sprintf("%sgenesDetected", tempFolder), showWarnings = F)
-    write.csv(genesDetected, paste0(tempFolder, "genesDetected/genesDetected.csv"), row.names = F)
+    write.csv(genesDetected %>% select(-runId), 
+              paste0(tempFolder, "genesDetected/genesDetected.csv"), row.names = F)
     
     #Write the detected gfa files as separate files for view in Bandage
     for(myGene in genesDetected$geneId){
@@ -175,6 +193,7 @@ tryCatch({
       gfa_write(myGFA, sprintf("%sgenesDetected/%s.gfa", tempFolder, myGene))
     }
     
+    #Feedback and Logs
     if(verbose > 0){cat("done\n")}
     newLogs = rbind(newLogs, list(as.integer(Sys.time()), 7, "Finished detecting ARG"))
     
@@ -186,6 +205,7 @@ tryCatch({
   #*************************************
   if(nrow(logs %>% filter(actionId %in% c(8, 10))) > 0 & !forceRedo){
     
+    #Feedback and Logs
     if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S   "), "Skip GFA simplification, already done\n")}
     newLogs = rbind(newLogs, list(as.integer(Sys.time()), 8, "Skip GFA simplification, already done"))
     
@@ -193,6 +213,7 @@ tryCatch({
     
   } else {
     
+    #Feedback and Logs
     if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S   "), "Simplify GFA files ... ")}
     newLogs = rbind(newLogs, list(as.integer(Sys.time()), 9, "Start simplifying GFA files"))
     
@@ -241,6 +262,7 @@ tryCatch({
     
     write.csv(blastSegments, sprintf("%sblastSegments.csv", tempFolder), row.names = F)
     
+    #Feedback and Logs
     if(verbose > 0){cat("done\n")}
     newLogs = rbind(newLogs, list(as.integer(Sys.time()), 10, "Finished simplifying GFA files"))
                         
@@ -251,6 +273,7 @@ tryCatch({
   #*************************************
   if(nrow(logs %>% filter(actionId == 13)) > 0 & !forceRedo){
     
+    #Feedback and Logs
     if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S   "), 
                         "Skip clustering segments and fasta generation, already done\n")}
     newLogs = rbind(newLogs, list(as.integer(Sys.time()), 11, "Skip clustering segments and fasta generation, already done"))
@@ -259,6 +282,7 @@ tryCatch({
     
   } else {
     
+    #Feedback and Logs
     if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S   "), "Cluster segments and generate FASTA for BLAST ... ")}
     newLogs = rbind(newLogs, list(as.integer(Sys.time()), 12, "Start clustering segments and generate FASTA for BLAST"))
     
@@ -283,6 +307,7 @@ tryCatch({
                   fastaPaths$blastId[subSet], type = "n")
     }
     
+    #Feedback and Logs
     if(verbose > 0){cat("done\n")}
     newLogs = rbind(newLogs, list(as.integer(Sys.time()), 13, "Finished clustering segments and generate FASTA for BLAST"))
   }
@@ -294,6 +319,7 @@ tryCatch({
   
   if(nrow(logs %>% filter(actionId == 15)) > 0 & !forceRedo){
     
+    #Feedback and Logs
     if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S   "), 
                         "No new FASTA files to prepare for BLAST, already done\n\nEverything has been successfully run already.",
                         "Set forceRedo = TRUE and run again if needed\n")}
@@ -327,7 +353,8 @@ tryCatch({
                                       "VALUES (?,?,?,?,?,?,?,?)"), 
                         params = unname(as.list(blastSubmissions)))
     dbClearResult(q)
-
+    
+    #Feedback and Logs
     if(verbose > 0){cat("done\n")}
     newLogs = rbind(newLogs, list(as.integer(Sys.time()), 15, "Updated database with new files to BLAST"))
     
