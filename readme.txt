@@ -1,26 +1,32 @@
-
-###### META2AMR ######
-######################
-Developed by PJ Van Camp
+########## META2AMR ##########
+##############################
+   Developed by PJ Van Camp
 
 --- SETUP.SH ---
-Run the setup.sh script to verify all dependencies and to test the pipeline
+Run the setup.sh script to verify all dependencies and to test the pipeline.
 
 The following software needs to be installed:
-- SQLite3 (https://www.sqlite.org/download.html)
-- R version 4.0+ (https://www.r-project.org/) 
+- SQLite3 
+  * Precompiled 32-bit version: https://www.sqlite.org/download.html
+  * Precompiled 64-bit version: https://github.com/boramalper/sqlite3-x64/releases
+- R version 4.0+
   * Packages: dplyr(1.0+), stringr, tidyr, jsonlite
+  * Precompiled versions: https://www.r-project.org/ 
 - bbmap 
-  (https://jgi.doe.gov/data-and-tools/bbtools/bb-tools-user-guide/installation-guide/)
-  * If unzipped in custom folder, set the path to the reformat.sh script in the settingss.txt
-- MetaCherchant (https://github.com/ctlab/metacherchant)
+  * https://jgi.doe.gov/data-and-tools/bbtools/bb-tools-user-guide/installation-guide/
+- usearch
+  * https://www.drive5.com/usearch/download.html
+- MetaCherchant
+  * https://github.com/ctlab/metacherchant
 - BLASTn: two options available
   * Use a local blastn tool 
-   (https://blast.ncbi.nlm.nih.gov/Blast.cgi?PAGE_TYPE=BlastDocs&DOC_TYPE=Download)
     Make sure to download the nucleotide (nt) database or a subset containing all bacteria
-  * Use a cloud instance of BLAST (e.g. https://blast.ncbi.nlm.nih.gov/Blast.cgi)	
+   https://blast.ncbi.nlm.nih.gov/Blast.cgi?PAGE_TYPE=BlastDocs&DOC_TYPE=Download    
+  * Use a cloud instance of BLAST
+    Example: https://blast.ncbi.nlm.nih.gov/Blast.cgi
    
-IMPORTANT: Update the paths to all dependencies in the 'settingss.txt' file if needed
+IMPORTANT: Update the paths to all dependencies in the 'settingss.txt' file 
+if they are not in the default PATH
 
 -- END SETUP.SH ---
 
