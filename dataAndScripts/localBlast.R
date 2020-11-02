@@ -12,14 +12,6 @@ suppressPackageStartupMessages(library(RSQLite))
 # ---- Inputs ----
 #*****************
 
-#Set these general blast args
-blastArgs = list(
-  db = "nt",
-  evalue = "1e-10",
-  word_size = 64,
-  max_target_seqs = 50
-)
-
 args = commandArgs(trailingOnly = TRUE) #arguments specified in the bash file
 baseFolder = formatPath(args[[1]], endWithSlash = T)
 runId = as.integer(args[[2]])
@@ -27,6 +19,15 @@ verbose = args[[3]]
 blastn = args[[4]]
 blastDB = args[[5]]
 prevRunId = as.numeric(strsplit(args[[6]], " "))
+
+#Set these general blast args
+blastArgs = list(
+  db = "nt",
+  evalue = "1e-10",
+  word_size = 64,
+  max_target_seqs = 50,
+  taxidlist = sprintf("%sdataAndScripts/%s", baseFolder, "bact.txids")
+)
 
 #Limit the searched for specific runIds if set, else do all
 prevRunId = ifelse(!is.na(prevRunId),
@@ -83,9 +84,9 @@ tryCatch({
                           sprintf("- Progress %i/%i Blastn for submId %i ... ",toSubmit$submId[i], nrow(toSubmit), i))}
       
       #Run local blastn
-      system(sprintf('%s -db "%s" -query "%s" -task megablast -evalue %s -word_size %i -max_target_seqs %i -outfmt 15 | gzip > "%s"',
+      system(sprintf('%s -db "%s" -query "%s" -task megablast -evalue %s -word_size %i -max_target_seqs %i -taxidlist %s -outfmt 15 | gzip > "%s"',
                      blastn, blastDB, paste0(toSubmit$folder[i], toSubmit$fastaFile[i]),
-                     blastArgs$evalue, blastArgs$word_size, blastArgs$max_target_seqs, 
+                     blastArgs$evalue, blastArgs$word_size, blastArgs$max_target_seqs, blastArgs$taxidlist,
                      paste0(toSubmit$folder[i], str_replace(toSubmit$fastaFile[i], ".fasta", ".json.gz"))))
       
       #Update the blastSubmissions table
