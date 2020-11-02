@@ -97,9 +97,13 @@ if [ -z ${prevRunId+x} ]; then
 else
 
 	#Get the first runId
-    prevRunId=$($sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
+    firstRunId=$($sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
 	"SELECT value FROM scriptArguments \
 	WHERE scriptName = 'meta2amr.sh' AND argument = 'prevRunId' AND runId = $prevRunId")
+	
+	if [ ! -z "$firstRunId" ]; then
+		prevRunId=$firstRunId
+	fi
 	
 	tempFolder=$($sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
 	"SELECT value FROM scriptArguments \
@@ -169,9 +173,10 @@ $sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
 #---------------------------------
 	
 #Only run if MetaCherchant has not been run before for this sample (i.e. the temp folder has MC data)
-echo -e "\n*****************************\n"\
-	"--- STEP 1: MetaCherchant ---\n"\
-	"*****************************"
+echo -e "\n"
+echo "*****************************"
+echo "--- STEP 1: MetaCherchant ---"
+echo "*****************************"
 if [ -z "$MCsuccess" ]; then 
 	
 	if [ $verbose != "0" ]; then echo -e `date "+%T"`" - Start MetaCherchant ..."; fi;
@@ -194,6 +199,7 @@ if [ -z "$MCsuccess" ]; then
 	"INSERT INTO logs (runId,tool,timeStamp,actionId,actionName)
 	VALUES($runId,'metacherchant.sh',$(date '+%s'),1,'Start MetaCherchant')"
 	
+	freeMem=$(expr $(free -h | grep -oP "Mem:\s+\d+.\s+\d+.\s+\K(\d+)") - 4)
 	$metacherchant --tool environment-finder \
 		--k 31 \
 		--coverage=5 \
@@ -204,7 +210,7 @@ if [ -z "$MCsuccess" ]; then
 		--maxkmers=100000 \
 		--bothdirs=False \
 		--chunklength=250 \
-		-m 16G
+		-m $freeMem\G
 		
     $sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
 	"INSERT INTO logs (runId,tool,timeStamp,actionId,actionName)
@@ -227,9 +233,11 @@ fi
 
 #--- PART 2 BLAST PREP ---
 #-------------------------
-echo -e "\n***********************************\n"\
-	"--- STEP 2: BLASTn Preparations ---\n"\
-	"***********************************"
+echo -e "\n"
+echo "***********************************"
+echo "--- STEP 2: BLASTn Preparations ---"
+echo "***********************************"
+
 if [ $verbose != "0" ]; then echo -e `date "+%T"`" - Start BLAST preparations  ..."; fi;
 
 #Get paths from the settings
