@@ -41,6 +41,12 @@ runId = as.integer(args[[8]])
 #Grab the location of the reformat script from the settings file
 reformatScript = system(sprintf("grep -oP \"reformat\\s*=\\s*\\K([^\\s]+)\" %s/settings.txt", 
                                 baseFolder), intern = T)
+								
+															
+#Check if pigz is available instead of gzip for faster zipping
+zipMethod = ifelse(length(suppressWarnings(
+  system("command -v pigz", intern = T))) == 0, 
+  "gzip", "pigz")
 
 #Create temp folder
 tempName = paste0("mixedSample_", as.integer(Sys.time()))
@@ -50,7 +56,7 @@ dir.create(tempFolder)
 #Get the readcounts of previous files from the db in case the files are used again (saves time)
 myConn = dbConnect(SQLite(), sprintf("%s/dataAndScripts/meta2amr.db", baseFolder))
 readCounts = dbGetQuery(myConn, "SELECT f.*, d.readCount FROM seqFiles as f, seqData as d WHERE f.seqId = d.seqId") %>% 
-  select(-folder)
+  select(-folder) %>% mutate(fileSize = as.numeric(fileSize))
 dbDisconnect(myConn)
 
 newLogs = data.frame(timeStamp = as.integer(Sys.time()), actionId = 1, actionName = "Start Mixing")
@@ -61,7 +67,7 @@ tryCatch({
   #*******************************
   
   if(verbose){
-    cat(format(Sys.time(), "%H:%M:%S "), "-Check the input file for errors ... ")
+    cat(format(Sys.time(), "%H:%M:%S"),"- Check the input file for errors ... ")
   }
   
   #Read the input file and remove unwanted whitespace
@@ -146,7 +152,7 @@ tryCatch({
   
   if(length(knownFiles) > 0){
     if(verbose){
-		cat(format(Sys.time(), "%H:%M:%S "), "-Use previous read-count for\n          ", 
+		cat(format(Sys.time(), "%H:%M:%S"),"- Use previous read-count for\n          ", 
 		paste(knownFiles, collapse = "\n           "), "\n")
 	}
     
@@ -168,7 +174,7 @@ tryCatch({
       myFile = files %>% filter(id == myId)
       
       if(verbose){
-        cat(format(Sys.time(), "%H:%M:%S "), "-Counting number of reads in",myFile$fileName, "... ")
+        cat(format(Sys.time(), "%H:%M:%S"),"- Counting number of reads in",myFile$fileName, "... ")
       }
   
       #Count the lines in the file (4 lines = 1 read)
@@ -194,7 +200,7 @@ tryCatch({
   #********************************************************
   
   if(verbose){
-    cat(format(Sys.time(), "%H:%M:%S "), "-Calculate the number of reads needed from each file ... ")
+    cat(format(Sys.time(), "%H:%M:%S"),"- Calculate the number of reads needed from each file ... ")
   }
   
   raData = files %>% group_by(id, type, relativeAbundance, readCount) %>% 
@@ -232,7 +238,7 @@ tryCatch({
     
     fileNames = files %>% filter(id == toMerge$id[i]) %>% pull(fileName)
     if(verbose){
-      cat(format(Sys.time(), "%H:%M:%S "), "-Extracting reads from\n          ", paste(fileNames, collapse = "\n           "), "\n")
+      cat(format(Sys.time(), "%H:%M:%S"),"- Extracting reads from\n          ", paste(fileNames, collapse = "\n           "), "\n")
     }
     
     fullFile = floor(toMerge$fileNeeded[i])
@@ -243,9 +249,9 @@ tryCatch({
       for(j in 1:fullFile){
         system(sprintf(
           "%s in1=%s in2=%s out=stdout.fastq 2>/dev/null | awk 'NR %% 4 == 1{sub(/@/,\"@%i_\",$0);print;next}\
-          NR %% 2 == 1{print \"+\";next}{print}' | gzip -c > %s/tempFile%i_full%i.fastq.gz",
+          NR %% 2 == 1{print \"+\";next}{print}' | %s -c > %s/tempFile%i_full%i.fastq.gz",
           reformatScript, toMerge$file1[i], toMerge$file2[i],
-          i, tempFolder, i, j), intern = F)
+          j, zipMethod, tempFolder, i, j), intern = F)
       }
     } else if(toMerge$fileNeeded[i] == 1.0){
       system(sprintf(
@@ -263,7 +269,7 @@ tryCatch({
     }
     
     if(verbose){
-      cat(format(Sys.time(),"%H:%M:%S ")," done\n")
+      cat(format(Sys.time(),"%H:%M:%S "),"done\n")
     }
     newLogs = rbind(newLogs, list(as.integer(Sys.time()), 7, 
   	paste("Reads extracted from", paste(fileNames, collapse = ", "))))
@@ -272,7 +278,7 @@ tryCatch({
   
   #Merge the temp files into the final one
   if(verbose){
-    cat(format(Sys.time(), "%H:%M:%S "), "-Merge all reads together and write final file ... ")
+    cat(format(Sys.time(), "%H:%M:%S"),"- Merge all reads together and write final file ... ")
   }
   
   system(paste0("cat ", tempFolder, "/*.fastq.gz > ", outputFile))
