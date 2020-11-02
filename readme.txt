@@ -24,9 +24,13 @@ The following software needs to be installed:
    https://blast.ncbi.nlm.nih.gov/Blast.cgi?PAGE_TYPE=BlastDocs&DOC_TYPE=Download    
   * Use a cloud instance of BLAST
     Example: https://blast.ncbi.nlm.nih.gov/Blast.cgi
+
+Optional software
+- pigz
+  * If installed, zipping files will be faster on multi-core machines compared to gzip
    
 IMPORTANT: Update the paths to all dependencies in the 'settingss.txt' file 
-if they are not in the default PATH
+ if they are not in the default PATH
 
 -- END SETUP.SH ---
 

@@ -1,31 +1,31 @@
-#------------------------------------------------
-# DEPENDENCIES & DEFAULT PARAMETERS FOR META2AMR
-#------------------------------------------------
+#-----------------------------------------------------------
+#      DEPENDENCIES & DEFAULT PARAMETERS FOR META2AMR
+#-----------------------------------------------------------
 # NOTE: Do NOT quote values unless quotation is part of it
 #  ex.1: var=test 1; NOT var="test 1"
 #  ex.2: var=test "test" test; NOT "test \"test\" test"
 
 --- GENERAL DEPENDENCIES
-sqlite3=/usr/local/sqlite3/3.33.0/bin/sqlite3
-rscript=/usr/local/R/4.0.2/bin/Rscript
-reformat=/usr/local/bbmap/38.32.0/reformat.sh
-metacherchant=/usr/local/metacherchant/1.0.0/out/metacherchant.sh
-usearch=/usr/local/usearch/10.0.240/bin/usearch
+sqlite3=/opt/sqlite-tools/sqlite3
+rscript=/opt/R/4.0.2/bin/Rscript
+reformat=/opt/bbmap/reformat.sh
+metacherchant=/opt/metacherchant.sh
+usearch=/opt/usearch11.0.667
 
 --- MIXMULTIPLE.SH
 mixMultipleMetaData=TRUE
 mixMultipleVerbose=TRUE
-mixMultipleTemp=/scratch/van9wf/pipelineTemp/
+mixMultipleTemp=
 
 --- META2AMR.SH
-meta2amrTemp=/scratch/van9wf/pipelineTemp
+meta2amrTemp=
 meta2amrVerbose=1
 meta2amrForceOverwrite=FALSE
 
 --- LOCALBLAST.SH
 localBlastVerbose=1
-localBlastBlastn=/usr/local/blast/2.10.0/bin/blastn
-localBlastDB=/database/ncbi/nt
+localBlastBlastn=/opt/ncbi-blast-2.10.1+/bin/blastn
+localBlastDB=/mnt/meta2amrData/ncbi/blastdb/nt
 
 --- REMOTEBLAST.SH
 remoteBlastVerbose=1
