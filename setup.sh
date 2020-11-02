@@ -100,8 +100,8 @@ echo -e " - R and dependent packages are present"
 
 
 #Check if bbmap is installed or the reformat.sh script can be reached
-bbmap=`grep -oP "reformat\s*=\s*\K(.*)" $baseFolder/settings.txt`
-if [ -z `command -v $bbmap` ]; then 
+testTool=`grep -oP "reformat\s*=\s*\K(.*)" $baseFolder/settings.txt`
+if [ -z `command -v $testTool` ]; then 
 	echo -e "\e[91mThe bbmap package does not seem to be installed as a system application\n"\
 	"If you have unzipped the package in a custom folder,\n update the path to the 'reformat.sh' script in the settings file\n"\
 	$baseFolder/settings.txt"\e[0m"
@@ -113,6 +113,19 @@ $sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
 	VALUES($runId,'setup.sh',$(date '+%s'),3,'bbmap installed')"
 echo -e " - bbmap is present"
 
+#Check if usearch is installed or the reformat.sh script can be reached
+testTool=`grep -oP "usearch\s*=\s*\K(.*)" $baseFolder/settings.txt`
+if [ -z `command -v $testTool` ]; then 
+	echo -e "\e[91mThe usearch package does not seem to be installed as a system application\n"\
+	"If you installed it in a custom folder,\n update the path to the usearch script in the settings file\n"\
+	$baseFolder/settings.txt"\e[0m"
+	updateDBwhenError "$runId" "The usearch package does not seem to be installed"
+	exit 1;
+fi;
+$sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
+	"INSERT INTO logs (runId,tool,timeStamp,actionId,actionName)
+	VALUES($runId,'setup.sh',$(date '+%s'),4,'usearch installed')"
+echo -e " - usearch is present"
 
 #Check if BLASTn is either a local tool or link to a remote service
 blastPath=`grep -oP "localBlastBlastn\s*=\s*\K(.*)" $baseFolder/settings.txt`
@@ -144,8 +157,19 @@ fi
 
 $sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
 	"INSERT INTO logs (runId,tool,timeStamp,actionId,actionName)
-	VALUES($runId,'setup.sh',$(date '+%s'),3,'$message')"
+	VALUES($runId,'setup.sh',$(date '+%s'),5,'$message')"
 
+#Check if pigz is installed else use gzip (slower but same result)
+if [ -z `command -v pigz` ]; then 
+	echo -e " - pigz is not present. gzip will be used instead, but is slower"
+	message="pigz not installed. gzip used instead"
+else
+	message="pigz present"
+fi;
+$sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
+	"INSERT INTO logs (runId,tool,timeStamp,actionId,actionName)
+	VALUES($runId,'setup.sh',$(date '+%s'),4,'$message')"
+echo -e " - $message"
 
 echo -e "\e[32m   All dependencies seem to be present\e[0m\n"
 
@@ -166,7 +190,7 @@ $baseFolder/mixMultiple.sh -f \
 
 $sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
 	"INSERT INTO logs (runId,tool,timeStamp,actionId,actionName)
-	VALUES($runId,'setup.sh',$(date '+%s'),4,'mixMultiple test succesful')"
+	VALUES($runId,'setup.sh',$(date '+%s'),6,'mixMultiple test succesful')"
 echo -e "\e[32m   Mixing test successful\e[0m\n"
 
 #Finish script
@@ -175,4 +199,4 @@ $sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
 	SET end = '$(date '+%F %T')', status = 'finished'
 	WHERE runId = $runId"
 	
-echo -e `date "+%T"`"\e[32m - Setup check finished\n The entire pipeline seems to be working correctly\e[0m\n"
+echo -e `date "+%T"`" - Setup check finished\n \e[32mThe entire pipeline seems to be working correctly\e[0m\n"
