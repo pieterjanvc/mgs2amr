@@ -40,12 +40,18 @@ minBlastLength = as.integer(args[[8]]) #Min segment length to submit to blast
 trimLength = as.integer(args[[9]]) #Loose segments smaller than this will be cut from thr GFA
 clusterIdentidy  = as.numeric(args[[10]]) #The cluster identity percent used in usearch
 forceRedo = as.logical(args[[11]]) #If parts of the code have successfully run before a crash, do not repeat unless forceRedo = T
+# prevRunId = as.integer(args[[12]]) #If present, use info from prev run to skip part that were completed
 
 #Generate a list out of the settings file
 settings = readLines(paste0(baseFolder, "settings.txt"))
 settings = settings[str_detect(settings,"^\\s*[^=#]+=.*$")]
 settings = str_match(settings, "\\s*([^=\\s]+)\\s*=\\s*(.*)")
 settings = setNames(str_trim(settings[,3]), settings[,2])
+
+#Check if pigz is available instead of gzip for faster zipping
+zipMethod = ifelse(length(suppressWarnings(
+  system("command -v pigz", intern = T))) == 0, 
+  "gzip", "pigz")
 
 tempFolder = formatPath(paste0(tempFolder, tempName), endWithSlash = T)
 logPath = sprintf("%s%s_log.csv", tempFolder,tempName)
@@ -54,28 +60,34 @@ prevRunId = ifelse(file.exists(paste0(tempFolder,"runId")),
 
 #Check the log file to see if there was a previous run of the code
 myConn = dbConnect(SQLite(), sprintf("%sdataAndScripts/meta2amr.db", baseFolder))
-logs = dbGetQuery(myConn, "SELECT * FROM logs WHERE runId = ? AND tool = 'blastPrep.R'", params = prevRunId)
+logs = dbGetQuery(myConn, "SELECT * FROM logs WHERE runId = ? AND tool = 'blastPrep.R'", 
+                  params = prevRunId)
 dbDisconnect(myConn)
-newLogs = data.frame(timeStamp = as.integer(Sys.time()), actionId = 1, actionName = "Start BLAST prep")
+newLogs = data.frame(timeStamp = as.integer(Sys.time()), 
+                     actionId = 1, actionName = "Start BLAST prep")
 
 tryCatch({
   # ---- Clean up files and folders ----
   #*************************************
   if(nrow(logs %>% filter(actionId %in% c(2, 4))) > 0){
     
-    if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S   "), "Skip MetaCherchant cleanup:\n",
-                        "           can only be done once (read previous GFA file)\n")}
-    
-    newLogs = rbind(newLogs, list(as.integer(Sys.time()), 2, "Skip MetaCherchant cleanup: Can only be done once"))
+    if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S -"), 
+                        "Skip MetaCherchant cleanup, already done\n")}
+    newLogs = rbind(newLogs, list(as.integer(Sys.time()), 2, 
+                                  "Skip MetaCherchant cleanup, already done"))
   
     #Takes long time to load, only do if next step is not completed (not needed afterwards)
-    if(nrow(logs %>% filter(actionId == 7)) == 0){
-      gfa = gfa_read(gzfile(paste0(tempFolder, "masterGFA.gfa.gz"), "masterGFA.gfa"))
+    if(nrow(logs %>% filter(actionId %in% c(5,7))) == 0){
+      if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S -"), 
+                          "Load master GFA file for processing ... ")}
+      gfa = gfa_read(gzfile(paste0(tempFolder, "masterGFA.gfa.gz"), 
+                            "masterGFA.gfa"))
+      if(verbose > 0){"done"}
     }
     
   } else {
     
-    if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S   "), "Merge MetaCherchant output ... ")}
+    if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S -"), "Merge MetaCherchant output ... ")}
     newLogs = rbind(newLogs, list(as.integer(Sys.time()), 3, "Start merging MetaCherchant output"))
   
     if(nrow(logs %>% filter(actionId == 4)) == 0){
@@ -83,9 +95,9 @@ tryCatch({
       system(sprintf("cat $(find %s -name '*.gfa') > %smasterGFA.gfa", tempFolder, tempFolder))
     }
     
-    #Read the master GFA file as gfa object
+    #Read the master GFA file as gfa object (fix MetaCherchant error!)
     filePath = paste0(tempFolder, "masterGFA.gfa")
-    gfa = gfa_read(filePath)
+    gfa = gfa_fixMetacherchant(filePath)
     
     #Read the raw file
     myFile = str_split(readLines(filePath), "\t")
@@ -110,7 +122,7 @@ tryCatch({
     
     #Update the master GFA file and zip it to save space
     gfa_write(gfa, paste0(tempFolder, "masterGFA.gfa"))
-    system(sprintf("gzip %s", paste0(tempFolder, "masterGFA.gfa")))
+    system(sprintf("%s %s", paste0(tempFolder, "masterGFA.gfa"), zipMethod))
     
     #Remove Metacherchant Data if set
     if(keepAllMetacherchantData == F & (nrow(logs %>% filter(actionId == 4)) == 0)){
@@ -218,26 +230,40 @@ tryCatch({
     newLogs = rbind(newLogs, list(as.integer(Sys.time()), 9, "Start simplifying GFA files"))
     
     dir.create(sprintf("%sgenesDetected/simplifiedGFA", tempFolder), showWarnings = F)
-    if(verbose > 1){cat("\n")}
+    if(verbose > 0){cat("\n")}
+    
+    # #Don't repeat any simplifications that have been done in the past if doing it again
+    # alreadyDone = list.files(sprintf("%sgenesDetected/simplifiedGFA", tempFolder),
+    #                          pattern = "_simplified.gfa") %>% str_extract("^\\d+")
     
     blastSegments = map_df(genesDetected$geneId, function(myGene){
       
-      if(verbose > 1){cat(sprintf(" %s (%s) ...", genesDetected[genesDetected$geneId == myGene, "ncbi"],
-                                  genesDetected[genesDetected$geneId == myGene, "gene"]))}
+      # if(verbose > 0){cat(sprintf(" %s (%s) ...", genesDetected[genesDetected$geneId == myGene, "ncbi"],
+      #                             genesDetected[genesDetected$geneId == myGene, "gene"]))}
+      if(verbose > 0){cat(sprintf(" gene %i/%i ... ", which(myGene == genesDetected$geneId), 
+                                  length(genesDetected$geneId)))}
       
-      gfa = gfa_read(sprintf("%sgenesDetected/%s.gfa", tempFolder, myGene))
+      gfa = gfa_fixMetacherchant(sprintf("%sgenesDetected/%s.gfa", tempFolder, myGene))
       
       #Start from the longest ARG segment (might need to be updated in future)
       startSegment = gfa$segments %>% filter(str_detect(name, "_start$")) %>%
         filter(LN == max(LN)) %>% pull(name)
       
-      #Limit the GFA to neighbourhood around the ARG set by maxPathDist
-      gfa = gfa_neighbourhood(gfa, startSegment[1], maxPathDist)
+      #Check if filter yields any results
+      if(nrow(gfa$links) == 0){
+        return(data.frame())
+      }
       
       #Detect al paths to the ARG and only keep those segments
-      allPaths = gfa_pathsToSegment(gfa, startSegment[1], returnList = T)
+      allPaths = gfa_pathsToSegment(gfa, startSegment[1], maxDistance = maxPathDist, 
+                                    verbose = F, segmentListOnly = T)
       allPaths = sapply(allPaths, "[[", "segmentOrder") %>% unlist %>% unique()
       gfa = gfa_filterSegments(gfa, allPaths, action = "keep")
+      
+      #Check if filter yields any results
+      if(nrow(gfa$links) == 0){
+        return(data.frame())
+      }
       
       #Trim loose small segments and merge segments in series
       for(i in 1:3){ # TODO create better loop
@@ -249,7 +275,7 @@ tryCatch({
       gfa = gfa_annotation(gfa, gfa$segments$name[str_detect(gfa$segments$name, "_start$")], color = "green")
       gfa_write(gfa, sprintf("%s/genesDetected/simplifiedGFA/%s_simplified.gfa", tempFolder, myGene))
       
-      if(verbose > 1){cat("done\n")}
+      if(verbose > 0){cat("done\n")}
       
       gfa$segments %>% filter(LN > minBlastLength, !str_detect(name, "_start$")) %>% 
         mutate(geneId = myGene)
