@@ -269,7 +269,7 @@ tryCatch({
     }
     
     if(verbose){
-      cat(format(Sys.time(),"%H:%M:%S "),"done\n")
+      cat(format(Sys.time(),"%H:%M:%S ")," done\n")
     }
     newLogs = rbind(newLogs, list(as.integer(Sys.time()), 7, 
   	paste("Reads extracted from", paste(fileNames, collapse = ", "))))

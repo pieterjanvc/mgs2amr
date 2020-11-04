@@ -199,7 +199,7 @@ if [ -z "$MCsuccess" ]; then
 	"INSERT INTO logs (runId,tool,timeStamp,actionId,actionName)
 	VALUES($runId,'metacherchant.sh',$(date '+%s'),1,'Start MetaCherchant')"
 	
-	freeMem=$(expr $(free -h | grep -oP "Mem:\s+\d+.\s+\d+.\s+\K(\d+)") - 4)
+	freeMem=$(expr $(free -h | grep -oP "Mem:\s+[^\s]+\s+[^\s]+\s+\K([\d\.]+)") - 4)
 	$metacherchant --tool environment-finder \
 		--k 31 \
 		--coverage=5 \
@@ -244,8 +244,12 @@ if [ $verbose != "0" ]; then echo -e `date "+%T"`" - Start BLAST preparations  .
 Rscript=`grep -oP "rscript\s*=\s*\K(.*)" $baseFolder/settings.txt`
 
 #Set any option to modify the script
-scriptOptions=(keepAllMetacherchantData maxPathDist minBlastLength trimLength clusterIdentidy forceRedo)
-scriptValues=(FALSE 5000 250 100 0.95 FALSE)
+scriptOptions=(keepAllMetacherchantData maxPathDist minBlastLength trimLength clusterIdentidy forceRedo, maxStep)
+scriptValues=(FALSE 5000 250 100 0.95 FALSE 10)
+
+if [ "${scriptValues[6]}" != "" ]; then 
+	echo "  WARNING: the blast prep is limited to step ${scriptValues[6]}" 
+fi
 
 # declare -A scriptOptions
 # scriptOptions[keepAllMetacherchantData]=FALSE #keepAllMetacherchantData, if FALSE, only the GFA data is kept after merging (folders are removed)
