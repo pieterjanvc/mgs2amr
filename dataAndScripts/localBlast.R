@@ -81,7 +81,8 @@ tryCatch({
       newLogs = rbind(newLogs, list(as.integer(Sys.time()), 2, 
                                     sprintf("Start BLASTn for submId %i", toSubmit$submId[i])))
       if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S  "), 
-                          sprintf("- Progress %i/%i Blastn for submId %i ... ",toSubmit$submId[i], nrow(toSubmit), i))}
+                          sprintf("- Progress %i/%i Blastn for submId %i ... ", 
+                                  i, toSubmit$submId[i], nrow(toSubmit)))}
       
       #Run local blastn
       system(sprintf('%s -db "%s" -query "%s" -task megablast -evalue %s -word_size %i -max_target_seqs %i -taxidlist %s -outfmt 15 | gzip > "%s"',
@@ -130,8 +131,10 @@ finally = {
   newLogs$tool = "localBlast.R"
   newLogs = newLogs %>% select(runId,tool,timeStamp,actionId,actionName)
   
-  q = dbSendStatement(myConn, "INSERT INTO logs (runId,tool,timeStamp,actionId,actionName) VALUES(?,?,?,?,?)", 
-                      params = unname(as.list(newLogs)))
+  q = dbSendStatement(
+    myConn, 
+    "INSERT INTO logs (runId,tool,timeStamp,actionId,actionName) VALUES(?,?,?,?,?)", 
+    params = unname(as.list(newLogs)))
   dbClearResult(q)
   dbDisconnect(myConn)
   
