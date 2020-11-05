@@ -57,6 +57,15 @@ statusCodes = data.frame(
               "remote results downloaded and processed", "remote download or post-processing failed", 
               "local search started", "local search finished and processed sucessfully", "local search failed"))
 
+statusCodes = data.frame(
+  status = c(0, 10:13, 20:25, 30:32, 40:42),
+  message = c("awaiting submission","successful remote submission", "failed remote submission - server error", 
+              "failed remote submission - POST error", "failed remote submission - input error", "searching remotely", 
+              "remote search failed","unknown RID or remote search expired", "remote search completed", 
+              "unknown error in remote search", "timeout remote search", "remote results download successfull", 
+              "remote results download failed", "remote results already downloaded",
+              "local search started", "local search finished and processed sucessfully", "local search failed"))
+
 
 tryCatch({
   
@@ -91,27 +100,24 @@ tryCatch({
       Sys.sleep(2) #Prevent too fast consecutive submissions (api will block those)
 
       #Submit to the blast API 
-      RID = blast_submit(paste0(formatPath(toSubmit$folder[i], endWithSlash = T), toSubmit$fastaFile[i]),
+      mySubmissions = blast_submit(paste0(formatPath(toSubmit$folder[i], endWithSlash = T), toSubmit$fastaFile[i]),
                          program = "blastn", megablast = T, database = "nt", 
                          expect = blastArgs$evalue, word_size = blastArgs$word_size, max_num_seq = blastArgs$max_num_seq,
                          entrez_query = entrezQ, url = blastn, verbose = verbose)
 
-      #Status depends on (un)successful submission
-      statusCode = ifelse(is.na(RID), 2, 1)      
-	  
       #Update the blastSubmissions table
       myConn = dbConnect(SQLite(), paste0(baseFolder, "dataAndScripts/meta2amr.db"))
       q = dbSendStatement(
         myConn, 
         "UPDATE blastSubmissions SET runId = ?, RID = ?, timeStamp = ?, statusCode  = ?, statusMessage = ?
       WHERE submId = ?",
-        params = list(toSubmit$runId[i], RID, as.integer(Sys.time()), statusCode, 
-                      statusCodes$message[statusCode+1], toSubmit$submId[i]))
+        params = list(toSubmit$runId[i], RID, as.integer(Sys.time()), mySubmissions$code, 
+                      mySubmissions$message, toSubmit$submId[i]))
       dbClearResult(q)
       dbDisconnect(myConn) 
 
       #Feedback and Logs
-      if(statusCode == 1){
+      if(mySubmissions$statusCode == 1){
         newLogs = rbind(newLogs, list(as.integer(Sys.time()), 3, 
                                       sprintf("Successful remote submission of %s (submId %s)", toSubmit$fastaFile[i], toSubmit$submId[i])))
         if(verbose > 0){cat("done\n")}
@@ -154,7 +160,7 @@ tryCatch({
       
       #Update submission states
       submTable = submTable %>% rowwise() %>% 
-        mutate(statusCode = blast_checkSubmission(RID, verbose = 0)$statusCode)
+        mutate(blast_checkSubmission(RID, verbose = 0) %>% select(statusCode, statusMessage))
       
       #Update the blastSubmissions table in the DB
       myConn = dbConnect(SQLite(), paste0(baseFolder, "dataAndScripts/meta2amr.db"))
@@ -163,7 +169,7 @@ tryCatch({
         "UPDATE blastSubmissions SET runId = ?, timeStamp = ?, statusCode  = ?, statusMessage = ?
         WHERE submId = ?",
         params = list(submTable$runId, rep(as.integer(Sys.time()), nrow(submTable)), submTable$statusCode, 
-                      statusCodes$message[submTable$statusCode+1], submTable$submId))
+                      submTable$statusMessage, submTable$submId))
       dbClearResult(q)
       dbDisconnect(myConn)
       
@@ -172,7 +178,7 @@ tryCatch({
       if(verbose > 0){cat("done\n")}
       
       #Get the submissions that are finished and ready for download 
-      submTable = submTable %>% filter(statusCode == 4)
+      submTable = submTable %>% filter(statusCode == 23)
       
       if(nrow(submTable) > 0){
         
@@ -189,19 +195,18 @@ tryCatch({
                                       i, nrow(submTable), submTable$submId[i]))}
           
           #Get results (success = 9, fail = 10)
-          statusCode = ifelse(blast_getResults(submTable$RID[i], submTable$folder[i], unzip = F, verbose = 1),
-                              9, 10)
+          getResults = blast_getResults(submTable$RID[i], submTable$folder[i], unzip = F, verbose = 1)
           
           #Update the blastSubmissions table in the DB
           myConn = dbConnect(SQLite(), paste0(baseFolder, "dataAndScripts/meta2amr.db"))
           q = dbSendStatement(myConn, "UPDATE blastSubmissions 
                     SET statusCode = ?, statusMessage = ? WHERE submId = ?", 
-                              params = list(statusCode, statusCodes$message[statusCode+1], submTable$submId[i]))
+                              params = list(getResults$statusCode, getResults$statusMessage, submTable$submId[i]))
           dbClearResult(q)
           dbDisconnect(myConn)
           
           #Feedback and Logs
-          if(statusCode == 9){
+          if(getResults$statusCode == 30){
             newLogs = rbind(newLogs, list(as.integer(Sys.time()), 10, 
                                           sprintf("Download/processing successful for BLAST results of %s (submId %s)", 
                                                   submTable$fastaFile[i], submTable$submId[i])))
