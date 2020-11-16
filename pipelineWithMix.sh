@@ -5,11 +5,11 @@
 #BSUB -o /data/aplab/ARG_PJ/clusterLogs/%J_pipelineWithMix.out
 #BSUB -e /data/aplab/ARG_PJ/clusterLogs/%J_pipelineWithMix.err
 
-module load R/4.0.2
-module load sqlite3
-source /data/aplab/ARG_PJ/pushover.sh
+# module load R/4.0.2
+# module load sqlite3
+source ~/pushover.sh
 
-baseFolder=/data/aplab/ARG_PJ/aim2/meta2amr
+baseFolder=/mnt/meta2amrData/meta2amr
 
 #Save error to temp file to it can be both displayed to user and put in DB
 touch $baseFolder/dataAndScripts/lastError
@@ -48,17 +48,19 @@ updateDBwhenError() {
 pushMessage "Start Pipeline" "pipelineWithMix"
 
 #Folders
-mixTempFolder=/scratch/van9wf/pipelineTemp
-meta2amrTempFolder=/scratch/van9wf/pipelineTemp
-genomesFolder=$mixTempFolder/mixedMetagenomes #Folder to save the mixed files to or get existing ones
-bgFolder=/data/aplab/ARG_PJ/data/haslamData/normalMetagenomes/ #Background metagenomes folder
-iFolder=/data/aplab/ARG_PJ/data/publicData #Isolates folder
+mixTempFolder=/mnt/meta2amrData/meta2amr/temp
+meta2amrTempFolder=/mnt/meta2amrData/meta2amr/temp
+genomesFolder=/mnt/meta2amrData/cchmcData/mixedMetagenomes #Folder to save the mixed files to or get existing ones
+bgFolder=/mnt/meta2amrData/cchmcData/normalMetagenomes/ #Background metagenomes folder
+iFolder=/mnt/meta2amrData/ncbi/sra #Isolates folder
 
 #Variables
-fileName=testMix2 #Set to a specific filename if starting from existing mixed file (rest below is ignored then)
-bgName="" #Name of the background metagenome
-iNames="SRR2976831,SRR4025843" #Name(s) of the isolate(s). Comma separate (no space) if multiple
-relAb="0.3,0.7" #Sum = 1 if no bgMeta or <1 otherwise. Comma separate (no space) if multiple
+fileName=testMixWithBG #Set to a specific filename if starting from existing mixed file (rest below is ignored then)
+bgName="H7Heidi4.fastq.gz" #Name of the background metagenome
+# iNames="SRR2976831,SRR4025843" #Name(s) of the isolate(s). Comma separate (no space) if multiple
+# relAb="0.07,0.05" #Sum = 1 if no bgMeta or <1 otherwise. Comma separate (no space) if multiple
+iNames="SRR4025843" #Name(s) of the isolate(s). Comma separate (no space) if multiple
+relAb="0.1" #Sum = 1 if no bgMeta or <1 otherwise. Comma separate (no space) if multiple
 
 sqlite3=`grep -oP "sqlite3\s*=\s*\K(.*)" $baseFolder/settings.txt`
 
@@ -75,14 +77,14 @@ if [ ! -f $genomesFolder/$fileName.fastq.gz ]; then
 	# STEP 1 - Generate the mixing input file
 	#-----------------------------------------
 	
-	echo -e `date "+%T"`" Generate the mixing input file ...";
+	printf "%s - Generate the mixing input file ... " `date "+%T"`
 
 	#Generate the csv file that will serve as input
 	Rscript $baseFolder/dataAndScripts/generateMixInput.R \
 		"$genomesFolder" "$bgFolder" "$bgName" "$iFolder" \
 		"$iNames" "$relAb" "$fileName"
 		
-	echo -e `date "+%T"` "done"
+	printf "done\n"
 		
 		
 	# STEP 2 - Create the mixed file
