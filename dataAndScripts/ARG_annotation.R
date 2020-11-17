@@ -7,6 +7,7 @@ library(tidyverse)
 library(RSQLite)
 
 tempFolder = "temp/diffMixInPerc0.05_1604442644/"
+minBlastLength = 250
 
 myConn = dbConnect(SQLite(), "dataAndScripts/meta2amr.db")
 ARG = dbReadTable(myConn, "ARG")
@@ -88,7 +89,8 @@ segmentData = test %>%
   group_by(geneId, segment) %>% 
   summarise(annot = paste(info, collapse = "; "), .groups = "drop")
 
-myGene = "2610"
+myGene = "5022"
+
 myGFA = gfa_read(sprintf("%sgenesDetected/simplifiedGFA/%s_simplified.gfa", tempFolder, myGene))
 myGFA = gfa_annotation(
   myGFA, 
@@ -103,20 +105,45 @@ start = myGFA$segments %>% filter(str_detect(name, "_start$")) %>%
 paths = gfa_pathsToSegment(myGFA, start, returnList = T)
 names(paths) = sapply(paths, "[", "endSegment")
 
-result = paths[test %>% filter(geneId == myGene) %>% pull(segment)]
+# result = paths[test %>% filter(geneId == myGene) %>% pull(segment)]
 
-result = map_df(result, function(myPath){
-  segmentOrder = myPath$segmentOrder[!str_detect(myPath$segmentOrder, "start$")]
+result = map_df(paths, function(myPath){
+  # segmentOrder = myPath$segmentOrder[!str_detect(myPath$segmentOrder, "start$")]
+  segmentOrder = myPath$segmentOrder
   if(length(segmentOrder) > 0){
     data.frame(step = 1:length(segmentOrder), segment = segmentOrder) %>% 
-      left_join(test %>% filter(geneId == myGene), by = "segment") %>% 
-      left_join(myGFA$segments %>% select(name, LN, KC), by = c("segment" = "name")) %>% 
-      mutate(segment = myPath$endSegment) 
+      left_join(test %>% 
+                  filter(geneId == myGene), by = "segment") %>% 
+      left_join(myGFA$segments %>% 
+                  select(name, LN, KC), by = c("segment" = "name")) %>% 
+      mutate(endSegment = myPath$endSegment,
+             pathLength = myPath$pathLength)
   } else {
     data.frame()
   }
-})
+}) 
+# %>% group_by(endSegment) %>% 
+#   mutate(pathLength = pathLength[1] - sum(LN[is.na(geneId)]) + 60*n() - 60)
+
+#Filter by minBlastLength
+# test1 = result %>% 
+#   # mutate(LN = LN - 30) %>% 
+#   # filter(LN >= minBlastLength) %>%
+#   group_by(endSegment, genus, species) %>% 
+#   mutate(pathLength = pathLength - sum(LN[is.na(geneId)])) %>% 
+#   summarise(bit_score = sum(bit_score), n = n(), 
+#             pathAssigned = sum(LN) / pathLength[1],
+#             .groups = "drop")
 
 
-#------------
+test1 = result %>% filter(!is.na(geneId)) %>% 
+  mutate(unique = ifelse(segment == endSegment, LN / pathLength, 0)) %>% 
+  group_by(endSegment, genus, species) %>% mutate(n = n()) %>% 
+  group_by(endSegment) %>% filter(n == max(n)) %>% 
+  group_by(endSegment, genus, species)  %>% 
+  summarise(bit_score = sum(bit_score), 
+            unique = max(unique), 
+            quality = weighted.mean(coverage, LN) * pathLength,
+            .groups = "drop") %>% 
+  filter(unique > 0)
 
