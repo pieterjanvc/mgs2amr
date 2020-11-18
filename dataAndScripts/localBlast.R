@@ -82,7 +82,7 @@ tryCatch({
                                     sprintf("Start BLASTn for submId %i", toSubmit$submId[i])))
       if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S  "), 
                           sprintf("- Progress %i/%i Blastn for submId %i ... ", 
-                                  i, toSubmit$submId[i], nrow(toSubmit)))}
+                                  i, nrow(toSubmit), toSubmit$submId[i]))}
       
       #Run local blastn
       system(sprintf('%s -db "%s" -query "%s" -task megablast -evalue %s -word_size %i -max_target_seqs %i -taxidlist %s -outfmt 15 | gzip > "%s"',
