@@ -6,11 +6,21 @@ library(gfaTools)
 library(tidyverse)
 library(RSQLite)
 
-tempFolder = "temp/diffMixInPerc0.05_1604442644/"
+tempFolder = formatPath("temp/", endWithSlash = T)
+sampleName = "testMix2WithBG_1605708377"
 minBlastLength = 250
 
 myConn = dbConnect(SQLite(), "dataAndScripts/meta2amr.db")
 ARG = dbReadTable(myConn, "ARG")
+
+### FIX mismatch runId in blast prep!! 
+genesDetected = dbGetQuery(
+  myConn, 
+  "SELECT a.runId, a.segmentLength, a.kmerCount, a.n, a.coverage, c.*
+  FROM detectedARG a, blastSubmissions as b, ARG as c
+  WHERE a.runId == 27 AND b.runId == 28 AND 
+  b.tempName == 'testMix2WithBG_1605708377' AND c.geneId = a.geneId") %>% 
+  distinct()
 dbDisconnect(myConn)
 
 
@@ -34,7 +44,7 @@ coverMean = function(from, to, n, val, fun = max){
 
 #Read all blast output
 blastOut = lapply(
-  list.files(tempFolder, full.names = T,
+  list.files(paste0(tempFolder, sampleName), full.names = T,
              pattern = "blastSegmentsClustered\\d+.json.gz"),
   blast_readResults, outFormat = "dataFrame1") %>% bind_rows()
 
@@ -50,7 +60,7 @@ blastOut = blastOut %>%
   mutate(plasmid = str_detect(extra, "plasmid|Plasmid"))
 
 #Expand results from clustering segments before blast
-clusterOut = read.table(paste0(tempFolder, "blastSegments.out")) %>% 
+clusterOut = read.table(paste0(tempFolder, sampleName, "/blastSegments.out")) %>% 
   select(segmentId = V9, clusterId = V10) %>% distinct() %>% 
   mutate(clusterId = ifelse(clusterId == "*", segmentId, clusterId)) %>% 
   extract(segmentId, into = c("geneId", "segment"), regex = "^([^_]+)_(.*)", remove = F) %>% 
@@ -59,11 +69,19 @@ clusterOut = read.table(paste0(tempFolder, "blastSegments.out")) %>%
 blastOut = clusterOut %>% 
   left_join(blastOut, by = c("clusterId" = "query_title"))
 
+
+#It seems that using multiple matches within the same genome does not make sense,
+#since it would not have been split if it would be extended with a gap.
+#So better get rid of all but the best match? 
+# We also have to work by hit Id before we start merging
+#  group_by(clusterId, hitId)
+
 ### Here starts speculation ###
 
 #Use the covermean function so summarise data per gene, bact and segment
-blastOut = blastOut %>% group_by(geneId, genus, species, segment, plasmid) %>% 
+blastOut = blastOut %>% group_by(hitId, geneId, genus, species, segment, plasmid) %>% 
   summarise(
+    score_mean = coverMean(query_from, query_to, query_len, score, max),
     bit_score = coverMean(query_from, query_to, query_len, bit_score),
     evalue = coverMean(query_from, query_to, query_len, evalue, 
                        fun = function(x) ifelse(sum(x) == 0, 0, min(x[x != 0]))),
@@ -89,9 +107,10 @@ segmentData = test %>%
   group_by(geneId, segment) %>% 
   summarise(annot = paste(info, collapse = "; "), .groups = "drop")
 
-myGene = "5022"
+myGene = "2096"
 
-myGFA = gfa_read(sprintf("%sgenesDetected/simplifiedGFA/%s_simplified.gfa", tempFolder, myGene))
+myGFA = gfa_read(sprintf("%s%s/genesDetected/simplifiedGFA/%s_simplified.gfa", 
+                         tempFolder, sampleName, myGene))
 myGFA = gfa_annotation(
   myGFA, 
   segments = segmentData %>% filter(geneId == myGene) %>% pull(segment), 
@@ -138,12 +157,13 @@ result = map_df(paths, function(myPath){
 
 test1 = result %>% filter(!is.na(geneId)) %>% 
   mutate(unique = ifelse(segment == endSegment, LN / pathLength, 0)) %>% 
-  group_by(endSegment, genus, species) %>% mutate(n = n()) %>% 
-  group_by(endSegment) %>% filter(n == max(n)) %>% 
-  group_by(endSegment, genus, species)  %>% 
+  group_by(endSegment, genus, species, plasmid) %>% mutate(n = n()) %>% 
+  group_by(endSegment, plasmid) %>% filter(n == max(n)) %>% 
+  group_by(endSegment, genus, species, plasmid)  %>% 
   summarise(bit_score = sum(bit_score), 
             unique = max(unique), 
             quality = weighted.mean(coverage, LN) * pathLength,
             .groups = "drop") %>% 
   filter(unique > 0)
 
+genesDetected %>% filter(geneId == myGene)
