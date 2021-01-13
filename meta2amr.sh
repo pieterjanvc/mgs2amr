@@ -209,8 +209,8 @@ if [ -z "$MCsuccess" ]; then
 		--work-dir $tempFolder/$tempName/metacherchant_logs \
 		--maxkmers=100000 \
 		--bothdirs=False \
-		--chunklength=250 \
-		-m $freeMem\G
+		--chunklength=250 #\
+		# -m $freeMem\G
 		
     $sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
 	"INSERT INTO logs (runId,tool,timeStamp,actionId,actionName)
@@ -245,7 +245,7 @@ Rscript=`grep -oP "rscript\s*=\s*\K(.*)" $baseFolder/settings.txt`
 
 #Set any option to modify the script
 scriptOptions=(keepAllMetacherchantData maxPathDist minBlastLength trimLength clusterIdentidy forceRedo, maxStep)
-scriptValues=(FALSE 5000 250 100 0.95 FALSE 10)
+scriptValues=(FALSE 5000 250 100 0.95 FALSE 2)
 
 if [ "${scriptValues[6]}" != "" ]; then 
 	echo "  WARNING: the blast prep is limited to step ${scriptValues[6]}" 
