@@ -246,10 +246,6 @@ tryCatch({
       dir.create(sprintf("%sgenesDetected/simplifiedGFA", tempFolder), showWarnings = F)
       if(verbose > 0){cat("\n")}
       
-      # #Don't repeat any simplifications that have been done in the past if doing it again
-      # alreadyDone = list.files(sprintf("%sgenesDetected/simplifiedGFA", tempFolder),
-      #                          pattern = "_simplified.gfa") %>% str_extract("^\\d+")
-      
       blastSegments = map_df(genesDetected$geneId, function(myGene){
         
         # if(verbose > 0){cat(sprintf(" %s (%s) ...", genesDetected[genesDetected$geneId == myGene, "ncbi"],
@@ -259,31 +255,34 @@ tryCatch({
         
         gfa = gfa_read(sprintf("%sgenesDetected/%s.gfa", tempFolder, myGene))
         
-        #Start from the longest ARG segment (might need to be updated in future)
-        startSegment = gfa$segments %>% filter(str_detect(name, "_start$")) %>%
+        #Check if filter yields any results
+        if(nrow(gfa$links) == 0){
+          return(data.frame())
+        }
+        
+        #Get largest start segment
+        segmentOfInterest = gfa$segments %>% filter(str_detect(name, "_start$")) %>%
           filter(LN == max(LN)) %>% pull(name)
         
-        #Check if filter yields any results
-        if(nrow(gfa$links) == 0){
-          return(data.frame())
-        }
+        #Stay within maxPathDist around this segment
+        gfa = gfa_neighbourhood(gfa, segmentOfInterest, maxPathDist, noLoops = T)
         
-        #Detect al paths to the ARG and only keep those segments
-        allPaths = gfa_pathsToSegment(gfa, startSegment[1], maxDistance = maxPathDist, 
-                                      verbose = F, segmentListOnly = T)
-        allPaths = sapply(allPaths, "[[", "segmentOrder") %>% unlist %>% unique()
-        gfa = gfa_filterSegments(gfa, allPaths, action = "keep")
+        #Get all other start segments too
+        allStart = gfa$segments %>% filter(str_detect(name, "_start$")) %>%
+          pull(name)
         
-        #Check if filter yields any results
-        if(nrow(gfa$links) == 0){
-          return(data.frame())
-        }
+        #Keep pruning the graph to get rid of small appendages
+        gfa = gfa_trimLooseEnds(gfa, trimLength, keepRemoving = T, exclude = allStart)
         
-        #Trim loose small segments and merge segments in series
-        for(i in 1:3){ # TODO create better loop
-          gfa = gfa_trimLooseEnds(gfa, trimLength, verbose = F)
-        }
-        gfa = gfa_mergeSegments(gfa, gfa$segments$name[str_detect(gfa$segments$name, "_start$")])
+        #Remove parallel sequences by picking the shortest
+        gfa = gfa_removeRedundant(gfa, segmentOfInterest, exclude = allStart,
+                                  maxLN = trimLength)
+        
+        #Merge any start segments that are now in series
+        gfa = gfa_mergeSegments(
+          gfa,
+          exclude = gfa$segments$name[!str_detect(gfa$segments$name, "_start$")], 
+          prefix = "unitig", suffix = "_start")
         
         #Colour the ARG segments green for easier display in Bandage and save results
         gfa = gfa_annotation(gfa, gfa$segments$name[
