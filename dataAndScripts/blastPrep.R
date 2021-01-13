@@ -133,7 +133,7 @@ tryCatch({
       #Remove Metacherchant Data if set
       if(keepAllMetacherchantData == F & (nrow(logs %>% filter(actionId == 4)) == 0)){
         allDirs = list.dirs(tempFolder,recursive = F)
-        allDirs[!str_detect(allDirs,"metacherchant_logs")]
+        allDirs = allDirs[!str_detect(allDirs,"metacherchant_logs")]
         system(sprintf("rm -R %s", paste(allDirs, collapse = " ")))
       }
       
@@ -149,7 +149,7 @@ tryCatch({
     
     # ---- 2. Detect important ARG ----
     #**********************************
-    if(nrow(logs %>% filter(actionId %in% c(5, 7))) > 0 & !forceRedo){
+    if(nrow(logs %>% filter(actionId %in% c(5, 7))) > 0 | forceRedo){
       
       #Update the runId for the detectedARG in the database
       myConn = dbConnect(SQLite(), sprintf("%sdataAndScripts/meta2amr.db", baseFolder))
@@ -257,7 +257,7 @@ tryCatch({
         if(verbose > 0){cat(sprintf(" gene %i/%i ... ", which(myGene == genesDetected$geneId), 
                                     length(genesDetected$geneId)))}
         
-        gfa = gfa_fixMetacherchant(sprintf("%sgenesDetected/%s.gfa", tempFolder, myGene))
+        gfa = gfa_read(sprintf("%sgenesDetected/%s.gfa", tempFolder, myGene))
         
         #Start from the longest ARG segment (might need to be updated in future)
         startSegment = gfa$segments %>% filter(str_detect(name, "_start$")) %>%
