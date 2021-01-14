@@ -1,13 +1,4 @@
 #!/bin/bash
-#BSUB -W 00:30
-#BSUB -n 4
-#BSUB -M 20000
-#BSUB -o /data/aplab/ARG_PJ/clusterLogs/%J_pipelineWithMix.out
-#BSUB -e /data/aplab/ARG_PJ/clusterLogs/%J_pipelineWithMix.err
-
-# module load R/4.0.2
-# module load sqlite3
-source ~/pushover.sh
 
 baseFolder=/mnt/meta2amrData/meta2amr
 
@@ -45,7 +36,31 @@ updateDBwhenError() {
 	WHERE runId = $1"
 }
 
-pushMessage "Start Pipeline" "pipelineWithMix"
+#Options when script is run
+while getopts ":i:b:r:f:v:" opt; do
+  case $opt in
+	i) iNames="${OPTARG}"
+    ;;
+	b) bgName="${OPTARG}"
+    ;;
+	r) relAb="${OPTARG}"
+    ;;
+	f) fileName="${OPTARG}"
+    ;;
+	v) verbose="${OPTARG}"
+    ;;
+    \?) echo "Unknown argument provided"
+	    exit
+	;;
+  esac  
+done
+
+
+if [ -z ${verbose+x} ]; then 
+	verbose=1
+elif ! grep -qE "^(0|1|2)$" <<< $verbose; then	
+	echo -e "\n\e[91mThe verbose option (-v) needs to be 0, 1, or 2\e[0m"; exit 1;
+fi
 
 #Folders
 mixTempFolder=/mnt/meta2amrData/meta2amr/temp
@@ -54,13 +69,13 @@ genomesFolder=/mnt/meta2amrData/cchmcData/mixedMetagenomes #Folder to save the m
 bgFolder=/mnt/meta2amrData/cchmcData/normalMetagenomes/ #Background metagenomes folder
 iFolder=/mnt/meta2amrData/ncbi/sra #Isolates folder
 
-#Variables
-fileName=testMix2cWithBG #Set to a specific filename if starting from existing mixed file (rest below is ignored then)
-bgName="H7Heidi4.fastq.gz" #Name of the background metagenome
-# iNames="SRR2976831,SRR4025843" #Name(s) of the isolate(s). Comma separate (no space) if multiple
-# relAb="0.07,0.05" #Sum = 1 if no bgMeta or <1 otherwise. Comma separate (no space) if multiple
-iNames="SRR5082449,SRR10107339" #Name(s) of the isolate(s). Comma separate (no space) if multiple
-relAb="0.08,0.08" #Sum = 1 if no bgMeta or <1 otherwise. Comma separate (no space) if multiple
+# #Variables
+# fileName=testMixWithBG #Set to a specific filename if starting from existing mixed file (rest below is ignored then)
+# bgName="H7Heidi4.fastq.gz" #Name of the background metagenome
+# # iNames="SRR2976831,SRR4025843" #Name(s) of the isolate(s). Comma separate (no space) if multiple
+# # relAb="0.07,0.05" #Sum = 1 if no bgMeta or <1 otherwise. Comma separate (no space) if multiple
+# iNames="SRR4025843" #Name(s) of the isolate(s). Comma separate (no space) if multiple
+# relAb="0.1" #Sum = 1 if no bgMeta or <1 otherwise. Comma separate (no space) if multiple
 
 sqlite3=`grep -oP "sqlite3\s*=\s*\K(.*)" $baseFolder/settings.txt`
 
@@ -70,11 +85,52 @@ runId=$($sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
 	values('pipelineWithMix.sh','$(date '+%F %T')','running'); \
 	SELECT runId FROM scriptUse WHERE runId = last_insert_rowid()")
 	
+#Save the arguments with which the script was run
+$sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
+	"INSERT INTO scriptArguments (runId,scriptName,argument,value)
+	VALUES($runId,'pipelineWithMix.sh','iNames', '$iNames'),
+	($runId,'pipelineWithMix.sh','bgName', '$bgName'),
+	($runId,'pipelineWithMix.sh','relAb', '$relAb'),
+	($runId,'pipelineWithMix.sh','fileName', '$fileName'),
+	($runId,'pipelineWithMix.sh','verbose', '$verbose')"
+	
+	
 echo -e "\n\e[32m"`date "+%T"`" - Starting pipeline with mix ...\e[0m";
+
+# STEP 1 - Download data if needed
+#---------------------------------
+iNameList=($(grep -oP [^,]+ <<< $test))
+for mySRR in "${iNameList[@]}"
+do
+	if -z $(ls $iFolder | grep "$mySRR"); then
+		#Download data from NCBI SRA
+		echo -e "\n"`date "+%T"`" - Start downloading seq data for $mySRR ... "
+		/opt/sratoolkit.2.10.8/bin/fasterq-dump $mySRR \
+			-O  $outputFolder \
+			-t /mnt/meta2amrData/ncbi/sra/temp
+		echo -e `date "+%T"`" - downloading completed"
+		
+		echo -e `date "+%T"`" - Start zipping fastq files"
+		#Zip the results into gz format
+		find $outputFolder/$mySRR* -execdir pigz '{}' ';'
+		echo -e `date "+%T"`" - finished zipping"
+		
+		$sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
+		"INSERT INTO logs (runId,tool,timeStamp,actionId,actionName)
+		VALUES($runId,'pipelineWithMix.sh',$(date '+%s'),1,'Downloading $mySRR')"
+		
+	else
+		echo -e `date "+%T"`" - $mySRR already downloaded"
+		$sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
+		"INSERT INTO logs (runId,tool,timeStamp,actionId,actionName)
+		VALUES($runId,'pipelineWithMix.sh',$(date '+%s'),2,'Skip downloading $mySRR, already present')"
+	fi
+done
+
 
 if [ ! -f $genomesFolder/$fileName.fastq.gz ]; then
 
-	# STEP 1 - Generate the mixing input file
+	# STEP 2 - Generate the mixing input file
 	#-----------------------------------------
 	
 	printf "%s - Generate the mixing input file ... " `date "+%T"`
@@ -85,15 +141,23 @@ if [ ! -f $genomesFolder/$fileName.fastq.gz ]; then
 		"$iNames" "$relAb" "$fileName"
 		
 	printf "done\n"
+	
+	$sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
+		"INSERT INTO logs (runId,tool,timeStamp,actionId,actionName)
+		VALUES($runId,'pipelineWithMix.sh',$(date '+%s'),3,'Generated mixing input file')"
 		
 		
-	# STEP 2 - Create the mixed file
+	# STEP 3 - Create the mixed file
 	#-------------------------------
 	
 	$baseFolder/mixMultiple.sh \
 		-i $genomesFolder/$fileName.csv \
 		-o $genomesFolder/$fileName.fastq.gz \
 		-t $mixTempFolder
+		
+	$sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
+		"INSERT INTO logs (runId,tool,timeStamp,actionId,actionName)
+		VALUES($runId,'pipelineWithMix.sh',$(date '+%s'),4,'Mixed file created')"
 	
 else
 	
@@ -101,31 +165,29 @@ else
 fi
 
 
-# STEP 3 - meta2amr
-# ------------------
+# STEP 4 - meta2amr (until step 2)
+# --------------------------------
 $baseFolder/meta2amr.sh \
 	-i $genomesFolder/$fileName.fastq.gz \
 	-o $meta2amrTempFolder \
     -t $meta2amrTempFolder \
-	-v 1
+	-v $verbose
+
+$sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
+		"INSERT INTO logs (runId,tool,timeStamp,actionId,actionName)
+		VALUES($runId,'pipelineWithMix.sh',$(date '+%s'),5,'meta2amr.sh completed until step 2')"
+
+# STEP 5 - Delete the mix file
+# ----------------------------
+#We only need to keep the processed results
+rm $genomesFolder/$fileName.fastq.gz
+
+$sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
+		"INSERT INTO logs (runId,tool,timeStamp,actionId,actionName)
+		VALUES($runId,'pipelineWithMix.sh',$(date '+%s'),6,'Mixed file deleted')"
 
 #Update the DB
 $sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
 	"UPDATE scriptUse
 	SET end = '$(date '+%F %T')', status = 'finished'
 	WHERE runId = $runId"
-	
-# cd /database/ncbi/
-# myFasta=/data/aplab/ARG_PJ/aim2/mixedSample_1581975575_toBlast.fasta
-# outputFolder=/data/aplab/ARG_PJ/aim2
-
-# module load blast/2.10.0
-# blastn -db nt -query $myFasta -task megablast -num_threads 1 -evalue 0.0001 -out "/data/aplab/ARG_PJ/aim2/1581975575_alignment.out" \
-	# -outfmt "6 qseqid qlen sacc evalue bitscore length pident nident gaps gapopen staxids scomnames sskingdoms stitle qcovs qcovhsp qcovus" 
-	
-# makeblastdb -in $myFasta -parse_seqids -blastdb_version 5 -out /data/aplab/ARG_PJ/aim2/testBlastDB -title "testBlastDB" -dbtype nucl
-
-# blastn -db /data/aplab/ARG_PJ/aim2/testBlastDB -query $myFasta -task megablast -num_threads 1 -evalue 0.0001 -out "/data/aplab/ARG_PJ/aim2/1581975575_selfAlign.out" \
-	# -outfmt "6 qseqid qlen sacc evalue bitscore length pident nident gaps gapopen staxids scomnames sskingdoms stitle qcovs qcovhsp qcovus" 
-
-pushMessage "Finished" "pipelineWithMix"
