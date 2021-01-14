@@ -209,8 +209,8 @@ if [ -z "$MCsuccess" ]; then
 		--work-dir $tempFolder/$tempName/metacherchant_logs \
 		--maxkmers=100000 \
 		--bothdirs=False \
-		--chunklength=250 \
-		-m $freeMem\G
+		--chunklength=250 #\
+		# -m $freeMem\G
 		
     $sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
 	"INSERT INTO logs (runId,tool,timeStamp,actionId,actionName)
