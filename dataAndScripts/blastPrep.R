@@ -262,10 +262,15 @@ tryCatch({
         
         #Get largest start segment
         segmentOfInterest = gfa$segments %>% filter(str_detect(name, "_start$")) %>%
-          filter(LN == max(LN)) %>% pull(name)
+          filter(LN == max(LN)) %>% filter(KC == max(KC)) %>% slice(1) %>% pull(name)
         
         #Stay within maxPathDist around this segment
         gfa = gfa_neighbourhood(gfa, segmentOfInterest, maxPathDist, noLoops = T)
+        
+        #Check if filter yields any results
+        if(nrow(gfa$links) == 0){
+          return(data.frame())
+        }
         
         #Get all other start segments too
         allStart = gfa$segments %>% filter(str_detect(name, "_start$")) %>%
