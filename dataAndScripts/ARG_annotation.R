@@ -7,7 +7,7 @@ library(tidyverse)
 library(RSQLite)
 
 tempFolder = formatPath("temp/", endWithSlash = T)
-sampleName = "testMix2WithBG_1605708377"
+sampleName = "testMix2cWithBG_1605805981"
 minBlastLength = 250
 
 myConn = dbConnect(SQLite(), "dataAndScripts/meta2amr.db")
@@ -17,9 +17,8 @@ ARG = dbReadTable(myConn, "ARG")
 genesDetected = dbGetQuery(
   myConn, 
   "SELECT a.runId, a.segmentLength, a.kmerCount, a.n, a.coverage, c.*
-  FROM detectedARG a, blastSubmissions as b, ARG as c
-  WHERE a.runId == 27 AND b.runId == 28 AND 
-  b.tempName == 'testMix2WithBG_1605708377' AND c.geneId = a.geneId") %>% 
+  FROM detectedARG a, ARG as c
+  WHERE a.runId == 40 AND c.geneId = a.geneId") %>% 
   distinct()
 dbDisconnect(myConn)
 
@@ -77,26 +76,12 @@ blastOut = clusterOut %>%
 #  group_by(clusterId, hitId)
 
 ### Here starts speculation ###
-
-#Use the covermean function so summarise data per gene, bact and segment
-blastOut = blastOut %>% group_by(hitId, geneId, genus, species, segment, plasmid) %>% 
-  summarise(
-    score_mean = coverMean(query_from, query_to, query_len, score, max),
-    bit_score = coverMean(query_from, query_to, query_len, bit_score),
-    evalue = coverMean(query_from, query_to, query_len, evalue, 
-                       fun = function(x) ifelse(sum(x) == 0, 0, min(x[x != 0]))),
-    coverage = coverMean(query_from, query_to, query_len, 1.0),
-    n = coverMean(query_from, query_to, query_len, n()),
-    query_len = query_len[1], .groups = "drop")
-
-#Get the top for each gene
-test = blastOut %>% group_by(geneId, segment) %>% 
-  filter(bit_score == max(bit_score)) %>%  filter(coverage > 0.9) 
-
-# test1 = test %>% group_by(geneId, segment) %>% %>% group_by(geneId, genus, species, plasmid) %>% 
-#   summarise(bit_score = sum(bit_score), coverage = mean(coverage), n = n(), query_len = sum(query_len)) %>% 
-#   arrange(geneId, desc(bit_score)) %>% group_by(geneId) %>%  top_n(2)
-
+#group_by(hitId, geneId, genus, species, segment, plasmid)
+test = blastOut %>% 
+  mutate(coverage = align_len / query_len) %>% 
+  select(-c(identity:align_len)) %>% 
+  group_by(clusterId, hitId) %>% 
+  filter(score == max(score)) 
 
 #Create a coloured gfa
 segmentData = test %>% 
@@ -107,7 +92,7 @@ segmentData = test %>%
   group_by(geneId, segment) %>% 
   summarise(annot = paste(info, collapse = "; "), .groups = "drop")
 
-myGene = "2096"
+myGene = "5123"
 
 myGFA = gfa_read(sprintf("%s%s/genesDetected/simplifiedGFA/%s_simplified.gfa", 
                          tempFolder, sampleName, myGene))
@@ -141,6 +126,18 @@ result = map_df(paths, function(myPath){
     data.frame()
   }
 }) 
+
+
+test1 = result %>% filter(!is.na(geneId)) %>% 
+  group_by(endSegment, taxid, genus, species, extra) %>% 
+  mutate(n = n()) %>% 
+  group_by(endSegment) %>% filter(n == max(n)) %>% 
+  group_by(taxid, genus, species, extra) %>%  
+  summarise(score = sum(score), bit_score = sum(bit_score)) %>% 
+  group_by(taxid) %>% filter(score == max(score)) %>% 
+  arrange(desc(score))
+
+
 # %>% group_by(endSegment) %>% 
 #   mutate(pathLength = pathLength[1] - sum(LN[is.na(geneId)]) + 60*n() - 60)
 
