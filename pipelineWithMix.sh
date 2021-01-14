@@ -55,12 +55,12 @@ bgFolder=/mnt/meta2amrData/cchmcData/normalMetagenomes/ #Background metagenomes 
 iFolder=/mnt/meta2amrData/ncbi/sra #Isolates folder
 
 #Variables
-fileName=testMixWithBG #Set to a specific filename if starting from existing mixed file (rest below is ignored then)
+fileName=testMix2cWithBG #Set to a specific filename if starting from existing mixed file (rest below is ignored then)
 bgName="H7Heidi4.fastq.gz" #Name of the background metagenome
 # iNames="SRR2976831,SRR4025843" #Name(s) of the isolate(s). Comma separate (no space) if multiple
 # relAb="0.07,0.05" #Sum = 1 if no bgMeta or <1 otherwise. Comma separate (no space) if multiple
-iNames="SRR4025843" #Name(s) of the isolate(s). Comma separate (no space) if multiple
-relAb="0.1" #Sum = 1 if no bgMeta or <1 otherwise. Comma separate (no space) if multiple
+iNames="SRR5082449,SRR10107339" #Name(s) of the isolate(s). Comma separate (no space) if multiple
+relAb="0.08,0.08" #Sum = 1 if no bgMeta or <1 otherwise. Comma separate (no space) if multiple
 
 sqlite3=`grep -oP "sqlite3\s*=\s*\K(.*)" $baseFolder/settings.txt`
 
