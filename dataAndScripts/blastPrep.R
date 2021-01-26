@@ -126,6 +126,32 @@ tryCatch({
       
       rm(myFile)
       
+      #Find the places where there are segments flanked by start segments
+      startLinks = gfa$links %>% 
+        select(geneId, from, to) %>% 
+        filter(str_detect(from, "start") | str_detect(to, "start")) %>% 
+        group_by(geneId, from) %>% 
+        summarise(n = sum(str_detect(to, "start"))) %>% 
+        filter(n == 2, !str_detect(from, "start")) %>% 
+        mutate(newName = paste0(from, "_start")) %>% 
+        select(geneId, name = from, newName)
+      
+      #Make these segments start segments in segments
+      gfa$segments = gfa$segments %>% 
+        left_join(startLinks, by = c("geneId", "name")) %>% 
+        mutate(name = ifelse(is.na(newName), name, newName)) %>% 
+        select(-newName)
+      
+      #Make these segments start segments in links
+      gfa$links = gfa$links %>% 
+        left_join(startLinks, by = c("geneId", "from" = "name")) %>% 
+        left_join(startLinks, by = c("geneId", "to" = "name")) %>% 
+        mutate(
+          from = ifelse(is.na(newName.x), from, newName.x),
+          to = ifelse(is.na(newName.y), to, newName.y)
+        ) %>% 
+        select(-newName.x, -newName.y)
+      
       #Update the master GFA file and zip it to save space
       gfa_write(gfa, paste0(tempFolder, "masterGFA.gfa"))
       system(sprintf("%s %s", zipMethod, paste0(tempFolder, "masterGFA.gfa")))
@@ -177,20 +203,20 @@ tryCatch({
       
       #Get the ARG list
       myConn = dbConnect(SQLite(), sprintf("%sdataAndScripts/meta2amr.db", baseFolder))
-      argGenes = dbGetQuery(myConn, "SELECT geneId, clusterNr, nBases FROM ARG") %>%
+      argGenes = dbGetQuery(myConn, "SELECT geneId, clusterNr, gene, subtype, nBases FROM ARG") %>%
         mutate(geneId = as.character(geneId))
       
       #Detect the most likely genes
       genesDetected = kmerCounts %>% filter(start) %>% 
-        left_join(argGenes, by = c("geneId" = "geneId")) %>% 
-        group_by(geneId, clusterNr, nBases) %>% 
+        left_join(argGenes, by = "geneId") %>% 
+        group_by(geneId, clusterNr, nBases, gene, subtype) %>% 
         summarise(segmentLength = sum(LN), kmerCount = sum(KC), n = n(), 
                   .groups = 'drop') %>% rowwise() %>% 
-        mutate(coverage = round(min(1, segmentLength / nBases)), 4) %>% 
+        mutate(coverage = round(min(1, segmentLength / nBases), 4)) %>% 
         group_by(clusterNr) %>% 
         filter(kmerCount == max(kmerCount)) %>% ungroup() %>% 
-        mutate(runId = runId, geneId = as.integer(geneId)) %>% 
-        select(runId, geneId, segmentLength, kmerCount, n, coverage)
+        mutate(runId = runId) %>% 
+        select(runId, geneId, gene, subtype, segmentLength, kmerCount, n, coverage)
       
       
       #Only keep genes that are minimum 90% covered (or use cut-off when higher) 
@@ -199,7 +225,7 @@ tryCatch({
       
       #Save results 
       q = dbSendStatement(myConn, "INSERT INTO detectedARG VALUES(?,?,?,?,?,?)", 
-                          params = unname(as.list(genesDetected)))
+                          params = unname(as.list(genesDetected %>% select(-gene, -subtype))))
       dbClearResult(q)
       dbDisconnect(myConn)
       
