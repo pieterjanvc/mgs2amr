@@ -7,21 +7,26 @@ library(tidyverse)
 library(RSQLite)
 
 tempFolder = formatPath("temp/", endWithSlash = T)
-sampleName = "testMix2WithBG_1605708377"
+sampleName = "E12Heidi011_SRR3217329_0.035_1610127972"
 minBlastLength = 250
 
 myConn = dbConnect(SQLite(), "dataAndScripts/meta2amr.db")
-ARG = dbReadTable(myConn, "ARG")
-
-### FIX mismatch runId in blast prep!! 
-genesDetected = dbGetQuery(
-  myConn, 
-  "SELECT a.runId, a.segmentLength, a.kmerCount, a.n, a.coverage, c.*
-  FROM detectedARG a, blastSubmissions as b, ARG as c
-  WHERE a.runId == 27 AND b.runId == 28 AND 
-  b.tempName == 'testMix2WithBG_1605708377' AND c.geneId = a.geneId") %>% 
-  distinct()
+ARG = dbReadTable(myConn, "ARG") %>% 
+  mutate(geneId = as.character(geneId))
 dbDisconnect(myConn)
+
+tempNames = tbl(myConn, "blastSubmissions") %>% 
+  select(tempName) %>% distinct() %>% pull(tempName)
+
+# ### FIX mismatch runId in blast prep!! 
+# genesDetected = dbGetQuery(
+#   myConn, 
+#   "SELECT a.runId, a.segmentLength, a.kmerCount, a.n, a.coverage, c.*
+#   FROM detectedARG a, blastSubmissions as b, ARG as c
+#   WHERE a.runId == 27 AND b.runId == 28 AND 
+#   b.tempName == 'testMix2WithBG_1605708377' AND c.geneId = a.geneId") %>% 
+#   distinct()
+# dbDisconnect(myConn)
 
 
 # ---- FUNCTIONS ----
@@ -38,60 +43,83 @@ coverMean = function(from, to, n, val, fun = max){
   ) %>% mean()
 }
 
+#D5Heidi011_SRR3981085_0.056_1610245775 KA/P
+#D5Heidi011_SRR3981085_0.056_1611844923 v2
+#G7Heidi5_SRR5120224_0.076_1610200963  EC
+sampleName = "D5Heidi011_SRR3981085_0.056_1611844923"
 
-# ---- FILTERING DATA ----
-#*************************
+result = map_df(tempNames, function(sampleName){
+  
+  print(sampleName)
+  
+  # ---- FILTERING DATA ----
+  #*************************
+  
+  #Read all blast output
+  blastOut = lapply(
+    list.files(paste0(tempFolder, sampleName), full.names = T,
+               pattern = "blastSegmentsClustered\\d+.json.gz"),
+    blast_readResults, outFormat = "dataFrame1") %>% bind_rows()
+  
+  #Extract data we need 
+  blastOut = blastOut %>% 
+    select(query_title, hitId, taxid, accession , bact = title, bit_score, 
+           score, evalue, identity, query_len, query_from, 
+           query_to, hit_from, hit_to, align_len) %>% 
+    mutate(bact = str_remove_all(bact, "[^\\w\\s]")) %>% 
+    extract(bact, c("genus", "species", "extra"), 
+            regex = "(\\w+)\\s+(\\w+)($|\\s+.*)") %>% 
+    filter(!species %in% c("bacterium", "sp") & !is.na(species)) %>% 
+    mutate(plasmid = str_detect(extra, "plasmid|Plasmid"))
+  
+  #Expand results from clustering segments before blast
+  clusterOut = read.table(paste0(tempFolder, sampleName, "/blastSegments.out")) %>% 
+    select(segmentId = V9, clusterId = V10) %>% distinct() %>% 
+    mutate(clusterId = ifelse(clusterId == "*", segmentId, clusterId)) %>% 
+    extract(segmentId, into = c("geneId", "segment"), regex = "^([^_]+)_(.*)", remove = F) %>% 
+    filter(clusterId %in% blastOut$query_title) %>% arrange(clusterId)
+  
+  blastOut = clusterOut %>% 
+    left_join(blastOut, by = c("clusterId" = "query_title"))
+  
+  
+  # blastOut %>% group_by(segmentId, hitId) %>% 
+  #   filter(bit_score == max(bit_score)) %>% 
+  #   group_by(geneId, genus, species, extra) %>% 
+  #   summarise(n = n(), bit_score = sum(bit_score), .groups = "drop") %>% 
+  #   mutate(pasmid = str_detect(extra, "plasmid")) %>% 
+  #   group_by(geneId) %>% slice_max(order_by = bit_score, n = 1) %>%
+  #   left_join(ARG %>% select(geneId, gene, subtype), by = "geneId") %>% 
+  #   mutate(tempName = sampleName)
+})
 
-#Read all blast output
-blastOut = lapply(
-  list.files(paste0(tempFolder, sampleName), full.names = T,
-             pattern = "blastSegmentsClustered\\d+.json.gz"),
-  blast_readResults, outFormat = "dataFrame1") %>% bind_rows()
-
-#Extract data we need 
-blastOut = blastOut %>% 
-  select(query_title, hitId, taxid, bact = title, bit_score, 
-         score, evalue, identity, query_len, query_from, 
-         query_to, hit_from, hit_to, align_len) %>% 
-  mutate(bact = str_remove_all(bact, "[^\\w\\s]")) %>% 
-  extract(bact, c("genus", "species", "extra"), 
-          regex = "(\\w+)\\s+(\\w+)\\s+(.*)") %>% 
-  filter(!species %in% c("bacterium", "sp")) %>% 
-  mutate(plasmid = str_detect(extra, "plasmid|Plasmid"))
-
-#Expand results from clustering segments before blast
-clusterOut = read.table(paste0(tempFolder, sampleName, "/blastSegments.out")) %>% 
-  select(segmentId = V9, clusterId = V10) %>% distinct() %>% 
-  mutate(clusterId = ifelse(clusterId == "*", segmentId, clusterId)) %>% 
-  extract(segmentId, into = c("geneId", "segment"), regex = "^([^_]+)_(.*)", remove = F) %>% 
-  filter(clusterId %in% blastOut$query_title) %>% arrange(clusterId)
-
-blastOut = clusterOut %>% 
-  left_join(blastOut, by = c("clusterId" = "query_title"))
+write_csv(result, "testAssignGenes.csv")
 
 
+
+#---------------
 #It seems that using multiple matches within the same genome does not make sense,
 #since it would not have been split if it would be extended with a gap.
 #So better get rid of all but the best match? 
 # We also have to work by hit Id before we start merging
 #  group_by(clusterId, hitId)
-
 ### Here starts speculation ###
 
 #Use the covermean function so summarise data per gene, bact and segment
-blastOut = blastOut %>% group_by(hitId, geneId, genus, species, segment, plasmid) %>% 
+test = blastOut %>% group_by(hitId, geneId, genus, species, segment, plasmid) %>% 
   summarise(
-    score_mean = coverMean(query_from, query_to, query_len, score, max),
+    # score_mean = coverMean(query_from, query_to, query_len, score, max),
     bit_score = coverMean(query_from, query_to, query_len, bit_score),
-    evalue = coverMean(query_from, query_to, query_len, evalue, 
-                       fun = function(x) ifelse(sum(x) == 0, 0, min(x[x != 0]))),
+    # evalue = coverMean(query_from, query_to, query_len, evalue, 
+                       # fun = function(x) ifelse(sum(x) == 0, 0, min(x[x != 0]))),
     coverage = coverMean(query_from, query_to, query_len, 1.0),
-    n = coverMean(query_from, query_to, query_len, n()),
+    # n = coverMean(query_from, query_to, query_len, n()),
     query_len = query_len[1], .groups = "drop")
 
 #Get the top for each gene
-test = blastOut %>% group_by(geneId, segment) %>% 
-  filter(bit_score == max(bit_score)) %>%  filter(coverage > 0.9) 
+test1 = test %>% group_by(geneId, segment) %>% 
+  filter(bit_score == max(bit_score)) %>%  filter(coverage > 0.9) %>% 
+  select(-hitId) %>% distinct()
 
 # test1 = test %>% group_by(geneId, segment) %>% %>% group_by(geneId, genus, species, plasmid) %>% 
 #   summarise(bit_score = sum(bit_score), coverage = mean(coverage), n = n(), query_len = sum(query_len)) %>% 
@@ -107,7 +135,7 @@ segmentData = test %>%
   group_by(geneId, segment) %>% 
   summarise(annot = paste(info, collapse = "; "), .groups = "drop")
 
-myGene = "2096"
+myGene = "2148"
 
 myGFA = gfa_read(sprintf("%s%s/genesDetected/simplifiedGFA/%s_simplified.gfa", 
                          tempFolder, sampleName, myGene))
