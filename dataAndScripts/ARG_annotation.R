@@ -7,7 +7,7 @@ library(tidyverse)
 library(RSQLite)
 
 tempFolder = formatPath("temp/", endWithSlash = T)
-sampleName = "E12Heidi011_SRR3217329_0.035_1610127972"
+sampleName = "SRR3170779-SRR4065677_0.5-0.5_1611953376"
 minBlastLength = 250
 
 myConn = dbConnect(SQLite(), "dataAndScripts/meta2amr.db")
@@ -43,10 +43,25 @@ coverMean = function(from, to, n, val, fun = max){
   ) %>% mean()
 }
 
+cutOff = function(numbers){
+  if(length(numbers) < 2){
+    return(numbers)
+  }
+  numbers = sort(numbers)
+  myData = data.frame(number = numbers[-1],
+                      diff = diff(numbers) / diff(1:length(numbers))) 
+  myData %>% filter(diff == max(diff)) %>% pull(number) %>% unique() %>% min()
+}
+
 #D5Heidi011_SRR3981085_0.056_1610245775 KA/P
 #D5Heidi011_SRR3981085_0.056_1611844923 v2
+#D7Heidi5_SRR3987134_0.01_1611882674 KA - after gene fix
 #G7Heidi5_SRR5120224_0.076_1610200963  EC
-sampleName = "D5Heidi011_SRR3981085_0.056_1611844923"
+#H6Heidi4_SRR2449036_0.01_1611879358 EC - after gene fix
+#SRR3170779-SRR4065677_0.5-0.5_1611953376 - mix AB and EC
+# G8Heidi010_SRR4017917_0.1_1611877967 - EClo
+# D5Heidi011_SRR4017818_0.01_1611876760 - EClo
+sampleName = "G8Heidi010_SRR4017917_0.1_1611877967"
 
 result = map_df(tempNames, function(sampleName){
   
@@ -69,7 +84,7 @@ result = map_df(tempNames, function(sampleName){
     mutate(bact = str_remove_all(bact, "[^\\w\\s]")) %>% 
     extract(bact, c("genus", "species", "extra"), 
             regex = "(\\w+)\\s+(\\w+)($|\\s+.*)") %>% 
-    filter(!species %in% c("bacterium", "sp") & !is.na(species)) %>% 
+    filter(!species %in% c("bacterium", "xxx") & !is.na(species)) %>% 
     mutate(plasmid = str_detect(extra, "plasmid|Plasmid"))
   
   #Expand results from clustering segments before blast
@@ -83,14 +98,81 @@ result = map_df(tempNames, function(sampleName){
     left_join(blastOut, by = c("clusterId" = "query_title"))
   
   
-  # blastOut %>% group_by(segmentId, hitId) %>% 
-  #   filter(bit_score == max(bit_score)) %>% 
-  #   group_by(geneId, genus, species, extra) %>% 
-  #   summarise(n = n(), bit_score = sum(bit_score), .groups = "drop") %>% 
-  #   mutate(pasmid = str_detect(extra, "plasmid")) %>% 
-  #   group_by(geneId) %>% slice_max(order_by = bit_score, n = 1) %>%
-  #   left_join(ARG %>% select(geneId, gene, subtype), by = "geneId") %>% 
-  #   mutate(tempName = sampleName)
+  #Get the KC and LN for the segments
+  segmentInfo =  read_csv(paste0(tempFolder, sampleName, "/blastSegments.csv")) %>% 
+    select(-sequence, -name, -geneId, -CL)
+  
+  #Check the bacteria
+  allBact = blastOut %>% select(-c(score:hit_to)) %>% 
+    # filter(!plasmid, species != "sp") %>% 
+    left_join(segmentInfo, by = c("segmentId" = "blastId")) %>% #Add segment info
+    group_by(segmentId) %>% 
+    filter(bit_score == max(bit_score)) %>% 
+    group_by(segmentId, plasmid) %>%
+    mutate(maxBit = max(bit_score)) %>% 
+    group_by(segmentId) %>% 
+    filter(maxBit == max(maxBit), !plasmid) %>% 
+    mutate(onlyOne = length(unique(genus)) == 1 & 
+             length(unique(species))) %>% 
+    filter(onlyOne) %>% 
+    group_by(genus, species) %>% 
+    summarise(
+      bit_score = sum(bit_score),
+      depth = sum(KC / sum(LN)),
+      .groups = "drop"
+    ) %>% 
+    filter(depth <= depth[bit_score == max(bit_score)])
+  
+  #Get all data from the paths
+  allGFA = list.files(
+    paste0(tempFolder, sampleName, "/genesDetected/simplifiedGFA"), 
+    pattern = ".gfa", full.names = T)
+  
+  pathData = map_df(allGFA, function(myGFA){
+    print(which(allGFA == myGFA))
+    gfa = gfa_read(myGFA)
+    segmentOfInterest = gfa$segments %>% filter(str_detect(name, "_start$")) %>%
+      filter(LN == max(LN)) %>% filter(KC == max(KC)) %>% slice(1) %>% pull(name)
+    
+    if(nrow(gfa$links) > 0){
+      pathsToSegmentTable(gfa, segmentOfInterest) %>% 
+        filter(dist < Inf) %>% group_by(segment) %>% 
+        filter(dist == min(dist)) %>% 
+        select(segment, KC, dist) %>% 
+        mutate(geneId = str_extract(myGFA, "\\d+(?=_simplified.gfa)"))
+    } else {
+      data.frame()
+    }
+    
+  })
+  
+  #Get the result
+  test = blastOut %>% 
+    filter(
+      extra != "",
+      genus %in% allBact$genus,
+      species %in% allBact$species
+    ) %>% #fix weird extra
+    select(-hit_from, -hit_to) %>% #somtimes more than one match like repeat? (ignore)
+    mutate(
+      coverage = align_len / query_len, #coverage of segment
+      extra = ifelse(species == "sp", "xxx", extra) #fix species things to be more general
+    ) %>%
+    filter(coverage >= 0.9) %>%
+    group_by(segmentId, geneId, genus, species, extra, plasmid) %>% 
+    filter(bit_score == max(bit_score)) %>% distinct() %>% 
+    ungroup() %>% left_join(pathData, by = c("geneId", "segment")) %>% 
+    filter(!is.na(dist)) %>% rowwise() %>% 
+    mutate(
+      dist = dist + 1,
+      val = sum(1 / dist:(dist + align_len)) * bit_score / align_len) %>% 
+    group_by(geneId, accession, genus, species, extra, plasmid) %>% 
+    summarise(val = sum(val)) %>% 
+    group_by(geneId, genus, species, plasmid) %>% 
+    filter(val == max(val)) %>% ungroup() %>% 
+    left_join(ARG %>% select(geneId, gene, subtype), by = "geneId") %>% 
+    select(gene, subtype, accession, genus, species, extra, plasmid, val) %>% distinct() %>% 
+    group_by(gene, subtype) %>%  filter(val >= cutOff(val))
 })
 
 write_csv(result, "testAssignGenes.csv")
