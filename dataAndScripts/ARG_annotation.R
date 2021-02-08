@@ -61,9 +61,12 @@ cutOff = function(numbers){
 #SRR3170779-SRR4065677_0.5-0.5_1611953376 - mix AB and EC
 # G8Heidi010_SRR4017917_0.1_1611877967 - EClo
 # D5Heidi011_SRR4017818_0.01_1611876760 - EClo
-sampleName = "G8Heidi010_SRR4017917_0.1_1611877967"
+sampleName = "D5Heidi011_SRR13481113_0.05_1612457271"
+genesDetected = read_csv(
+  paste0(tempFolder, sampleName,
+         "/genesDetected/genesDetected.csv"))
 
-result = map_df(tempNames, function(sampleName){
+result = map_df(sampleName, function(sampleName){
   
   print(sampleName)
   
@@ -147,7 +150,8 @@ result = map_df(tempNames, function(sampleName){
   })
   
   #Get the result
-  test = blastOut %>% 
+  test = 
+    blastOut %>% 
     filter(
       extra != "",
       genus %in% allBact$genus,
@@ -158,7 +162,7 @@ result = map_df(tempNames, function(sampleName){
       coverage = align_len / query_len, #coverage of segment
       extra = ifelse(species == "sp", "xxx", extra) #fix species things to be more general
     ) %>%
-    filter(coverage >= 0.9) %>%
+    filter(coverage >= 0.9 | align_len > 250) %>%
     group_by(segmentId, geneId, genus, species, extra, plasmid) %>% 
     filter(bit_score == max(bit_score)) %>% distinct() %>% 
     ungroup() %>% left_join(pathData, by = c("geneId", "segment")) %>% 
@@ -170,8 +174,8 @@ result = map_df(tempNames, function(sampleName){
     summarise(val = sum(val)) %>% 
     group_by(geneId, genus, species, plasmid) %>% 
     filter(val == max(val)) %>% ungroup() %>% 
-    left_join(ARG %>% select(geneId, gene, subtype), by = "geneId") %>% 
-    select(gene, subtype, accession, genus, species, extra, plasmid, val) %>% distinct() %>% 
+    left_join(ARG %>% select(geneId, gene, subtype, clusterNr), by = "geneId") %>% 
+    select(gene, subtype, clusterNr, accession, genus, species, extra, plasmid, val) %>% distinct() %>% 
     group_by(gene, subtype) %>%  filter(val >= cutOff(val))
 })
 
