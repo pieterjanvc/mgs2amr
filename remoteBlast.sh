@@ -48,7 +48,7 @@ while getopts ":hb:d:r:v:" opt; do
     ;;
 	e) entrezQ="${OPTARG}"
     ;;
-	r) prevRunId="${OPTARG}"
+	p) pipelineId="${OPTARG}"
     ;;
 	v) verbose="${OPTARG}"
     ;;
@@ -100,7 +100,7 @@ runId=$($sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
 #Run BLASTn for all in the queue (unless runId specified)
 $Rscript $baseFolder/dataAndScripts/remoteBlast.R \
 	"$baseFolder" "$runId" "$verbose" "$blastn" \
-	"$entrezQ" "$prevRunId" "$timeOut" "$checkFreq"
+	"$entrezQ" "$pipelineId" "$timeOut" "$checkFreq"
 
 
 #Update the DB

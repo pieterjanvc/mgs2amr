@@ -26,7 +26,7 @@ runId = as.integer(args[[2]])
 verbose = args[[3]]
 blastn = args[[4]]
 entrezQ = args[[5]]
-prevRunId = as.numeric(strsplit(args[[6]], " "))
+pipelineId = strsplit(args[[6]], ",")
 timeOut = as.integer(args[[7]])
 checkFreq = as.integer(args[[8]])
 
@@ -43,9 +43,10 @@ start_time = as.integer(Sys.time())
 #Check if the URL is working (error when not)
 test = blast_checkSubmission("test", url = blastn, verbose = 0)
 
-#Limit the searched for specific runIds if set, else do all
-prevRunId = ifelse(!is.na(prevRunId),
-                   sprintf("AND runId in ('%s')", paste(prevRunId, collapse = "','")),
+#Limit the search for specific pipelineIds if set, else do all
+prevRunId = ifelse(!is.na(pipelineId),
+                   sprintf("AND runId in (SELECT runId FROM pipeline WHERE pipelineId IN ('%s'))", 
+                           paste(pipelineId, collapse = "','")),
                    "")
 
 #Status codes

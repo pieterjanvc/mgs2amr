@@ -49,11 +49,11 @@ while getopts ":hi:o:t:fv:r:" opt; do
     ;;
 	t) tempFolder=`realpath "${OPTARG%/}"`
     ;;
-	f) forceOverwrite=FALSE
+	f) forceOverwrite=TRUE
     ;;
 	v) verbose="${OPTARG}"
     ;;
-	r) prevRunId="${OPTARG}"
+	r) pipelineId="${OPTARG}"
     ;;
     \?) echo "Unknown argument provided"
 	    exit
@@ -63,8 +63,12 @@ done
 
 exec 2>$baseFolder/dataAndScripts/lastError
 
+if [ -z ${forceOverwrite+x} ]; then 
+	forceOverwrite=`grep -oP "meta2amrForceOverwrite\s*=\s*\K(.*)" $baseFolder/settings.txt`
+fi
+
 #Check the arguments
-if [ -z ${prevRunId+x} ]; then 	
+if [ -z ${pipelineId+x} ]; then 	
 
 	if [ -z ${inputFile+x} ]; then 
 		echo -e "\n\e[91mNo input file set.\n Use -i to specify one, or read the help file (-h)\e[0m"; exit 1; 
@@ -92,48 +96,51 @@ if [ -z ${prevRunId+x} ]; then
 		echo -e "\n\e[91mThe temp directory does not exist\e[0m"; exit 1;
 	fi
 	
+	# if [ $forceOverwrite == FALSE ] &  [ -d `dirname $outputFolder` ]; then 
+		# echo -e "\n\e[91mThe temp directory does not exist\e[0m"; exit 1;
+	# fi
+	
 	tempName=`grep -oP "\K([^\/]+)(?=.fastq.gz)" <<< $inputFile`_`date '+%s'`
 	
 else
 
 	#Get the first runId
     firstRunId=$($sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
-	"SELECT value FROM scriptArguments \
-	WHERE scriptName = 'meta2amr.sh' AND argument = 'prevRunId' AND runId = $prevRunId")
+	"SELECT s.runId 
+	FROM scriptArguments as s, pipeline as p \
+	WHERE p.pipelineId = $pipelineId AND p.runId = s.runId AND \
+	      scriptName = 'meta2amr.sh' AND argument = 'inputFile'")
 	
 	if [ ! -z "$firstRunId" ]; then
-		prevRunId=$firstRunId
+		firstRunId=0
 	fi
 	
 	tempFolder=$($sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
 	"SELECT value FROM scriptArguments \
-	WHERE scriptName = 'meta2amr.sh' AND argument = 'tempFolder' AND runId = $prevRunId")
+	WHERE scriptName = 'meta2amr.sh' AND argument = 'tempFolder' AND runId = $firstRunId")
 	
 	tempName=$($sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
 	"SELECT value FROM scriptArguments \
-	WHERE scriptName = 'meta2amr.sh' AND argument = 'tempName' AND runId = $prevRunId")
+	WHERE scriptName = 'meta2amr.sh' AND argument = 'tempName' AND runId = $firstRunId")
 	
-	if [ ! -f "$tempFolder/$tempName/runId" ]; then
-		echo -e "\n\e[91mThe the previous runId provided does not point to a valid folder \e[0m"; exit 1; 
+	if [ ! -f "$tempFolder/$tempName/pipelineId" ]; then
+		echo -e "\n\e[91mThe the pipelineId provided does not point to a valid folder \e[0m"; exit 1; 
 	fi
 	
     #In case of a previous runId, load all the arguments fromt the database
     inputFile=$($sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
 	"SELECT value FROM scriptArguments \
-	WHERE scriptName = 'meta2amr.sh' AND argument = 'inputFile' AND runId = $prevRunId")
+	WHERE scriptName = 'meta2amr.sh' AND argument = 'inputFile' AND runId = $firstRunId")
 	
 	outputFolder=$($sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
 	"SELECT value FROM scriptArguments \
-	WHERE scriptName = 'meta2amr.sh' AND argument = 'outputFolder' AND runId = $prevRunId")
+	WHERE scriptName = 'meta2amr.sh' AND argument = 'outputFolder' AND runId = $firstRunId")
 
 	MCsuccess=$($sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
 	"SELECT logId FROM logs
-	WHERE runId = $prevRunId AND actionId = 2")
+	WHERE runId IN (SELECT runId FROM pipeline WHERE pipelineId == $pipelineId) AND \
+	actionId = 2")
 	
-fi
-
-if [ -z ${forceOverwrite+x} ]; then 
-	forceOverwrite=`grep -oP "meta2amrForceOverwrite\s*=\s*\K(.*)" $baseFolder/settings.txt`
 fi
 
 if [ -z ${verbose+x} ]; then 
@@ -145,29 +152,38 @@ fi
 
 if [ $verbose != "0" ]; then echo -e "\n\e[32m"`date "+%T"`" - Inputs correct, starting pipeline ...\e[0m"; fi;
 
-
 #Register the start of the script in the DB
 runId=$($sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
 	"INSERT INTO scriptUse (scriptName,start,status) \
 	values('meta2amr.sh','$(date '+%F %T')','running'); \
 	SELECT runId FROM scriptUse WHERE runId = last_insert_rowid()")
 	
-if [ -z ${prevRunId+x} ]; then
+if [ -z ${pipelineId+x} ]; then
 	scriptArgs="($runId,'meta2amr.sh','inputFile', '$inputFile'),
 	($runId,'meta2amr.sh','outputFolder', '$outputFolder'),
 	($runId,'meta2amr.sh','tempFolder', '$tempFolder'),
 	($runId,'meta2amr.sh','tempName', '$tempName'),"
+	
+	pipelineId=$($sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
+	"INSERT INTO pipeline (pipelineId,runId) \
+	values($pipelineId, $runId); \
+	SELECT pipelineId FROM pipeline WHERE pipelineId = last_insert_rowid()")
+	
 else
-	pointerToPrevRunId="($runId,'meta2amr.sh','prevRunId', '$prevRunId'),"
+	pointerTopipelineId="($runId,'meta2amr.sh','pipelineId', '$pipelineId'),"
+	
+	$sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
+	"INSERT INTO pipeline (pipelineId,runId) \
+	values($pipelineId, $runId)"
 fi
 
 #Save the arguments with which the script was run
 $sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
 	"INSERT INTO scriptArguments (runId,scriptName,argument,value)
-	VALUES $pointerToPrevRunId $scriptArgs
+	VALUES $pointerTopipelineId $scriptArgs
 	($runId,'meta2amr.sh','forceOverwrite', '$forceOverwrite'),
 	($runId,'meta2amr.sh','verbose', '$verbose')"
-	
+
 
 #--- PART 1 METACHERCHANT (MC) ---
 #---------------------------------
@@ -270,7 +286,7 @@ $sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
 	"INSERT INTO blastPrepOptions (runId,option,value) VALUES $values"
 
 $Rscript $baseFolder/dataAndScripts/blastPrep.R \
-	"$baseFolder" "$tempFolder"	"$tempName" "$verbose" "$runId" \
+	"$baseFolder" "$tempFolder"	"$tempName" "$verbose" "$runId" "$pipelineId" \
 	${scriptValues[@]}
 
 if [ $verbose != "0" ]; then echo -e `date "+%T"`" - Finished BLAST preparations"; fi;

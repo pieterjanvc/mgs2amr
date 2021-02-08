@@ -18,7 +18,7 @@ runId = as.integer(args[[2]])
 verbose = args[[3]]
 blastn = args[[4]]
 blastDB = args[[5]]
-prevRunId = as.numeric(strsplit(args[[6]], " "))
+pipelineId = strsplit(args[[6]], ",")
 
 #Set these general blast args
 blastArgs = list(
@@ -29,9 +29,10 @@ blastArgs = list(
   taxidlist = sprintf("%sdataAndScripts/%s", baseFolder, "bact.txids")
 )
 
-#Limit the searched for specific runIds if set, else do all
-prevRunId = ifelse(!is.na(prevRunId),
-	sprintf("AND runId in ('%s')", paste(prevRunId, collapse = "','")),
+#Limit the search for specific pipelineIds if set, else do all
+prevRunId = ifelse(!is.na(pipelineId),
+	sprintf("AND runId in (SELECT runId FROM pipeline WHERE pipelineId IN ('%s'))", 
+	        paste(pipelineId, collapse = "','")),
 	"")
 
 #Get all blast submissions that need further follow-up

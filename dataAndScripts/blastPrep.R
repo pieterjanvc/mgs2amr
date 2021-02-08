@@ -34,14 +34,14 @@ tempFolder = formatPath(args[[2]], endWithSlash = T)
 tempName = args[[3]]
 verbose = args[[4]]
 runId = as.integer(args[[5]])
-keepAllMetacherchantData = as.logical(args[[6]])
-maxPathDist = as.integer(args[[7]]) #Distance from ARG to crop the GFA file (reduces blast search)
-minBlastLength = as.integer(args[[8]]) #Min segment length to submit to blast
-trimLength = as.integer(args[[9]]) #Loose segments smaller than this will be cut from thr GFA
-clusterIdentidy  = as.numeric(args[[10]]) #The cluster identity percent used in usearch
-forceRedo = as.logical(args[[11]]) #If parts of the code have successfully run before a crash, do not repeat unless forceRedo = T
-maxStep= as.integer(args[[12]]) #Which parts of the script to run? If NA all is run
-# prevRunId = as.integer(args[[12]]) #If present, use info from prev run to skip part that were completed
+pipelineId = as.integer(args[[6]])
+keepAllMetacherchantData = as.logical(args[[7]])
+maxPathDist = as.integer(args[[8]]) #Distance from ARG to crop the GFA file (reduces blast search)
+minBlastLength = as.integer(args[[9]]) #Min segment length to submit to blast
+trimLength = as.integer(args[[10]]) #Loose segments smaller than this will be cut from thr GFA
+clusterIdentidy  = as.numeric(args[[11]]) #The cluster identity percent used in usearch
+forceRedo = as.logical(args[[12]]) #If parts of the code have successfully run before a crash, do not repeat unless forceRedo = T
+maxStep= as.integer(args[[13]]) #Which parts of the script to run? If NA all is run
 
 maxStep = ifelse(is.na(maxStep), 5, maxStep)
 
@@ -58,13 +58,15 @@ zipMethod = ifelse(length(suppressWarnings(
 
 tempFolder = formatPath(paste0(tempFolder, tempName), endWithSlash = T)
 logPath = sprintf("%s%s_log.csv", tempFolder,tempName)
-prevRunId = ifelse(file.exists(paste0(tempFolder,"runId")),
-                   readLines(paste0(tempFolder,"runId"), n = 1) %>% as.integer(), 0)
 
 #Check the log file to see if there was a previous run of the code
 myConn = dbConnect(SQLite(), sprintf("%sdataAndScripts/meta2amr.db", baseFolder))
-logs = dbGetQuery(myConn, "SELECT * FROM logs WHERE runId = ? AND tool = 'blastPrep.R'", 
-                  params = prevRunId)
+logs = dbGetQuery(
+  myConn, 
+  paste("SELECT * FROM logs WHERE runId IN",
+        "(SELECT runId FROM pipeline WHERE pipelineId == ?)",
+        "AND tool = 'blastPrep.R'"), 
+  params = pipelineId)
 dbDisconnect(myConn)
 newLogs = data.frame(timeStamp = as.integer(Sys.time()), 
                      actionId = 1, actionName = "Start BLAST prep")
@@ -177,13 +179,6 @@ tryCatch({
     #**********************************
     if(nrow(logs %>% filter(actionId %in% c(5, 7))) > 0 | forceRedo){
       
-      #Update the runId for the detectedARG in the database
-      myConn = dbConnect(SQLite(), sprintf("%sdataAndScripts/meta2amr.db", baseFolder))
-      q = dbSendStatement(myConn, "UPDATE detectedARG SET runId = ? WHERE runId = ?", 
-                          params = list(runId, prevRunId))
-      dbClearResult(q)
-      dbDisconnect(myConn)
-      
       #Feedback and Logs
       if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S -"), "Skip ARG detection, already done\n")}
       newLogs = rbind(newLogs, list(as.integer(Sys.time()), 5, "Skip ARG detection, already done"))
@@ -215,22 +210,27 @@ tryCatch({
         mutate(coverage = round(min(1, segmentLength / nBases), 4)) %>% 
         group_by(clusterNr) %>% 
         filter(kmerCount == max(kmerCount)) %>% ungroup() %>% 
-        mutate(runId = runId) %>% 
-        select(runId, geneId, gene, subtype, segmentLength, kmerCount, n, coverage)
+        mutate(pipelineId = pipelineId) %>% 
+        select(pipelineId, geneId, gene, subtype, segmentLength, kmerCount, n, coverage)
       
       
       #Only keep genes that are minimum 90% covered (or use cut-off when higher) 
       genesDetected = genesDetected %>% 
         filter(coverage >= max(0.9, cutOff(genesDetected$covered)))
       
-      #Save results 
+      #Save results - but delete old first
+      q = dbSendStatement(myConn, "DELETE FROM detectedARG WHERE pipelineId == ?", 
+                          params = pipelineId)
+      dbClearResult(q)
+      
       q = dbSendStatement(myConn, "INSERT INTO detectedARG VALUES(?,?,?,?,?,?)", 
-                          params = unname(as.list(genesDetected %>% select(-gene, -subtype))))
+                          params = unname(as.list(genesDetected %>% 
+                                                    select(-gene, -subtype))))
       dbClearResult(q)
       dbDisconnect(myConn)
       
       dir.create(sprintf("%sgenesDetected", tempFolder), showWarnings = F)
-      write.csv(genesDetected %>% select(-runId), 
+      write.csv(genesDetected, 
                 paste0(tempFolder, "genesDetected/genesDetected.csv"), row.names = F)
       
       #Write the detected gfa files as separate files for view in Bandage
@@ -478,6 +478,6 @@ finally = {
   dbDisconnect(myConn)
   
   #Add the runId to the temp folder
-  write(runId, paste0(tempFolder, "runId"))
+  write(pipelineId, paste0(tempFolder, "pipelineId"))
   
 })

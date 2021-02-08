@@ -48,7 +48,7 @@ while getopts ":hb:d:r:v:" opt; do
     ;;
 	d) blastDB=`realpath "${OPTARG}"`
     ;;
-	r) prevRunId="${OPTARG}"
+	p) pipelineId="${OPTARG}"
     ;;
 	v) verbose="${OPTARG}"
     ;;
@@ -69,8 +69,8 @@ if [ -z ${blastDB+x} ]; then
 	blastDB=`grep -oP "localBlastDB\s*=\s*\K(.*)" $baseFolder/settings.txt`
 fi
 
-# if [ -z ${prevRunId+x} ]; then 
-	# prevRunId=0
+# if [ -z ${pipelineId+x} ]; then 
+	# pipelineId=0
 # fi
 
 if [ -z ${verbose+x} ]; then 
@@ -87,7 +87,7 @@ runId=$($sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
 
 #Run BLASTn for all in the queue (unless runId specified)
 $Rscript $baseFolder/dataAndScripts/localBlast.R \
-	"$baseFolder" "$runId" "$verbose" "$blastn" "$blastDB" "$prevRunId"
+	"$baseFolder" "$runId" "$verbose" "$blastn" "$blastDB" "$pipelineId"
 
 
 #Update the DB
