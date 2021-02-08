@@ -82,7 +82,7 @@ fi
 
 if [ -z ${readLimit+x} ]; then 
 	readLimit=0
-elif [[ ! $test =~ ^[0-9]+$ ]]; then 
+elif [[ ! $readLimit =~ ^[0-9]+$ ]]; then 
 	echo -e "\n\e[91mThe read limit must be a positive integer\e[0m"; exit 1; 
 fi
 
