@@ -105,10 +105,10 @@ Arguments [b|d|h|r|v]
 	 Default = value from 'localBlastBlastn' in the settings file
  -d (optional) Set the BLAST database to use (should be nt or custom set of bacteria)
 	 Default = value from 'localBlastDB' in the settings file
- -r (optional) Run the BLAST search only for these runIds 
-     Default = all runIds in the blastSubmissions table of the meta2amr database 
+ -p (optional) Run the BLAST search only for these pipelineIds (e.g. "1,5,20")
+     Default = all pipelineIds in the blastSubmissions table of the meta2amr database 
 	 that have not been blasted yet
- -v (optional) Default can be changed in the settingss file
+ -v (optional) Default can be changed in the settings file
     0: Nothing is written to stdout (except errors)
     1: General progress is posted to stdout
 	
@@ -129,13 +129,13 @@ Arguments [b|e|f|r|t|v]
 	 Note: changing this might have unforeseen effects on the correct species calling
  -f (optional) The frequency (sec) with which the the script looks for updates on searches 
 	 Default = value from 'remoteBlastCheckFreq' in the settings file
- -r (optional) Run the BLAST search only for these runIds 
-     Default = all runIds in the blastSubmissions table of the meta2amr database 
+ -p (optional) Run the BLAST search only for these pipelineIds (e.g. "1,5,20")
+     Default = all pipelineIds in the blastSubmissions table of the meta2amr database 
 	 that have not been blasted yet
  -t (optional) The timeout (sec) after which the the script stops looking new results
 	 The script will end before the timeout if all searches have been completed
 	 Default = value from 'remoteBlastTimeout' in the settings file
- -v (optional) Default can be changed in the settingss file
+ -v (optional) Default can be changed in the settings file
     0: Nothing is written to stdout (except errors)
     1: General progress is posted to stdout
 	
