@@ -34,13 +34,15 @@ updateDBwhenError() {
 	WHERE runId = $1"
 }
 
-while getopts ":h" opt; do
+while getopts ":ht" opt; do
   case $opt in
 	h) echo -e "\n"
 	   awk '/--- SETUP.SH ---/,/-- END SETUP.SH ---/' $baseFolder/readme.txt
 	   echo -e "\n"
 	   exit
-    ;;	
+    ;;
+	t) runTests=true
+	;;
     \?) echo "Unknown argument provided"
 	    exit
 	;;
@@ -127,6 +129,20 @@ $sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
 	VALUES($runId,'setup.sh',$(date '+%s'),4,'usearch installed')"
 echo -e " - usearch is present"
 
+#Check if MetaCherchant.sh can be reached
+testTool=`grep -oP "metacherchant\s*=\s*\K(.*)" $baseFolder/settings.txt`
+if [ -z `command -v $testTool` ]; then 
+	echo -e "\e[91mThe MetaCherchant script cannot be found\n"\
+	"Update the path to the script in the settings file\n"\
+	$baseFolder/settings.txt"\e[0m"
+	updateDBwhenError "$runId" "MetaCherchant script not found"
+	exit 1;
+fi;
+$sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
+	"INSERT INTO logs (runId,tool,timeStamp,actionId,actionName)
+	VALUES($runId,'setup.sh',$(date '+%s'),5,'MetaCherchant present')"
+echo -e " - MetaCherchant is present"
+
 #Check if BLASTn is either a local tool or link to a remote service
 blastPath=`grep -oP "localBlastBlastn\s*=\s*\K(.*)" $baseFolder/settings.txt`
 if [ -z `command -v $blastPath` ]; then 
@@ -157,7 +173,7 @@ fi
 
 $sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
 	"INSERT INTO logs (runId,tool,timeStamp,actionId,actionName)
-	VALUES($runId,'setup.sh',$(date '+%s'),5,'$message')"
+	VALUES($runId,'setup.sh',$(date '+%s'),6,'$message')"
 
 #Check if pigz is installed else use gzip (slower but same result)
 if [ -z `command -v pigz` ]; then 
@@ -168,30 +184,34 @@ else
 fi;
 $sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
 	"INSERT INTO logs (runId,tool,timeStamp,actionId,actionName)
-	VALUES($runId,'setup.sh',$(date '+%s'),4,'$message')"
+	VALUES($runId,'setup.sh',$(date '+%s'),7,'$message')"
 echo -e " - $message"
 
-echo -e "\e[32m   All dependencies seem to be present\e[0m\n"
+echo -e "   ... finished\n"
+finalMessage=" All dependencies seem to be present\n"
 
+if [ "$runTests" == "true" ]; then
+	#STEP 2 - Test the whole pipeline
+	#---------------------------------
+	printf "2) Test mixing metagenome... "
 
-#STEP 2 - Test the whole pipeline
-#---------------------------------
-echo -e "2) Test mixing metagenome..."
+	#Create input file
+	cat $baseFolder/dataAndScripts/testData/input.csv | awk '{gsub(/~/,"'$baseFolder'")}1' > \
+		$baseFolder/dataAndScripts/testData/testInput.csv
 
-#Create input file
-cat $baseFolder/dataAndScripts/testData/input.csv | awk '{gsub(/~/,"'$baseFolder'")}1' > \
-	$baseFolder/dataAndScripts/testData/testInput.csv
+	#Run mixMultiple.sh
+	$baseFolder/mixMultiple.sh -f \
+		-i $baseFolder/dataAndScripts/testData/testInput.csv \
+		-o $baseFolder/dataAndScripts/testData/testOutput.fastq.gz \
+		-v FALSE
 
-#Run mixMultiple.sh
-$baseFolder/mixMultiple.sh -f \
-	-i $baseFolder/dataAndScripts/testData/testInput.csv \
-	-o $baseFolder/dataAndScripts/testData/testOutput.fastq.gz \
-	-v FALSE
-
-$sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
-	"INSERT INTO logs (runId,tool,timeStamp,actionId,actionName)
-	VALUES($runId,'setup.sh',$(date '+%s'),6,'mixMultiple test succesful')"
-echo -e "\e[32m   Mixing test successful\e[0m\n"
+	$sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
+		"INSERT INTO logs (runId,tool,timeStamp,actionId,actionName)
+		VALUES($runId,'setup.sh',$(date '+%s'),8,'mixMultiple test succesful')"
+	printf "done\n\n"
+	
+	finalMessage="$finalMessage  Mixing test successful\n"
+fi
 
 #Finish script
 $sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
@@ -199,4 +219,4 @@ $sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
 	SET end = '$(date '+%F %T')', status = 'finished'
 	WHERE runId = $runId"
 	
-echo -e `date "+%T"`" - Setup check finished\n \e[32mThe entire pipeline seems to be working correctly\e[0m\n"
+echo -e `date "+%T"`" - Setup check finished succesfully\n \e[32m$finalMessage\e[0m"
