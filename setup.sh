@@ -75,8 +75,8 @@ fi
 
 #Register the start of the script in the DB
 runId=$($sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
-	"INSERT INTO scriptUse (scriptName,start,status) \
-	values('checkSetup.sh','$(date '+%F %T')','running'); \
+	"INSERT INTO scriptUse (pipelineId,scriptName,start,status) \
+	values(0,'checkSetup.sh','$(date '+%F %T')','running'); \
 	SELECT runId FROM scriptUse WHERE runId = last_insert_rowid()")
 	
 #Check if R is installed

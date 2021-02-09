@@ -93,8 +93,8 @@ fi
 
 #Register the start of the script in the DB
 runId=$($sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
-	"INSERT INTO scriptUse (scriptName,start,status) \
-	values('remoteBlast.sh','$(date '+%F %T')','running'); \
+	"INSERT INTO scriptUse (pipelineId,scriptName,start,status) \
+	values(0,'remoteBlast.sh','$(date '+%F %T')','running'); \
 	SELECT runId FROM scriptUse WHERE runId = last_insert_rowid()")
 
 #Run BLASTn for all in the queue (unless runId specified)

@@ -2,18 +2,12 @@ BEGIN TRANSACTION;
 -- Table that tracks various scripts run
 CREATE TABLE IF NOT EXISTS "scriptUse" (
 	"runId"	integer primary key,
+	"pipelineId" integer NOT NULL,
 	"scriptName" text NOT NULL,
 	"start" text integer NOT NULL,
 	"end" text,
 	"status" text,
 	"info" text
-);
--- Table that brings together the various parts of the pipeline
-CREATE TABLE IF NOT EXISTS "pipeline" (
-	"pipelineId" integer NOT NULL,
-	"runId" integer NOT NULL,
-	PRIMARY KEY("pipelineId", "runId"),
-	FOREIGN KEY("runId") REFERENCES "scriptUse"("runId") ON UPDATE CASCADE ON DELETE CASCADE
 );
 -- Save the arguments with which each script runs
 CREATE TABLE IF NOT EXISTS "scriptArguments" (
@@ -99,13 +93,14 @@ CREATE TABLE IF NOT EXISTS "ARG" (
 -- Table that stores all ARG detected in a sample
 CREATE TABLE IF NOT EXISTS "detectedARG" (
 	"pipelineId" integer NOT NULL,
+	"runId" integer NOT NULL,
     "geneId" integer NOT NULL,
 	"segmentLength" integer,
 	"kmerCount" integer,
 	"n" integer,
 	"coverage" real,
-	PRIMARY KEY("pipelineId", "geneId"),
+	PRIMARY KEY("runId", "geneId"),
 	FOREIGN KEY("geneId") REFERENCES "ARG"("geneId") ON UPDATE CASCADE ON DELETE CASCADE,
-	FOREIGN KEY("pipelineId") REFERENCES "pipeline"("pipelineId") ON UPDATE CASCADE ON DELETE CASCADE
+	FOREIGN KEY("runId") REFERENCES "scriptUse"("runId") ON UPDATE CASCADE ON DELETE CASCADE
 );
 COMMIT;

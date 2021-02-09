@@ -45,7 +45,7 @@ test = blast_checkSubmission("test", url = blastn, verbose = 0)
 
 #Limit the search for specific pipelineIds if set, else do all
 prevRunId = ifelse(!is.na(pipelineId),
-                   sprintf("AND runId in (SELECT runId FROM pipeline WHERE pipelineId IN ('%s'))", 
+                   sprintf("AND runId in (SELECT runId FROM scriptUse WHERE pipelineId IN ('%s'))", 
                            paste(pipelineId, collapse = "','")),
                    "")
 
