@@ -18,7 +18,7 @@ runId = as.integer(args[[2]])
 verbose = args[[3]]
 blastn = args[[4]]
 blastDB = args[[5]]
-pipelineId = strsplit(args[[6]], ",")
+pipelineId = unlist(strsplit(args[[6]], ","))
 
 #Set these general blast args
 blastArgs = list(
@@ -30,7 +30,7 @@ blastArgs = list(
 )
 
 #Limit the search for specific pipelineIds if set, else do all
-prevRunId = ifelse(!is.na(pipelineId),
+prevRunId = ifelse(length(pipelineId) != 0,
 	sprintf("AND runId in (SELECT runId FROM scriptUse WHERE pipelineId IN ('%s'))", 
 	        paste(pipelineId, collapse = "','")),
 	"")
@@ -101,8 +101,8 @@ tryCatch({
       dbClearResult(q)
       dbDisconnect(myConn)
       
-      #Add the runId to the temp folder
-      write(runId, paste0(toSubmit$folder[i], "runId"))
+      #Touch the pipelineId to show that the action was completed
+      system(paste0("touch ", toSubmit$folder[i], "pipelineId"))
       
       #Feedback and Logs
       newLogs = rbind(newLogs, list(as.integer(Sys.time()), 3, 

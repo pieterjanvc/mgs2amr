@@ -26,7 +26,7 @@ runId = as.integer(args[[2]])
 verbose = args[[3]]
 blastn = args[[4]]
 entrezQ = args[[5]]
-pipelineId = strsplit(args[[6]], ",")
+pipelineId = unlist(strsplit(args[[6]], ","))
 timeOut = as.integer(args[[7]])
 checkFreq = as.integer(args[[8]])
 
@@ -40,24 +40,14 @@ checkFreq = as.integer(args[[8]])
 # checkFreq = 120
 
 start_time = as.integer(Sys.time())
-#Check if the URL is working (error when not)
-test = blast_checkSubmission("test", url = blastn, verbose = 0)
 
 #Limit the search for specific pipelineIds if set, else do all
-prevRunId = ifelse(!is.na(pipelineId),
+prevRunId = ifelse(length(pipelineId) > 0,
                    sprintf("AND runId in (SELECT runId FROM scriptUse WHERE pipelineId IN ('%s'))", 
                            paste(pipelineId, collapse = "','")),
                    "")
 
 #Status codes
-statusCodes = data.frame(
-  status = 0:13,
-  message = c("awaiting submission","successful remote submission", "failed remote submission", "searching remotely", 
-              "remote search completed", "timeout or error in remote search", "unknown RID or remote search expired",
-              "unknown error in remote submission check","timeout in remote submission check function",
-              "remote results downloaded and processed", "remote download or post-processing failed", 
-              "local search started", "local search finished and processed sucessfully", "local search failed"))
-
 statusCodes = data.frame(
   status = c(0, 10:13, 20:25, 30:32, 40:42),
   message = c("awaiting submission","successful remote submission", "failed remote submission - server error", 
@@ -77,6 +67,8 @@ tryCatch({
   newLogs = data.frame(timeStamp = as.integer(Sys.time()), actionId = 1, actionName = "Start remote BLASTn")
   if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S "), "Start remote BLASTn ...\n")}
   
+  #Check if the URL is working (error when not)
+  test = blast_checkSubmission("test", url = blastn, verbose = 0)
   
   #Get all files that need to be submitted
   myConn = dbConnect(SQLite(), paste0(baseFolder, "dataAndScripts/meta2amr.db"))
@@ -112,13 +104,13 @@ tryCatch({
         myConn, 
         "UPDATE blastSubmissions SET runId = ?, RID = ?, timeStamp = ?, statusCode  = ?, statusMessage = ?
       WHERE submId = ?",
-        params = list(toSubmit$runId[i], RID, as.integer(Sys.time()), mySubmissions$code, 
-                      mySubmissions$message, toSubmit$submId[i]))
+        params = list(toSubmit$runId[i], mySubmissions$RID, as.integer(Sys.time()), mySubmissions$statusCode, 
+                      mySubmissions$statusMessage, toSubmit$submId[i]))
       dbClearResult(q)
       dbDisconnect(myConn) 
 
       #Feedback and Logs
-      if(mySubmissions$statusCode == 1){
+      if(mySubmissions$statusCode == 10){
         newLogs = rbind(newLogs, list(as.integer(Sys.time()), 3, 
                                       sprintf("Successful remote submission of %s (submId %s)", toSubmit$fastaFile[i], toSubmit$submId[i])))
         if(verbose > 0){cat("done\n")}
@@ -145,7 +137,7 @@ tryCatch({
   
   #Get all blast submissions that need further follow-up
   myConn = dbConnect(SQLite(), paste0(baseFolder, "dataAndScripts/meta2amr.db"))
-  submTable = dbGetQuery(myConn, paste("SELECT * FROM blastSubmissions WHERE statusCode in (1,3,4)",
+  submTable = dbGetQuery(myConn, paste("SELECT * FROM blastSubmissions WHERE statusCode in (10,20,23)",
                                        prevRunId)) %>% arrange(timeStamp)
   dbDisconnect(myConn)
   
@@ -196,7 +188,7 @@ tryCatch({
                                       i, nrow(submTable), submTable$submId[i]))}
           
           #Get results (success = 9, fail = 10)
-          getResults = blast_getResults(submTable$RID[i], submTable$folder[i], unzip = F, verbose = 1)
+          getResults = blast_getResults(submTable$RID[i], submTable$folder[i], url = blastn, verbose = 1)
           
           #Update the blastSubmissions table in the DB
           myConn = dbConnect(SQLite(), paste0(baseFolder, "dataAndScripts/meta2amr.db"))
@@ -218,6 +210,9 @@ tryCatch({
                                                   submTable$fastaFile[i], submTable$submId[i])))
             if(verbose > 0){cat("failed\n")}
           }
+          
+          #Touch the pipelineId to show that the action was completed
+          system(paste0("touch ", submTable$folder[i], "pipelineId"))
         }
         #Feedback and Logs
         newLogs = rbind(newLogs, list(as.integer(Sys.time()), 12, "Finished downloading completed searches"))
@@ -232,7 +227,7 @@ tryCatch({
       
       #Get the new status of all submissions
       myConn = dbConnect(SQLite(), paste0(baseFolder, "dataAndScripts/meta2amr.db"))
-      submTable = dbGetQuery(myConn, paste("SELECT * FROM blastSubmissions WHERE statusCode in (1,3,4)",
+      submTable = dbGetQuery(myConn, paste("SELECT * FROM blastSubmissions WHERE statusCode in (10,20,23)",
                                            prevRunId)) %>% arrange(timeStamp)
       dbDisconnect(myConn)
       
