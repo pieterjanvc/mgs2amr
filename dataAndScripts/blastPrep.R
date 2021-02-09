@@ -43,7 +43,7 @@ clusterIdentidy  = as.numeric(args[[11]]) #The cluster identity percent used in 
 forceRedo = as.logical(args[[12]]) #If parts of the code have successfully run before a crash, do not repeat unless forceRedo = T
 maxStep= as.integer(args[[13]]) #Which parts of the script to run? If NA all is run
 
-maxStep = ifelse(is.na(maxStep), 5, maxStep)
+maxStep = ifelse(maxStep == 0, 5, maxStep)
 
 #Generate a list out of the settings file
 settings = readLines(paste0(baseFolder, "settings.txt"))

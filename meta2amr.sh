@@ -76,7 +76,7 @@ if [ -z ${pipelineId+x} ]; then
 
 	if [ ! -f "$inputFile1" ]; then 
 		echo -e "\n\e[91minputFile1 does not exist.\n Use -i to specify one, or read the help file (-h)\e[0m"; exit 1;	
-	elif [ ! -z ${inputFile2+x} ] & [ ! -f "$inputFile2" ]; then
+	elif [ ! -z ${inputFile2+x} ] && [ ! -f "$inputFile2" ]; then
 		echo -e "\n\e[91minputFile2 does not exist.\n Use -s to specify one, or read the help file (-h)\e[0m"; exit 1; 	
 	fi
 
@@ -207,7 +207,6 @@ $sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
 #---------------------------------
 	
 #Only run if MetaCherchant has not been run before for this sample (i.e. the temp folder has MC data)
-echo -e "\n"
 echo "*****************************"
 echo "--- STEP 1: MetaCherchant ---"
 echo "*****************************"
@@ -234,7 +233,7 @@ if [ -z "$MCsuccess" ]; then
 	"INSERT INTO logs (runId,tool,timeStamp,actionId,actionName)
 	VALUES($runId,'metacherchant.sh',$(date '+%s'),1,'Start MetaCherchant')"
 	
-	freeMem=$(expr $(free -h | grep -oP "Mem:\s+[^\s]+\s+[^\s]+\s+\K([\d\.]+)") - 4)
+	# freeMem=$(expr $(free -h | grep -oP "Mem:\s+[^\s]+\s+[^\s]+\s+\K([\d\.]+)") - 4)
 	$metacherchant --tool environment-finder \
 		--k 31 \
 		--coverage=5 \
@@ -282,9 +281,9 @@ Rscript=`grep -oP "rscript\s*=\s*\K(.*)" $baseFolder/settings.txt`
 
 #Set any option to modify the script
 scriptOptions=(keepAllMetacherchantData maxPathDist minBlastLength trimLength clusterIdentidy forceRedo, maxStep)
-scriptValues=(FALSE 2500 250 250 0.95 FALSE 6)
+scriptValues=(FALSE 2500 250 250 0.95 FALSE 0)
 
-if [ "${scriptValues[6]}" != "" ]; then 
+if [ "${scriptValues[6]}" != 0 ]; then 
 	echo "  WARNING: the blast prep is limited to step ${scriptValues[6]}" 
 fi
 
