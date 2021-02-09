@@ -64,7 +64,7 @@ myConn = dbConnect(SQLite(), sprintf("%sdataAndScripts/meta2amr.db", baseFolder)
 logs = dbGetQuery(
   myConn, 
   paste("SELECT * FROM logs WHERE runId IN",
-        "(SELECT runId FROM pipeline WHERE pipelineId == ?)",
+        "(SELECT runId FROM scriptUse WHERE pipelineId == ?)",
         "AND tool = 'blastPrep.R'"), 
   params = pipelineId)
 dbDisconnect(myConn)
@@ -210,8 +210,8 @@ tryCatch({
         mutate(coverage = round(min(1, segmentLength / nBases), 4)) %>% 
         group_by(clusterNr) %>% 
         filter(kmerCount == max(kmerCount)) %>% ungroup() %>% 
-        mutate(pipelineId = pipelineId) %>% 
-        select(pipelineId, geneId, gene, subtype, segmentLength, kmerCount, n, coverage)
+        mutate(pipelineId = pipelineId, runId = runId) %>% 
+        select(pipelineId, runId, geneId, gene, subtype, segmentLength, kmerCount, n, coverage)
       
       
       #Only keep genes that are minimum 90% covered (or use cut-off when higher) 
@@ -223,7 +223,7 @@ tryCatch({
                           params = pipelineId)
       dbClearResult(q)
       
-      q = dbSendStatement(myConn, "INSERT INTO detectedARG VALUES(?,?,?,?,?,?)", 
+      q = dbSendStatement(myConn, "INSERT INTO detectedARG VALUES(?,?,?,?,?,?,?)", 
                           params = unname(as.list(genesDetected %>% 
                                                     select(-gene, -subtype))))
       dbClearResult(q)
@@ -249,7 +249,7 @@ tryCatch({
   }
   
   
-  if(maxStep > 2){
+  if(maxStep > 2 & nrow(genesDetected) > 0){
     
     # ---- 3. Simplify the GFA files  ---
     #************************************
@@ -340,10 +340,16 @@ tryCatch({
                                     "Finished simplifying GFA files"))
       
     }
+  } else if (nrow(genesDetected) == 0){
+	#Feedback and Logs
+      if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S -"),
+						"There were no genes detected. Skip the rest of the pipeline\n")}
+      newLogs = rbind(newLogs, list(as.integer(Sys.time()), 18, 
+                                    "No genes detected"))
   }
   
   
-  if(maxStep > 3){
+  if(maxStep > 3 & nrow(genesDetected) > 0){
     
     # ---- 4. Extract segments for BLAST  ---
     #****************************************
@@ -396,7 +402,7 @@ tryCatch({
   }
   
   
-  if(maxStep > 4){
+  if(maxStep > 4 & nrow(genesDetected) > 0){
     # ---- 5. Finalise preparation ---
     #*********************************
     myConn = dbConnect(SQLite(), sprintf("%sdataAndScripts/meta2amr.db", baseFolder))
@@ -453,7 +459,7 @@ tryCatch({
   }
   
   
-  if(maxStep < 5){
+  if(maxStep < 5 & nrow(genesDetected) > 0){
     newLogs = rbind(newLogs, list(as.integer(Sys.time()), 17, 
                                   paste("BLAST prep limited to step", maxStep)))
   } else {
@@ -475,9 +481,5 @@ finally = {
     params = unname(as.list(newLogs)))
   dbClearResult(q)
   
-  dbDisconnect(myConn)
-  
-  #Add the runId to the temp folder
-  write(pipelineId, paste0(tempFolder, "pipelineId"))
-  
+  dbDisconnect(myConn)  
 })
