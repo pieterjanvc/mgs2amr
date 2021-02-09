@@ -76,18 +76,20 @@ Evaluate a metagenome for pathogenic bacterial species and their AMR
 
 Arguments [h|i|o|v]
  -h Read the help documentation
- -i The input file in fastq.gz format
+ -i The input file in fastq or fastq.gz format
+ -s (optional) The secondary input file in case of pair-end reads
  -o The folder to save the results. A subfolder will be created
+ -n The name of the output subfolder and prefix for other filenames
  -t (optional) The location of the temp folder (files removed once completed). 
      Default = meta2amr/temp unless 'meta2amrTemp' is set in the settings file
- -v (optional) Default can be changed in the settingss file
+ -v (optional) Default can be changed in the settings file
     0: Nothing is written to stdout
     1: General progress is posted to stdout
     2: All available details are posted to stdout    
 
-Special case when resuming previous run
- -r Provide only a previous runId (found in file called runId in temp folder). 
-     Only set if an error occured and you like to resume from a specific temp file
+Special case when resumiing an exisiting pipleline
+ -p Provide only a pipelineId (found in file called pipelineId in temp/output folder). 
+     Use if an error occurred and you like to resume from a specific temp file
 	 All other parameters but verbose will be ignored
 	
 -- END META2AMR.SH ---
