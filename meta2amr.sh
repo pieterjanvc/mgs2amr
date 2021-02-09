@@ -36,16 +36,20 @@ updateDBwhenError() {
 }
 
 #Options when script is run
-while getopts ":hi:o:t:fv:r:" opt; do
+while getopts ":hi:s:o:n:t:fv:p:" opt; do
   case $opt in
 	h) echo -e "\n"
 	   awk '/--- META2AMR.SH ---/,/-- END META2AMR.SH ---/' $baseFolder/readme.txt  
 	   echo -e "\n"
 	   exit
     ;;	
-	i) inputFile=`realpath "${OPTARG}"`
+	i) inputFile1="${OPTARG}"
+    ;;
+	s) inputFile2="${OPTARG}"
     ;;
 	o) outputFolder=`realpath "${OPTARG%/}"`
+    ;;
+	n) outputName="${OPTARG}"
     ;;
 	t) tempFolder=`realpath "${OPTARG%/}"`
     ;;
@@ -53,7 +57,7 @@ while getopts ":hi:o:t:fv:r:" opt; do
     ;;
 	v) verbose="${OPTARG}"
     ;;
-	r) pipelineId="${OPTARG}"
+	p) pipelineId="${OPTARG}"
     ;;
     \?) echo "Unknown argument provided"
 	    exit
@@ -63,19 +67,17 @@ done
 
 exec 2>$baseFolder/dataAndScripts/lastError
 
+#Check the arguments
 if [ -z ${forceOverwrite+x} ]; then 
 	forceOverwrite=`grep -oP "meta2amrForceOverwrite\s*=\s*\K(.*)" $baseFolder/settings.txt`
 fi
 
-#Check the arguments
 if [ -z ${pipelineId+x} ]; then 	
 
-	if [ -z ${inputFile+x} ]; then 
-		echo -e "\n\e[91mNo input file set.\n Use -i to specify one, or read the help file (-h)\e[0m"; exit 1; 
-	elif [ ! -f $inputFile ]; then 
-		echo -e "\n\e[91mThe specified input file was not found\e[0m"; exit 1; 
-	elif ! grep -q "\.fastq\.gz$" <<< "mixedMetagenomes/EC_KP.fastq.gz"; then 
-		echo -e "\n\e[91mThe specified input file is not in fastq.gz format\e[0m"; exit 1; 
+	if [ ! -f "$inputFile1" ]; then 
+		echo -e "\n\e[91minputFile1 does not exist.\n Use -i to specify one, or read the help file (-h)\e[0m"; exit 1;	
+	elif [ ! -z ${inputFile2+x} ] & [ ! -f "$inputFile2" ]; then
+		echo -e "\n\e[91minputFile2 does not exist.\n Use -s to specify one, or read the help file (-h)\e[0m"; exit 1; 	
 	fi
 
 	if [ -z ${outputFolder+x} ]; then 
@@ -100,18 +102,32 @@ if [ -z ${pipelineId+x} ]; then
 		# echo -e "\n\e[91mThe temp directory does not exist\e[0m"; exit 1;
 	# fi
 	
-	tempName=`grep -oP "\K([^\/]+)(?=.fastq.gz)" <<< $inputFile`_`date '+%s'`
+	if [ -z ${outputName+x} ]; then 
+		rand=`shuf -zer -n5  {A..Z} {a..z} {0..9}`
+		outputName=meta2amrPipeline
+		
+		while [ -d $outputFolder/$outputName$rand ]; do
+			rand=`shuf -zer -n5  {A..Z} {a..z} {0..9}`
+		done
+		
+		outputName=$outputName\_$rand	
+    elif [ -d $outputFolder/$outputName ]; then
+		echo -e "\n\e[91mA folder with name $outputName already exists in the output folder." \
+		"Use -n to specifiy a unique name or read the help file (-h)\e[0m"; exit 1;
+	fi
+	
+	tempName=$outputName\_`date '+%s'`
 	
 else
 
 	#Get the first runId
     firstRunId=$($sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
 	"SELECT s.runId 
-	FROM scriptArguments as s, pipeline as p \
+	FROM scriptArguments as s, scriptUse as p \
 	WHERE p.pipelineId = $pipelineId AND p.runId = s.runId AND \
-	      scriptName = 'meta2amr.sh' AND argument = 'inputFile'")
+	      s.scriptName = 'meta2amr.sh' AND argument = 'inputFile1'")
 	
-	if [ ! -z "$firstRunId" ]; then
+	if [ -z "$firstRunId" ]; then
 		firstRunId=0
 	fi
 	
@@ -127,7 +143,7 @@ else
 		echo -e "\n\e[91mThe the pipelineId provided does not point to a valid folder \e[0m"; exit 1; 
 	fi
 	
-    #In case of a previous runId, load all the arguments fromt the database
+    #In case of a previous runId, load all the arguments from the database
     inputFile=$($sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
 	"SELECT value FROM scriptArguments \
 	WHERE scriptName = 'meta2amr.sh' AND argument = 'inputFile' AND runId = $firstRunId")
@@ -138,7 +154,7 @@ else
 
 	MCsuccess=$($sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
 	"SELECT logId FROM logs
-	WHERE runId IN (SELECT runId FROM pipeline WHERE pipelineId == $pipelineId) AND \
+	WHERE runId IN (SELECT runId FROM scriptUse WHERE pipelineId == $pipelineId) AND \
 	actionId = 2")
 	
 fi
@@ -152,29 +168,31 @@ fi
 
 if [ $verbose != "0" ]; then echo -e "\n\e[32m"`date "+%T"`" - Inputs correct, starting pipeline ...\e[0m"; fi;
 
+
 #Register the start of the script in the DB
-runId=$($sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
-	"INSERT INTO scriptUse (scriptName,start,status) \
-	values('meta2amr.sh','$(date '+%F %T')','running'); \
+if [ -z ${pipelineId+x} ]; then
+	#Generate the next pipelineId
+	pipelineId=$($sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
+	"SELECT max(pipelineId) + 1 \
+	FROM scriptUse")
+	
+    runId=$($sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
+	"INSERT INTO scriptUse (pipelineId,scriptName,start,status) \
+	values($pipelineId,'meta2amr.sh','$(date '+%F %T')','running'); \
 	SELECT runId FROM scriptUse WHERE runId = last_insert_rowid()")
 	
-if [ -z ${pipelineId+x} ]; then
-	scriptArgs="($runId,'meta2amr.sh','inputFile', '$inputFile'),
+	scriptArgs="($runId,'meta2amr.sh','inputFile1', '$inputFile1'),
+	($runId,'meta2amr.sh','inputFile2', '$inputFile2'),
 	($runId,'meta2amr.sh','outputFolder', '$outputFolder'),
+	($runId,'meta2amr.sh','outputName', '$outputName'),
 	($runId,'meta2amr.sh','tempFolder', '$tempFolder'),
-	($runId,'meta2amr.sh','tempName', '$tempName'),"
-	
-	pipelineId=$($sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
-	"INSERT INTO pipeline (pipelineId,runId) \
-	values($pipelineId, $runId); \
-	SELECT pipelineId FROM pipeline WHERE pipelineId = last_insert_rowid()")
-	
+	($runId,'meta2amr.sh','tempName', '$tempName'),"	
 else
+	runId=$($sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
+	"INSERT INTO scriptUse (pipelineId,scriptName,start,status) \
+	values($pipelineId, 'meta2amr.sh','$(date '+%F %T')','running'); \
+	SELECT runId FROM scriptUse WHERE runId = last_insert_rowid()")
 	pointerTopipelineId="($runId,'meta2amr.sh','pipelineId', '$pipelineId'),"
-	
-	$sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
-	"INSERT INTO pipeline (pipelineId,runId) \
-	values($pipelineId, $runId)"
 fi
 
 #Save the arguments with which the script was run
@@ -201,6 +219,7 @@ if [ -z "$MCsuccess" ]; then
 	# tempName=`grep -oP "\K([^\/]+)(?=.fastq.gz)" <<< $inputFile`_`date '+%s'`
     mkdir -p $tempFolder/$tempName
 	mkdir -p $tempFolder/$tempName/metacherchant_logs
+	echo $pipelineId > $tempFolder/$tempName/pipelineId
     
 	#MC generates a lot of output, we ignore this but when verbose = 2
 	if [ $verbose != 2 ] ; then
@@ -219,7 +238,7 @@ if [ -z "$MCsuccess" ]; then
 	$metacherchant --tool environment-finder \
 		--k 31 \
 		--coverage=5 \
-		--reads $inputFile \
+		--reads "$inputFile1 $inputfile2" \
 		--seq $baseFolder/dataAndScripts/ARG_06Jan2020.fasta \
 		--output $tempFolder/$tempName \
 		--work-dir $tempFolder/$tempName/metacherchant_logs \
@@ -242,7 +261,9 @@ else
 	if [ $verbose != "0" ]; then echo -e `date "+%T"`" - Skip MetaCherchant, already done"; fi;
 	$sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
 	"INSERT INTO logs (runId,tool,timeStamp,actionId,actionName)
-	VALUES($runId,'metacherchant.sh',$(date '+%s'),3,'Skip MetaCherchant, already done')"	
+	VALUES($runId,'metacherchant.sh',$(date '+%s'),3,'Skip MetaCherchant, already done')"
+	
+	touch $tempFolder/$tempName/pipelineId
 	
 fi
 
