@@ -2,12 +2,12 @@ BEGIN TRANSACTION;
 -- Table that tracks each pipeline
 CREATE TABLE IF NOT EXISTS "pipeline" (
 	"pipelineId" integer primary key,
-	"tempFolder" text NOT NULL,
-	"outputFolder" text NOT NULL,
 	"statusCode" integer NOT NULL,
 	"statusMessage" text,
 	"startTimestamp" text,
 	"modifiedTimestamp" text,
+	"tempFolder" text NOT NULL,
+	"outputFolder" text NOT NULL,
 	"info" text
 );
 -- Table that tracks various scripts run
