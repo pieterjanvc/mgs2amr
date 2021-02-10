@@ -346,6 +346,15 @@ tryCatch({
 						"There were no genes detected. Skip the rest of the pipeline\n")}
       newLogs = rbind(newLogs, list(as.integer(Sys.time()), 18, 
                                     "No genes detected"))
+      
+      myConn = dbConnect(SQLite(), sprintf("%sdataAndScripts/meta2amr.db", baseFolder))
+      q = dbSendStatement(
+        myConn, 
+        "UPDATE pipeline SET statusCode = 10, statusMessage = 'No ARG detected - pipeline halted', modifiedTimestamp = ?
+         WHERE pipelineId = ?",
+        params = list(as.character(Sys.time()), pipelineId))
+      dbClearResult(q)
+      dbDisconnect(myConn)
   }
   
   
@@ -405,7 +414,6 @@ tryCatch({
   if(maxStep > 4 & nrow(genesDetected) > 0){
     # ---- 5. Finalise preparation ---
     #*********************************
-    myConn = dbConnect(SQLite(), sprintf("%sdataAndScripts/meta2amr.db", baseFolder))
     
     if(nrow(logs %>% filter(actionId %in% c(14, 15))) > 0 & !forceRedo){
       
@@ -437,16 +445,26 @@ tryCatch({
       } 
       
       #Insert into DB
+      blastSubmissions$pipelineId = pipelineId
       blastSubmissions$runId = runId
       blastSubmissions = blastSubmissions %>% 
-        select(runId,RID,timeStamp,tempName,fastaFile,statusCode,statusMessage,folder)
+        select(pipelineId,runId,RID,timeStamp,tempName,fastaFile,statusCode,statusMessage,folder)
+      
+      myConn = dbConnect(SQLite(), sprintf("%sdataAndScripts/meta2amr.db", baseFolder))
       q = dbSendStatement(
         myConn, 
         paste("INSERT INTO blastSubmissions",
-              "(runId,RID,timeStamp,tempName,fastaFile,statusCode,statusMessage,folder)",
-              "VALUES (?,?,?,?,?,?,?,?)"), 
+              "(pipelineId,runId,RID,timeStamp,tempName,fastaFile,statusCode,statusMessage,folder)",
+              "VALUES (?,?,?,?,?,?,?,?,?)"), 
         params = unname(as.list(blastSubmissions)))
       dbClearResult(q)
+      
+      q = dbSendStatement(
+        myConn, 
+        "UPDATE pipeline SET statusCode = 3, statusMessage = 'Finished blast prep', modifiedTimestamp = ? WHERE pipelineId = ?",
+        params = list(as.character(Sys.time()), pipelineId))
+      dbClearResult(q)
+      dbDisconnect(myConn)
       
       #Feedback and Logs
       if(verbose > 0){cat("done\n")}

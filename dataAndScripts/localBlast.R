@@ -91,7 +91,7 @@ tryCatch({
                      blastArgs$evalue, blastArgs$word_size, blastArgs$max_target_seqs, blastArgs$taxidlist,
                      paste0(toSubmit$folder[i], str_replace(toSubmit$fastaFile[i], ".fasta", ".json.gz"))))
       
-      #Update the blastSubmissions table
+      #Update the DB
       myConn = dbConnect(SQLite(), paste0(baseFolder, "dataAndScripts/meta2amr.db"))
       q = dbSendStatement(
         myConn, 
@@ -99,6 +99,14 @@ tryCatch({
       WHERE submId = ?",
         params = list(runId, as.integer(Sys.time()), 13, statusCodes$message[13], toSubmit$submId[i]))
       dbClearResult(q)
+      
+      q = dbSendStatement(
+        myConn, 
+        "UPDATE pipeline SET statusCode = 4, statusMessage = 'Finished blast', modifiedTimestamp = ?
+        WHERE pipelineId = ?",
+        params = list(as.character(Sys.time()), toSubmit$pipelineId[i]))
+      dbClearResult(q)
+      
       dbDisconnect(myConn)
       
       #Touch the pipelineId to show that the action was completed

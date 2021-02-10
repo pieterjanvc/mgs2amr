@@ -203,6 +203,16 @@ tryCatch({
             newLogs = rbind(newLogs, list(as.integer(Sys.time()), 10, 
                                           sprintf("Download/processing successful for BLAST results of %s (submId %s)", 
                                                   submTable$fastaFile[i], submTable$submId[i])))
+            
+            myConn = dbConnect(SQLite(), paste0(baseFolder, "dataAndScripts/meta2amr.db"))
+            q = dbSendStatement(
+              myConn, 
+              "UPDATE pipeline SET statusCode = 4, statusMessage = 'Finished blast', modifiedTimestamp = ?
+              WHERE pipelineId = ?",
+              params = list(as.character(Sys.time()), submTable$pipelineId[i]))
+            dbClearResult(q)
+            dbDisconnect(myConn)
+            
             if(verbose > 0){cat("done\n")}
           } else {
             newLogs = rbind(newLogs, list(as.integer(Sys.time()), 11, 

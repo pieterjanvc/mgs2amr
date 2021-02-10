@@ -173,8 +173,9 @@ if [ $verbose != "0" ]; then echo -e "\n\e[32m"`date "+%T"`" - Inputs correct, s
 if [ -z ${pipelineId+x} ]; then
 	#Generate the next pipelineId
 	pipelineId=$($sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
-	"SELECT max(pipelineId) + 1 \
-	FROM scriptUse")
+	"INSERT INTO pipeline (tempFolder,outputFolder,statusCode,statusMessage,startTimestamp,modifiedTimestamp) \
+	values('$tempFolder/$tempName','$outputFolder/$outputName',1,'Pipeline started','$(date '+%F %T')','$(date '+%F %T')'); \
+	SELECT pipelineId FROM pipeline WHERE pipelineId = last_insert_rowid()")
 	
     runId=$($sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
 	"INSERT INTO scriptUse (pipelineId,scriptName,start,status) \
@@ -188,11 +189,18 @@ if [ -z ${pipelineId+x} ]; then
 	($runId,'meta2amr.sh','tempFolder', '$tempFolder'),
 	($runId,'meta2amr.sh','tempName', '$tempName'),"	
 else
+	$sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
+	"UPDATE pipeline \
+	SET modifiedTimestamp = '$(date '+%F %T')' \
+	WHERE pipelineId == $pipelineId"
+	
 	runId=$($sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
 	"INSERT INTO scriptUse (pipelineId,scriptName,start,status) \
 	values($pipelineId, 'meta2amr.sh','$(date '+%F %T')','running'); \
 	SELECT runId FROM scriptUse WHERE runId = last_insert_rowid()")
+	
 	pointerTopipelineId="($runId,'meta2amr.sh','pipelineId', '$pipelineId'),"
+	
 fi
 
 #Save the arguments with which the script was run
@@ -249,6 +257,11 @@ if [ -z "$MCsuccess" ]; then
     $sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
 	"INSERT INTO logs (runId,tool,timeStamp,actionId,actionName)
 	VALUES($runId,'metacherchant.sh',$(date '+%s'),2,'Finished MetaCherchant')"	
+	
+	$sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
+	"UPDATE pipeline 
+	SET statusCode = 2, statusMessage = 'Finished MetaCherchant', modifiedTimestamp = '$(date '+%F %T')'
+	WHERE pipelineId == $pipelineId"
 		
 	exec 2>$baseFolder/dataAndScripts/lastError #Restore output redirection
 	
@@ -316,4 +329,3 @@ $sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
 	"UPDATE scriptUse
 	SET end = '$(date '+%F %T')', status = 'finished'
 	WHERE runId = $runId"
-
