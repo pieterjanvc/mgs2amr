@@ -14,7 +14,7 @@ The following software needs to be installed:
   * Precompiled 32-bit version: https://www.sqlite.org/download.html
   * Precompiled 64-bit version: https://github.com/boramalper/sqlite3-x64/releases
 - R version 4.0+
-  * Packages: dplyr(1.0+), stringr, tidyr, jsonlite
+  * Packages: gfaTools, RSQLite, igraph, tidyverse (with dplyr 1.0+)
   * Precompiled versions: https://www.r-project.org/ 
 - bbmap 
   * https://jgi.doe.gov/data-and-tools/bbtools/bb-tools-user-guide/installation-guide/

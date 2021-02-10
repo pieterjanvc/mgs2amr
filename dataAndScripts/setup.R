@@ -12,11 +12,14 @@ if(as.integer(R.version$major) < 4){
 }
 
 #Check R packages
-packages = c("dplyr", "stringr", "tidyr", "jsonlite", 
-             "RSQLite", "purrr", "igraph", "visNetwork", "gfaTools")
+packages = c("tidyverse", "RSQLite", "igraph", "gfaTools")
 installed = packages %in% installed.packages()[,1]
 
 if(!all(installed)){
   stop(paste("The following R packages are not installed:\n",
              paste(packages[!installed], collapse = ", ")))
+}
+
+if(!stringr::str_detect(as.character(packageVersion("dplyr")), "^1")){
+  stop("The dplyr package needs to be version 1.0+")
 }
