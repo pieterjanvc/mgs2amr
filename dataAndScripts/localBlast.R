@@ -80,10 +80,11 @@ tryCatch({
       
       #Feedback and Logs
       newLogs = rbind(newLogs, list(as.integer(Sys.time()), 2, 
-                                    sprintf("Start BLASTn for submId %i", toSubmit$submId[i])))
+                                    sprintf("Start BLASTn for pipelineId %i, submId %i", 
+                                            toSubmit$pipelineId[i], toSubmit$submId[i])))
       if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S  "), 
-                          sprintf("- Progress %i/%i Blastn for submId %i ... ", 
-                                  i, nrow(toSubmit), toSubmit$submId[i]))}
+                          sprintf("- (%i/%i) pipelineId %i : submId %i ... ", 
+                                  i, nrow(toSubmit), toSubmit$pipelineId[i], toSubmit$submId[i]))}
       
       #Run local blastn
       system(sprintf('%s -db "%s" -query "%s" -task megablast -evalue %s -word_size %i -max_target_seqs %i -taxidlist %s -outfmt 15 | gzip > "%s"',
