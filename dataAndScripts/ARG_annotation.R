@@ -38,6 +38,7 @@ cutOff = function(numbers){
 }
 
 sample = "temp/G2Heidi019_1612974558"
+sample = toProcess$tempFolder[7]
 for(sample in toProcess$tempFolder){
   
   sampleName = str_extract(sample, "[^\\/]+(?=_\\d+$)")
@@ -75,7 +76,7 @@ for(sample in toProcess$tempFolder){
   
   
   #Get the KC and LN for the segments
-  segmentInfo =  read_csv(paste0(sample, "/blastSegments.csv")) %>% 
+  segmentInfo =  read_csv(paste0(sample, "/blastSegments.csv"), col_types = cols()) %>% 
     select(-sequence, -name, -geneId, -CL)
   
   #Check the bacteria
@@ -122,7 +123,7 @@ for(sample in toProcess$tempFolder){
   })
   
   #Get the result
-  blastOut = 
+  result = 
     blastOut %>% 
     filter(
       extra != "",
@@ -143,12 +144,12 @@ for(sample in toProcess$tempFolder){
       dist = dist + 1,
       val = sum(1 / dist:(dist + align_len)) * bit_score / align_len) %>% 
     group_by(geneId, accession, genus, species, extra, plasmid) %>% 
-    summarise(val = sum(val)) %>% 
+    summarise(val = sum(val), .groups = "drop") %>% 
     group_by(geneId, genus, species, plasmid) %>% 
     filter(val == max(val)) %>% ungroup() %>% 
     left_join(ARG %>% select(geneId, gene, subtype, clusterNr), by = "geneId") %>% 
     select(gene, subtype, clusterNr, accession, genus, species, extra, plasmid, val) %>% distinct() %>% 
     group_by(gene, subtype) %>%  filter(val >= cutOff(val))
 
-    write_csv(blastOut, paste0(sample, "/annotation.csv"))
+    write_csv(result, paste0(sample, "/annotation.csv"))
 }
