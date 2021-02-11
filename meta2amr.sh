@@ -223,7 +223,6 @@ if [ -z "$MCsuccess" ]; then
 	if [ $verbose != "0" ]; then echo -e `date "+%T"`" - Start MetaCherchant ..."; fi;
 	
 	#Generate temp folders
-	# tempName=`grep -oP "\K([^\/]+)(?=.fastq.gz)" <<< $inputFile`_`date '+%s'`
     mkdir -p $tempFolder/$tempName
 	mkdir -p $tempFolder/$tempName/metacherchant_logs
 	echo $pipelineId > $tempFolder/$tempName/pipelineId
@@ -242,10 +241,11 @@ if [ -z "$MCsuccess" ]; then
 	VALUES($runId,'metacherchant.sh',$(date '+%s'),1,'Start MetaCherchant')"
 	
 	# freeMem=$(expr $(free -h | grep -oP "Mem:\s+[^\s]+\s+[^\s]+\s+\K([\d\.]+)") - 4)
+	inputFile="$inputFile1 $inputFile2"
 	$metacherchant --tool environment-finder \
 		--k 31 \
 		--coverage=5 \
-		--reads "$inputFile1 $inputfile2" \
+		--reads $inputFile \
 		--seq $baseFolder/dataAndScripts/ARG_06Jan2020.fasta \
 		--output $tempFolder/$tempName \
 		--work-dir $tempFolder/$tempName/metacherchant_logs \
@@ -287,7 +287,7 @@ echo "***********************************"
 echo "--- STEP 2: BLASTn Preparations ---"
 echo "***********************************"
 
-if [ $verbose != "0" ]; then echo -e `date "+%T"`" - Start BLASTn preparations"; fi;
+if [ $verbose != "0" ]; then echo -e `date "+%T"`" - Start BLAST preparations  ..."; fi;
 
 #Get paths from the settings
 Rscript=`grep -oP "rscript\s*=\s*\K(.*)" $baseFolder/settings.txt`
@@ -322,7 +322,7 @@ $Rscript $baseFolder/dataAndScripts/blastPrep.R \
 	"$baseFolder" "$tempFolder"	"$tempName" "$verbose" "$runId" "$pipelineId" \
 	${scriptValues[@]}
 
-if [ $verbose != "0" ]; then echo -e `date "+%T"`" - Finished BLASTn preparations"; fi;
+if [ $verbose != "0" ]; then echo -e `date "+%T"`" - Finished BLAST preparations"; fi;
 
 #Update the DB
 $sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
