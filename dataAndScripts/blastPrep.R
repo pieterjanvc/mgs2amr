@@ -335,7 +335,7 @@ tryCatch({
       write.csv(blastSegments, sprintf("%sblastSegments.csv", tempFolder), row.names = F)
       
       #Feedback and Logs
-      if(verbose > 0){cat("done\n")}
+      if(verbose > 0){cat(" finished\n")}
       newLogs = rbind(newLogs, list(as.integer(Sys.time()), 10, 
                                     "Finished simplifying GFA files"))
       

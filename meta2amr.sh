@@ -287,7 +287,7 @@ echo "***********************************"
 echo "--- STEP 2: BLASTn Preparations ---"
 echo "***********************************"
 
-if [ $verbose != "0" ]; then echo -e `date "+%T"`" - Start BLAST preparations  ..."; fi;
+if [ $verbose != "0" ]; then echo -e `date "+%T"`" - Start BLASTn preparations"; fi;
 
 #Get paths from the settings
 Rscript=`grep -oP "rscript\s*=\s*\K(.*)" $baseFolder/settings.txt`
@@ -322,7 +322,7 @@ $Rscript $baseFolder/dataAndScripts/blastPrep.R \
 	"$baseFolder" "$tempFolder"	"$tempName" "$verbose" "$runId" "$pipelineId" \
 	${scriptValues[@]}
 
-if [ $verbose != "0" ]; then echo -e `date "+%T"`" - Finished BLAST preparations"; fi;
+if [ $verbose != "0" ]; then echo -e `date "+%T"`" - Finished BLASTn preparations"; fi;
 
 #Update the DB
 $sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \

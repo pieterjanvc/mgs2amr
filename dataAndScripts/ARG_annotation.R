@@ -37,7 +37,7 @@ cutOff = function(numbers){
   myData %>% filter(diff == max(diff)) %>% pull(number) %>% unique() %>% min()
 }
 
-sample = "temp/meta2amrPipeline_qQRvE_1612914889"
+sample = "temp/G2Heidi019_1612974558"
 for(sample in toProcess$tempFolder){
   
   sampleName = str_extract(sample, "[^\\/]+(?=_\\d+$)")
@@ -100,11 +100,11 @@ for(sample in toProcess$tempFolder){
     filter(depth <= depth[bit_score == max(bit_score)])
   
   #Get all data from the paths
-  pathData = list.files(
+  test = list.files(
     paste0(sample, "/genesDetected/simplifiedGFA"), 
     pattern = ".gfa", full.names = T)
   
-  pathData = map_df(pathData, function(myGFA){
+  pathData = map_df(test, function(myGFA){
     gfa = gfa_read(myGFA)
     segmentOfInterest = gfa$segments %>% filter(str_detect(name, "_start$")) %>%
       filter(LN == max(LN)) %>% filter(KC == max(KC)) %>% slice(1) %>% pull(name)
