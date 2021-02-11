@@ -79,7 +79,7 @@ This is a .csv file with the following columns
 --- META2AMR.SH ---
 Evaluate a metagenome for pathogenic bacterial species and their AMR
 
-Arguments [h|i|o|v]
+Arguments [h|i|s|o|n|t|m|v]
  -h Read the help documentation
  -i The input file in fastq or fastq.gz format
  -s (optional) The secondary input file in case of pair-end reads
@@ -87,6 +87,8 @@ Arguments [h|i|o|v]
  -n The name of the output sub-folder and prefix for other filenames
  -t (optional) The location of the temp folder (files removed once completed). 
      Default = meta2amr/temp unless 'meta2amrTemp' is set in the settings file
+ -m (optional) Default = 16G; Memory available (important for MetaCherchant)
+    Input files of > 2Gb easily need 32+Gb of RAM
  -v (optional) Default can be changed in the settings file
     0: Nothing is written to stdout
     1: General progress is posted to stdout

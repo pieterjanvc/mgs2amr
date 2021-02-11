@@ -59,6 +59,8 @@ while getopts ":hi:s:o:n:t:fv:p:" opt; do
     ;;
 	p) pipelineId="${OPTARG}"
     ;;
+	m) memory="${OPTARG}"
+    ;;
     \?) echo "Unknown argument provided"
 	    exit
 	;;
@@ -70,6 +72,11 @@ exec 2>$baseFolder/dataAndScripts/lastError
 #Check the arguments
 if [ -z ${forceOverwrite+x} ]; then 
 	forceOverwrite=`grep -oP "meta2amrForceOverwrite\s*=\s*\K(.*)" $baseFolder/settings.txt`
+fi
+
+if [ -z ${memory+x} ]; then 
+	# memory=$(expr $(free -h | grep -oP "Mem:\s+[^\s]+\s+[^\s]+\s+\K([\d\.]+)") - 4)
+	memory="16G"
 fi
 
 if [ -z ${pipelineId+x} ]; then 	
@@ -240,7 +247,6 @@ if [ -z "$MCsuccess" ]; then
 	"INSERT INTO logs (runId,tool,timeStamp,actionId,actionName)
 	VALUES($runId,'metacherchant.sh',$(date '+%s'),1,'Start MetaCherchant')"
 	
-	# freeMem=$(expr $(free -h | grep -oP "Mem:\s+[^\s]+\s+[^\s]+\s+\K([\d\.]+)") - 4)
 	inputFile="$inputFile1 $inputFile2"
 	$metacherchant --tool environment-finder \
 		--k 31 \
@@ -251,8 +257,8 @@ if [ -z "$MCsuccess" ]; then
 		--work-dir $tempFolder/$tempName/metacherchant_logs \
 		--maxkmers=100000 \
 		--bothdirs=False \
-		--chunklength=250 #\
-		# -m $freeMem\G
+		--chunklength=250 \
+		-m $memory
 		
     $sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
 	"INSERT INTO logs (runId,tool,timeStamp,actionId,actionName)
