@@ -93,7 +93,7 @@ tryCatch({
         if(verbose > 0){"done"}
       }
       
-    } else {
+    } else { #Not processed yet ...
       
       if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S -"), "Merge MetaCherchant output ... ")}
       newLogs = rbind(newLogs, list(as.integer(Sys.time()), 3, "Start merging MetaCherchant output"))
@@ -128,33 +128,42 @@ tryCatch({
       
       rm(myFile)
       
-      #Find the places where there are segments flanked by start segments
-      startLinks = gfa$links %>% 
-        select(geneId, from, to) %>% 
-        filter(str_detect(from, "start") | str_detect(to, "start")) %>% 
-        group_by(geneId, from) %>% 
-        summarise(n = sum(str_detect(to, "start"))) %>% 
-        filter(n == 2, !str_detect(from, "start")) %>% 
-        mutate(newName = paste0(from, "_start")) %>% 
-        select(geneId, name = from, newName)
+      if(verbose > 0){cat("done\n")}
+      newLogs = rbind(newLogs, list(as.integer(Sys.time()), 4, 
+                                    "Finished merging MetaCherchant output"))
       
-      #Make these segments start segments in segments
+      # ---- Clean up and merge start segments ----
+      if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S -"), "Recover ARG seed sequences ... ")}
+      newLogs = rbind(newLogs, list(as.integer(Sys.time()), 5, "Start recovering ARG seed sequences"))
+      
+      
+      #Add the geneId to the segment names to make sure they are unique 
       gfa$segments = gfa$segments %>% 
-        left_join(startLinks, by = c("geneId", "name")) %>% 
-        mutate(name = ifelse(is.na(newName), name, newName)) %>% 
-        select(-newName)
-      
-      #Make these segments start segments in links
+        mutate(name = paste0(geneId, "_", name))
       gfa$links = gfa$links %>% 
-        left_join(startLinks, by = c("geneId", "from" = "name")) %>% 
-        left_join(startLinks, by = c("geneId", "to" = "name")) %>% 
         mutate(
-          from = ifelse(is.na(newName.x), from, newName.x),
-          to = ifelse(is.na(newName.y), to, newName.y)
-        ) %>% 
-        select(-newName.x, -newName.y)
+          from = paste0(geneId, "_", from),
+          to = paste0(geneId, "_", to)
+        )
       
-      #Update the master GFA file and zip it to save space
+      #Perform the start merging algorithm on all data at once
+      gfa = mergeStartSegments(gfa)
+      
+      #Add the geneId back to the links (lost in prev algorithm)
+      gfa$links = gfa$links %>% 
+        mutate(
+          geneId = str_extract(from, "^\\d+"),
+          geneId = ifelse(is.na(geneId), str_extract(to, "^\\d+"), geneId)
+        )
+      
+      if(verbose > 0){cat("done\n")}
+      newLogs = rbind(newLogs, list(as.integer(Sys.time()), 6, 
+                                    "Finished recovering ARG seed sequences"))
+      
+      # ---- Update the master GFA file and zip it to save space ----
+      if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S -"), "Write master GFA to zip ... ")}
+      newLogs = rbind(newLogs, list(as.integer(Sys.time()), 7, "Start writing master GFA to zip"))
+      
       gfa_write(gfa, paste0(tempFolder, "masterGFA.gfa"))
       system(sprintf("%s %s", zipMethod, paste0(tempFolder, "masterGFA.gfa")))
       
@@ -166,8 +175,8 @@ tryCatch({
       }
       
       if(verbose > 0){cat("done\n")}
-      newLogs = rbind(newLogs, list(as.integer(Sys.time()), 4, 
-                                    "Finished merging MetaCherchant output"))
+      newLogs = rbind(newLogs, list(as.integer(Sys.time()), 8, 
+                                    "Finished writing master GFA to zip"))
       
     }
   }
@@ -181,7 +190,7 @@ tryCatch({
       
       #Feedback and Logs
       if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S -"), "Skip ARG detection, already done\n")}
-      newLogs = rbind(newLogs, list(as.integer(Sys.time()), 5, "Skip ARG detection, already done"))
+      newLogs = rbind(newLogs, list(as.integer(Sys.time()), 9, "Skip ARG detection, already done"))
       
       genesDetected = read.csv(paste0(tempFolder, "genesDetected/genesDetected.csv"))
       
@@ -189,7 +198,7 @@ tryCatch({
       
       #Feedback and Logs
       if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S -"), "Detect ARG in the data ... ")}
-      newLogs = rbind(newLogs, list(as.integer(Sys.time()), 6, "Start detecting ARG"))
+      newLogs = rbind(newLogs, list(as.integer(Sys.time()), 10, "Start detecting ARG"))
       
       #Extract the kmercounts
       kmerCounts = gfa$segments %>% 
@@ -243,7 +252,7 @@ tryCatch({
       
       #Feedback and Logs
       if(verbose > 0){cat("done\n")}
-      newLogs = rbind(newLogs, list(as.integer(Sys.time()), 7, "Finished detecting ARG"))
+      newLogs = rbind(newLogs, list(as.integer(Sys.time()), 11, "Finished detecting ARG"))
       
     }
   }
@@ -258,7 +267,7 @@ tryCatch({
       #Feedback and Logs
       if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S -"), 
                           "Skip GFA simplification, already done\n")}
-      newLogs = rbind(newLogs, list(as.integer(Sys.time()), 8, 
+      newLogs = rbind(newLogs, list(as.integer(Sys.time()), 12, 
                                     "Skip GFA simplification, already done"))
       
       blastSegments = read.csv(sprintf("%sblastSegments.csv", tempFolder))
@@ -267,7 +276,7 @@ tryCatch({
       
       #Feedback and Logs
       if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S -"), "Simplify GFA files ... ")}
-      newLogs = rbind(newLogs, list(as.integer(Sys.time()), 9, "Start simplifying GFA files"))
+      newLogs = rbind(newLogs, list(as.integer(Sys.time()), 13, "Start simplifying GFA files"))
       
       dir.create(sprintf("%sgenesDetected/simplifiedGFA", tempFolder), showWarnings = F)
       if(verbose > 0){cat("\n")}
@@ -336,7 +345,7 @@ tryCatch({
       
       #Feedback and Logs
       if(verbose > 0){cat(" finished\n")}
-      newLogs = rbind(newLogs, list(as.integer(Sys.time()), 10, 
+      newLogs = rbind(newLogs, list(as.integer(Sys.time()), 14, 
                                     "Finished simplifying GFA files"))
       
     }
@@ -344,7 +353,7 @@ tryCatch({
 	#Feedback and Logs
       if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S -"),
 						"There were no genes detected. Skip the rest of the pipeline\n")}
-      newLogs = rbind(newLogs, list(as.integer(Sys.time()), 18, 
+      newLogs = rbind(newLogs, list(as.integer(Sys.time()), 15, 
                                     "No genes detected"))
       
       myConn = dbConnect(SQLite(), sprintf("%sdataAndScripts/meta2amr.db", baseFolder))
@@ -367,7 +376,7 @@ tryCatch({
       #Feedback and Logs
       if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S -"), 
                           "Skip clustering segments and fasta generation, already done\n")}
-      newLogs = rbind(newLogs, list(as.integer(Sys.time()), 11, 
+      newLogs = rbind(newLogs, list(as.integer(Sys.time()), 16, 
                                     "Skip clustering segments and fasta generation, already done"))
       
       nFiles = length(list.files(tempFolder, pattern = "blastSegmentsClustered\\d+.fasta"))
@@ -377,7 +386,7 @@ tryCatch({
       #Feedback and Logs
       if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S -"), 
                           "Cluster segments and generate FASTA for BLAST ... ")}
-      newLogs = rbind(newLogs, list(as.integer(Sys.time()), 12, 
+      newLogs = rbind(newLogs, list(as.integer(Sys.time()), 17, 
                                     "Start clustering segments and generate FASTA for BLAST"))
       
       #Use cluster_fast to reduce number of segments by grouping in identity clusters
@@ -404,7 +413,7 @@ tryCatch({
       
       #Feedback and Logs
       if(verbose > 0){cat("done\n")}
-      newLogs = rbind(newLogs, list(as.integer(Sys.time()), 13, 
+      newLogs = rbind(newLogs, list(as.integer(Sys.time()), 18, 
                                     "Finished clustering segments and generate FASTA for BLAST"))
     }
     
@@ -422,7 +431,7 @@ tryCatch({
                           "No new FASTA files to prepare for BLAST, already done\n\n",
                           "Everything has been successfully run already.\n",
                           " Set forceRedo = TRUE and run again if needed\n\n")}
-      newLogs = rbind(newLogs, list(as.integer(Sys.time()), 14, "No new files to prepare for BLAST"))
+      newLogs = rbind(newLogs, list(as.integer(Sys.time()), 19, "No new files to prepare for BLAST"))
       
     } else {
       
@@ -468,7 +477,7 @@ tryCatch({
       
       #Feedback and Logs
       if(verbose > 0){cat("done\n")}
-      newLogs = rbind(newLogs, list(as.integer(Sys.time()), 15, 
+      newLogs = rbind(newLogs, list(as.integer(Sys.time()), 20, 
                                     "Updated database with new files to BLAST"))
       
     }
@@ -478,10 +487,10 @@ tryCatch({
   
   
   if(maxStep < 5 & nrow(genesDetected) > 0){
-    newLogs = rbind(newLogs, list(as.integer(Sys.time()), 17, 
+    newLogs = rbind(newLogs, list(as.integer(Sys.time()), 21, 
                                   paste("BLAST prep limited to step", maxStep)))
   } else {
-    newLogs = rbind(newLogs, list(as.integer(Sys.time()), 16, "Finished BLAST prep"))
+    newLogs = rbind(newLogs, list(as.integer(Sys.time()), 22, "Finished BLAST prep"))
   }
   
 }, 
