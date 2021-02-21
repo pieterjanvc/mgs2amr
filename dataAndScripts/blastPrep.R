@@ -88,8 +88,7 @@ tryCatch({
       if(nrow(logs %>% filter(actionId %in% c(5,7))) == 0 | forceRedo){
         if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S -"), 
                             "Load master GFA file for processing ... ")}
-        gfa = gfa_read(gzfile(paste0(tempFolder, "masterGFA.gfa.gz"), 
-                              "masterGFA.gfa"))
+        gfa = gfa_read(gzfile(paste0(tempFolder, "/masterGFA.gfa.gz")))
         if(verbose > 0){"done"}
       }
       
@@ -266,8 +265,8 @@ tryCatch({
       singleSeg = gfa$links %>% 
         filter(
           geneId %in% genesDetected$geneId,
-          from %in% segmentOfInterest$name | 
-            to %in% segmentOfInterest$name) 
+          from %in% mySegments | 
+            to %in% mySegments) 
       singleSeg = c(singleSeg$from, singleSeg$to) %>% unique()
       
       #Save start segments that do not connect to anything (isolated)
@@ -420,11 +419,27 @@ tryCatch({
         gfa$segments %>% filter(LN > minBlastLength, !str_detect(name, "_start$")) %>% 
           mutate(geneId = myGene)
         
-      }) %>% mutate(blastId = name)
+      }) 
       
-      #Write a FASTA file with all segments that should be submitted to BLAST
-      fasta_write(blastSegments$sequence, sprintf("%sblastSegments.fasta", tempFolder),
-                  blastSegments$blastId, type = "n")
+      #Create final table of fragmented and simplified GFA
+      if(nrow(blastSegments) > 0){
+
+        blastSegments = bind_rows(blastSegments, singleSeg$segments)
+        
+        #Write a FASTA file with all segments that should be submitted to BLAST
+        fasta_write(blastSegments$sequence, sprintf("%sblastSegments.fasta", tempFolder),
+                    blastSegments$blastId, type = "n")
+        
+      } else {
+        
+        blastSegments = singleSeg$segments
+        
+        #Create an empty file of simplified blast segments
+        system(sprintf("rm %s; touch %s", sprintf("%sblastSegments.fasta", tempFolder),
+                       sprintf("%sblastSegments.fasta", tempFolder)))
+      }
+      
+      blastSegments = blastSegments %>% mutate(blastId = name)
       
       #Add the fragmented segments
       system(sprintf("cat %sblastSegFragment.fasta %sblastSegments.fasta > %sblastSegments.fasta ", 
