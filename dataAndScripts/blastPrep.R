@@ -95,6 +95,7 @@ tryCatch({
       
     } else { #Not processed yet ...
       
+      # ---- Merge all GFA files----
       if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S -"), "Merge MetaCherchant output ... ")}
       newLogs = rbind(newLogs, list(as.integer(Sys.time()), 3, "Start merging MetaCherchant output"))
       
@@ -136,18 +137,31 @@ tryCatch({
       if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S -"), "Recover ARG seed sequences ... ")}
       newLogs = rbind(newLogs, list(as.integer(Sys.time()), 5, "Start recovering ARG seed sequences"))
       
+      # #Check the graphs that have more than 1 start segment and filter some
+      # myFilter = gfa$segments %>% select(geneId, name, LN, KC) %>% 
+      #   mutate(start = str_detect(name, "_start$")) %>% 
+      #   group_by(geneId) %>% 
+      #   summarise(
+      #     n = sum(start),
+      #     otherLN = sum(LN[!start]),
+      #     maxLN = max(LN[start]), LN = sum(LN[start]),
+      #     KC = sum(KC[start]),
+      #     depth = KC/ LN) %>% 
+      #   filter(maxLN >= 100 | LN > 250, otherLN > 250)
       
       #Add the geneId to the segment names to make sure they are unique 
       gfa$segments = gfa$segments %>% 
+        # filter(geneId %in% myFilter$geneId) %>% 
         mutate(name = paste0(geneId, "_", name))
       gfa$links = gfa$links %>% 
+        # filter(geneId %in% myFilter$geneId) %>% 
         mutate(
           from = paste0(geneId, "_", from),
           to = paste0(geneId, "_", to)
         )
       
       #Perform the start merging algorithm on all data at once
-      gfa = mergeStartSegments(gfa)
+      gfa = mergeStartSegments(gfa, maxGap = 1500)
       
       #Add the geneId back to the links (lost in prev algorithm)
       gfa$links = gfa$links %>% 
@@ -201,7 +215,7 @@ tryCatch({
       newLogs = rbind(newLogs, list(as.integer(Sys.time()), 10, "Start detecting ARG"))
       
       #Extract the kmercounts
-      kmerCounts = gfa$segments %>% 
+      kmerCounts = gfa$segments %>% select(-sequence) %>%  
         mutate(start = str_detect(name, "_start$")) %>% 
         rename(segmentId = name)
       
@@ -211,30 +225,96 @@ tryCatch({
         mutate(geneId = as.character(geneId))
       
       #Detect the most likely genes
-      genesDetected = kmerCounts %>% filter(start) %>% 
+      genesDetected = kmerCounts %>% 
+        filter(start) %>% 
+        group_by(geneId) %>% mutate(
+          nSeg = n(),
+          LNsum = sum(LN[start]),
+          KCsum = sum(KC[start])
+        ) %>% ungroup() %>% 
+        filter(start) %>% 
         left_join(argGenes, by = "geneId") %>% 
-        group_by(geneId, clusterNr, nBases, gene, subtype) %>% 
-        summarise(segmentLength = sum(LN), kmerCount = sum(KC), n = n(), 
+        group_by(geneId, clusterNr, nBases, gene, subtype, 
+                 nSeg, LNsum, KCsum) %>% 
+        summarise(LNmax = max(LN), KCmax = max(KC), 
                   .groups = 'drop') %>% rowwise() %>% 
-        mutate(coverage = round(min(1, segmentLength / nBases), 4)) %>% 
+        mutate(
+          cover1 = round(min(1, LNmax / nBases), 4),
+          cover2 = round(min(1, LNsum / nBases), 4)) %>% 
         group_by(clusterNr) %>% 
-        filter(kmerCount == max(kmerCount)) %>% ungroup() %>% 
+        filter(cover1 == max(cover1), KCmax == max(KCmax)) %>% 
+        ungroup() %>% 
         mutate(pipelineId = pipelineId, runId = runId) %>% 
-        select(pipelineId, runId, geneId, gene, subtype, segmentLength, kmerCount, n, coverage)
+        arrange(desc(cover1))
       
       
       #Only keep genes that are minimum 90% covered (or use cut-off when higher) 
-      genesDetected = genesDetected %>% 
-        filter(coverage >= max(0.9, cutOff(genesDetected$covered)))
+      # genesDetected = genesDetected %>% 
+      #   filter(cover1 >= cutOff(genesDetected$cover1))
       
-      #Save results - but delete old first
+      # ---- Get all fragmented GFA (only start seg or one connection) ----
+      #********************************************************************
+      #Get all start segments
+      singleSeg = gfa$segments %>% 
+        filter(
+          geneId %in% genesDetected$geneId,
+          str_detect(name, "_start$"))
+      
+      mySegments = singleSeg$name
+      
+      #Find all the segments that connect to a start segment
+      singleSeg = gfa$links %>% 
+        filter(
+          geneId %in% genesDetected$geneId,
+          from %in% segmentOfInterest$name | 
+            to %in% segmentOfInterest$name) 
+      singleSeg = c(singleSeg$from, singleSeg$to) %>% unique()
+      
+      #Save start segments that do not connect to anything (isolated)
+      mySegments = mySegments[!mySegments %in% singleSeg]
+      
+      #Get all segments that only connect to a start segment (i.e. are end segments)
+      singleSeg = singleSeg[!str_detect(singleSeg, "_start$")]
+      
+      singleSeg = gfa$links %>% 
+        filter(
+          geneId %in% genesDetected$geneId,
+          from %in% singleSeg | 
+            to %in% singleSeg) %>% 
+        mutate(start = (str_detect(from, "_start") | 
+                          str_detect(to, "_start"))) 
+      
+      singleSeg = singleSeg %>% group_by(geneId) %>% 
+        filter(!any(
+          from[start] %in% c(from[!start], to[!start])) & 
+            !any(to[start] %in% c(from[!start], to[!start])))
+      
+      singleSeg = unique(c(mySegments, singleSeg$from, singleSeg$to))
+      
+      #Add graphs that only consist of a single start segment
+      onlyStartSeg = gfa$segments$geneId[!gfa$segments$geneId %in% gfa$links$geneId]
+      
+      #Build a GFA that contains all these short GFAs (will be individual islands)
+      singleSeg = list(segments = gfa$segments %>% 
+                         filter(name %in% singleSeg | geneId %in% onlyStartSeg), 
+                       links = gfa$links %>% filter(
+                         from %in% singleSeg | to %in% singleSeg))
+      
+      #Add to this new info to detected genes table
+      genesDetected$fragmented = genesDetected$geneId %in% singleSeg$segments$geneId
+      
+      #---- Save detected results - but delete old first ----
       q = dbSendStatement(myConn, "DELETE FROM detectedARG WHERE pipelineId == ?", 
                           params = pipelineId)
       dbClearResult(q)
       
-      q = dbSendStatement(myConn, "INSERT INTO detectedARG VALUES(?,?,?,?,?,?,?)", 
-                          params = unname(as.list(genesDetected %>% 
-                                                    select(-gene, -subtype))))
+      q = dbSendStatement(
+        myConn, 
+        paste("INSERT INTO detectedARG ",
+              "(geneId,nSeg,LNsum,KCsum,LNmax,KCmax,cover1,cover2,pipelineId,runId,fragmented)",
+              "VALUES(?,?,?,?,?,?,?,?,?,?,?)"), 
+              params = unname(as.list(
+                genesDetected %>% select(-gene, -subtype, -clusterNr, -nBases))))
       dbClearResult(q)
       dbDisconnect(myConn)
       
@@ -242,13 +322,17 @@ tryCatch({
       write.csv(genesDetected, 
                 paste0(tempFolder, "genesDetected/genesDetected.csv"), row.names = F)
       
-      #Write the detected gfa files as separate files for view in Bandage
-      for(myGene in genesDetected$geneId){
+      #Write the unfragmented gfa files as separate files for viewing in Bandage
+      for(myGene in genesDetected$geneId[!genesDetected$fragmented]){
         myGFA = list()
         myGFA$segments = gfa$segments %>% filter(geneId == myGene) %>% select(-geneId)
         myGFA$links = gfa$links %>% filter(geneId == myGene) %>% select(-geneId)
         gfa_write(myGFA, sprintf("%sgenesDetected/%s.gfa", tempFolder, myGene))
       }
+      
+      #Write the fragmented ones as a one GFA and fasta
+      gfa_write(singleSeg, paste0(tempFolder, "fragmentGFA.gfa"))
+      gfa_writeUnitigs(singleSeg, paste0(tempFolder, "blastSegFragment.fasta"))
       
       #Feedback and Logs
       if(verbose > 0){cat("done\n")}
@@ -260,8 +344,8 @@ tryCatch({
   
   if(maxStep > 2 & nrow(genesDetected) > 0){
     
-    # ---- 3. Simplify the GFA files  ---
-    #************************************
+    # ---- 3. Simplify the unfragmented GFA files  ---
+    #*************************************************
     if(nrow(logs %>% filter(actionId %in% c(8, 10))) > 0 & !forceRedo){
       
       #Feedback and Logs
@@ -281,12 +365,13 @@ tryCatch({
       dir.create(sprintf("%sgenesDetected/simplifiedGFA", tempFolder), showWarnings = F)
       if(verbose > 0){cat("\n")}
       
-      blastSegments = map_df(genesDetected$geneId, function(myGene){
+      blastSegments = map_df(genesDetected$geneId[!genesDetected$fragmented], function(myGene){
         
         # if(verbose > 0){cat(sprintf(" %s (%s) ...", genesDetected[genesDetected$geneId == myGene, "ncbi"],
         #                             genesDetected[genesDetected$geneId == myGene, "gene"]))}
-        if(verbose > 0){cat(sprintf(" gene %i/%i ... ", which(myGene == genesDetected$geneId), 
-                                    length(genesDetected$geneId)))}
+        if(verbose > 0){cat(sprintf(" gene %i/%i ... ", 
+                                    which(myGene == genesDetected$geneId[!genesDetected$fragmented]), 
+                                    length(genesDetected$geneId[!genesDetected$fragmented])))}
         
         gfa = gfa_read(sprintf("%sgenesDetected/%s.gfa", tempFolder, myGene))
         
@@ -335,11 +420,15 @@ tryCatch({
         gfa$segments %>% filter(LN > minBlastLength, !str_detect(name, "_start$")) %>% 
           mutate(geneId = myGene)
         
-      }) %>% mutate(blastId = paste0(geneId, "_", name))
+      }) %>% mutate(blastId = name)
       
       #Write a FASTA file with all segments that should be submitted to BLAST
       fasta_write(blastSegments$sequence, sprintf("%sblastSegments.fasta", tempFolder),
                   blastSegments$blastId, type = "n")
+      
+      #Add the fragmented segments
+      system(sprintf("cat %sblastSegFragment.fasta %sblastSegments.fasta > %sblastSegments.fasta ", 
+             tempFolder, tempFolder, tempFolder))
       
       write.csv(blastSegments, sprintf("%sblastSegments.csv", tempFolder), row.names = F)
       
