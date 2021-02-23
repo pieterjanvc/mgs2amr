@@ -132,6 +132,10 @@ tryCatch({
       newLogs = rbind(newLogs, list(as.integer(Sys.time()), 4, 
                                     "Finished merging MetaCherchant output"))
       
+      #REMOVE LATER
+      gfa_write(gfa, paste0(tempFolder, "masterGFA_old.gfa"))
+      system(sprintf("%s %s", zipMethod, paste0(tempFolder, "masterGFA_old.gfa")))
+      
       # ---- Clean up and merge start segments ----
       if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S -"), "Recover ARG seed sequences ... ")}
       newLogs = rbind(newLogs, list(as.integer(Sys.time()), 5, "Start recovering ARG seed sequences"))
@@ -166,7 +170,9 @@ tryCatch({
       gfa$links = gfa$links %>% 
         mutate(
           geneId = str_extract(from, "^\\d+"),
-          geneId = ifelse(is.na(geneId), str_extract(to, "^\\d+"), geneId)
+          geneId = ifelse(is.na(geneId), str_extract(to, "^\\d+"), geneId),
+          geneId = ifelse(is.na(geneId), lag(geneId), geneId) #TEMP FIX
+          
         )
       
       if(verbose > 0){cat("done\n")}
