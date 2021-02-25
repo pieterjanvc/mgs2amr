@@ -158,14 +158,15 @@ tryCatch({
     
     # ---- 2. Detect important ARG ----
     #**********************************
-    if(nrow(logs %>% filter(actionId %in% c(5, 7))) > 0 | forceRedo){
+    if(nrow(logs %>% filter(actionId %in% c(9, 11))) > 0 | forceRedo){
       
       #Feedback and Logs
       if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S -"), "Skip ARG detection, already done\n")}
       newLogs = rbind(newLogs, list(as.integer(Sys.time()), 9, "Skip ARG detection, already done"))
       
       genesDetected = read.csv(paste0(tempFolder, "genesDetected/genesDetected.csv"))
-      if(nrow(logs %>% filter(actionId %in% c(8,10))) == 0 | forceRedo){
+      
+      if(nrow(logs %>% filter(actionId %in% c(12,14))) == 0 | forceRedo){
         singleSeg = gfa_read(paste0(tempFolder, "fragmentGFA.gfa"))
       }
       
@@ -361,7 +362,7 @@ tryCatch({
     
     # ---- 3. Simplify the unfragmented GFA files  ---
     #*************************************************
-    if(nrow(logs %>% filter(actionId %in% c(8, 10))) > 0 & !forceRedo){
+    if(nrow(logs %>% filter(actionId %in% c(9, 11))) > 0 & !forceRedo){
       
       #Feedback and Logs
       if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S -"), 
@@ -485,7 +486,7 @@ tryCatch({
     
     # ---- 4. Extract segments for BLAST  ---
     #****************************************
-    if(nrow(logs %>% filter(actionId %in% c(11, 13))) > 0 & !forceRedo){
+    if(nrow(logs %>% filter(actionId %in% c(12, 14))) > 0 & !forceRedo){
       
       #Feedback and Logs
       if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S -"), 
@@ -538,7 +539,7 @@ tryCatch({
     # ---- 5. Finalise preparation ---
     #*********************************
     
-    if(nrow(logs %>% filter(actionId %in% c(14, 15))) > 0 & !forceRedo){
+    if(nrow(logs %>% filter(actionId %in% c(16,18))) > 0 & !forceRedo){
       
       #Feedback and Logs
       if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S -"), 
