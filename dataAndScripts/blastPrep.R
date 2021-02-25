@@ -328,7 +328,7 @@ tryCatch({
         myConn, 
         paste("INSERT INTO detectedARG ",
               "(pipelineId,runId,geneId,fileDepth,nSeg,LNsum,KCsum,startPerc,LNmax,KCmax,startDepth,cover1,cover2,type)",
-              "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"), 
+              "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)"), 
               params = unname(as.list(
                 genesDetected %>% select(-gene, -subtype, -clusterNr, -nBases))))
       dbClearResult(q)
@@ -425,7 +425,7 @@ tryCatch({
         
         if(verbose > 0){cat("done\n")}
         
-        gfa$segments %>% filter(LN > minBlastLength, !str_detect(name, "_start$")) %>% 
+        gfa$segments %>% filter(LN > minBlastLength) %>% 
           mutate(geneId = myGene)
         
       }) 
@@ -455,7 +455,8 @@ tryCatch({
       # #Add the fragmented segments
       # system(sprintf("cat %sblastSegFragment.fasta %sblastSegments.fasta > %sblastSegments.fasta ", 
       #        tempFolder, tempFolder, tempFolder))
-      
+      fasta_write(blastSegments$sequence, sprintf("%sblastSegments.fasta", tempFolder), 
+                  blastSegments$blastId, type = "nucleotide")
       write.csv(blastSegments, sprintf("%sblastSegments.csv", tempFolder), row.names = F)
       
       #Feedback and Logs
@@ -505,7 +506,7 @@ tryCatch({
                                     "Start clustering segments and generate FASTA for BLAST"))
       
       #Use cluster_fast to reduce number of segments by grouping in identity clusters
-      system(sprintf("%s -cluster_fast %s -sort size -id %f -uc %s%s",
+      system(sprintf("%s -cluster_fast %s -sort size -query_cov 0.75 -id %f -uc %s%s",
                      settings["usearch"],
                      sprintf("%sblastSegments.fasta", tempFolder),
                      clusterIdentidy,
