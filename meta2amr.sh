@@ -300,7 +300,7 @@ Rscript=`grep -oP "rscript\s*=\s*\K(.*)" $baseFolder/settings.txt`
 
 #Set any option to modify the script
 scriptOptions=(keepAllMetacherchantData maxPathDist minBlastLength trimLength clusterIdentidy forceRedo, maxStep)
-scriptValues=(FALSE 2500 250 250 0.95 FALSE 0)
+scriptValues=(FALSE 2500 250 250 0.99 FALSE 0)
 
 if [ "${scriptValues[6]}" != 0 ]; then 
 	echo "  WARNING: the blast prep is limited to step ${scriptValues[6]}" 
