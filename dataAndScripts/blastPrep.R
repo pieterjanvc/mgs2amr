@@ -132,56 +132,9 @@ tryCatch({
       newLogs = rbind(newLogs, list(as.integer(Sys.time()), 4, 
                                     "Finished merging MetaCherchant output"))
       
-      #REMOVE LATER
-      gfa_write(gfa, paste0(tempFolder, "masterGFA_old.gfa"))
-      system(sprintf("%s %s", zipMethod, paste0(tempFolder, "masterGFA_old.gfa")))
-      
-      # ---- Clean up and merge start segments ----
-      if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S -"), "Recover ARG seed sequences ... ")}
-      newLogs = rbind(newLogs, list(as.integer(Sys.time()), 5, "Start recovering ARG seed sequences"))
-      
-      # #Check the graphs that have more than 1 start segment and filter some
-      # myFilter = gfa$segments %>% select(geneId, name, LN, KC) %>% 
-      #   mutate(start = str_detect(name, "_start$")) %>% 
-      #   group_by(geneId) %>% 
-      #   summarise(
-      #     n = sum(start),
-      #     otherLN = sum(LN[!start]),
-      #     maxLN = max(LN[start]), LN = sum(LN[start]),
-      #     KC = sum(KC[start]),
-      #     depth = KC/ LN) %>% 
-      #   filter(maxLN >= 100 | LN > 250, otherLN > 250)
-      
-      #Add the geneId to the segment names to make sure they are unique 
-      gfa$segments = gfa$segments %>% 
-        # filter(geneId %in% myFilter$geneId) %>% 
-        mutate(name = paste0(geneId, "_", name))
-      gfa$links = gfa$links %>% 
-        # filter(geneId %in% myFilter$geneId) %>% 
-        mutate(
-          from = paste0(geneId, "_", from),
-          to = paste0(geneId, "_", to)
-        )
-      
-      #Perform the start merging algorithm on all data at once
-      gfa = mergeStartSegments(gfa, maxGap = 1500)
-      
-      #Add the geneId back to the links (lost in prev algorithm)
-      gfa$links = gfa$links %>% 
-        mutate(
-          geneId = str_extract(from, "^\\d+"),
-          geneId = ifelse(is.na(geneId), str_extract(to, "^\\d+"), geneId),
-          geneId = ifelse(is.na(geneId), lag(geneId), geneId) #TEMP FIX
-          
-        )
-      
-      if(verbose > 0){cat("done\n")}
-      newLogs = rbind(newLogs, list(as.integer(Sys.time()), 6, 
-                                    "Finished recovering ARG seed sequences"))
-      
       # ---- Update the master GFA file and zip it to save space ----
       if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S -"), "Write master GFA to zip ... ")}
-      newLogs = rbind(newLogs, list(as.integer(Sys.time()), 7, "Start writing master GFA to zip"))
+      newLogs = rbind(newLogs, list(as.integer(Sys.time()), 5, "Start writing master GFA to zip"))
       
       gfa_write(gfa, paste0(tempFolder, "masterGFA.gfa"))
       system(sprintf("%s %s", zipMethod, paste0(tempFolder, "masterGFA.gfa")))
@@ -194,7 +147,7 @@ tryCatch({
       }
       
       if(verbose > 0){cat("done\n")}
-      newLogs = rbind(newLogs, list(as.integer(Sys.time()), 8, 
+      newLogs = rbind(newLogs, list(as.integer(Sys.time()), 6, 
                                     "Finished writing master GFA to zip"))
       
     }
@@ -212,15 +165,46 @@ tryCatch({
       newLogs = rbind(newLogs, list(as.integer(Sys.time()), 9, "Skip ARG detection, already done"))
       
       genesDetected = read.csv(paste0(tempFolder, "genesDetected/genesDetected.csv"))
+      if(nrow(logs %>% filter(actionId %in% c(8,10))) == 0 | forceRedo){
+        singleSeg = gfa_read(paste0(tempFolder, "fragmentGFA.gfa"))
+      }
       
     } else {
       
+      # ---- Clean up and merge start segments ----
+      if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S -"), "Recover ARG seed sequences ... ")}
+      newLogs = rbind(newLogs, list(as.integer(Sys.time()), 7, "Start recovering ARG seed sequences"))
+      
+      #Add the geneId to the segment names to make sure they are unique 
+      gfa$segments = gfa$segments %>% 
+        mutate(name = paste0(geneId, "_", name))
+      gfa$links = gfa$links %>% 
+        mutate(
+          from = paste0(geneId, "_", from),
+          to = paste0(geneId, "_", to)
+        )
+      
+      #Perform the start merging algorithm on all data at once
+      gfa = mergeStartSegments(gfa, maxGap = 500, maxStep = 25)
+      
+      #Add the geneId back to the links
+      gfa$links = gfa$links %>% left_join(
+        gfa$segments %>% select(name, geneId),
+        by = c("from" = "name")
+      )
+      
+      if(verbose > 0){cat("done\n")}
+      newLogs = rbind(newLogs, list(as.integer(Sys.time()), 8, 
+                                    "Finished recovering ARG seed sequences"))
+      
+      
+      # ---- Estimate ARG presence by coverage and fragmentation----
       #Feedback and Logs
       if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S -"), "Detect ARG in the data ... ")}
       newLogs = rbind(newLogs, list(as.integer(Sys.time()), 10, "Start detecting ARG"))
       
       #Extract the kmercounts
-      kmerCounts = gfa$segments %>% select(-sequence) %>%  
+      kmerCounts = gfa$segments %>% select(-sequence, startPerc = start) %>%  
         mutate(start = str_detect(name, "_start$")) %>% 
         rename(segmentId = name)
       
@@ -231,28 +215,32 @@ tryCatch({
       
       #Detect the most likely genes
       genesDetected = kmerCounts %>% 
-        filter(start) %>% 
         group_by(geneId) %>% mutate(
-          nSeg = n(),
+          nSeg = sum(start),
+          fileDepth = sum(KC) / sum(LN),
           LNsum = sum(LN[start]),
           KCsum = sum(KC[start])
         ) %>% ungroup() %>% 
         filter(start) %>% 
         left_join(argGenes, by = "geneId") %>% 
-        group_by(geneId, clusterNr, nBases, gene, subtype, 
-                 nSeg, LNsum, KCsum) %>% 
+        group_by(geneId, clusterNr, nBases, gene, subtype, fileDepth, 
+                 nSeg, LNsum, KCsum, startPerc) %>% 
         summarise(LNmax = max(LN), KCmax = max(KC), 
+                  startPerc = startPerc[LN == LNmax],
+                  startDepth = KCmax / LNmax,
                   .groups = 'drop') %>% rowwise() %>% 
         mutate(
           cover1 = round(min(1, LNmax / nBases), 4),
           cover2 = round(min(1, LNsum / nBases), 4)) %>% 
-        group_by(clusterNr) %>% 
-        filter(cover1 == max(cover1), KCmax == max(KCmax)) %>% 
+        group_by(gene) %>% filter(startPerc == max(startPerc)) %>% 
+      group_by(clusterNr, gene, subtype) %>% 
+        filter(cover1 == max(cover1), startDepth == max(startDepth)) %>% 
         ungroup() %>% 
         mutate(pipelineId = pipelineId, runId = runId) %>% 
-        arrange(desc(cover1))
-      
-      
+        group_by(gene, subtype) %>% filter(cover1 == max(cover1)) %>% slice(1) %>% 
+        group_by(clusterNr) %>% filter(cover1 == max(cover1)) %>% slice(1) %>% 
+        ungroup() %>% arrange(desc(cover1))
+
       #Only keep genes that are minimum 90% covered (or use cut-off when higher) 
       # genesDetected = genesDetected %>% 
       #   filter(cover1 >= cutOff(genesDetected$cover1))
@@ -294,6 +282,8 @@ tryCatch({
           from[start] %in% c(from[!start], to[!start])) & 
             !any(to[start] %in% c(from[!start], to[!start])))
       
+      #GFA should ONLY have single fragments - not combi ...
+      
       singleSeg = unique(c(mySegments, singleSeg$from, singleSeg$to))
       
       #Add graphs that only consist of a single start segment
@@ -305,8 +295,28 @@ tryCatch({
                        links = gfa$links %>% filter(
                          from %in% singleSeg | to %in% singleSeg))
       
+      #Check fragment type
+      fragType = gfa$segments %>% select(name, geneId, LN) %>% 
+        filter(geneId %in% singleSeg$segments$geneId) %>% 
+        filter(str_detect(name, "_start$"))
+      
+      fragType = fragType %>% left_join(singleSeg$segments %>% select(-sequence, -LN),
+                         by = c("name", "geneId")) %>% 
+        group_by(geneId) %>% 
+        summarise(type = case_when(
+          sum(is.na(KC)) == 0 ~ "fragmentsOnly",
+          is.na(sum(KC[LN == max(LN)])) ~ "longestNoFragment",
+          TRUE ~ "longestFragment"
+        ))
+      
       #Add to this new info to detected genes table
-      genesDetected$fragmented = genesDetected$geneId %in% singleSeg$segments$geneId
+      genesDetected = genesDetected %>% left_join(fragType, by = "geneId") %>% 
+        mutate(type = replace_na(type, "noFragments")) %>% 
+        #Only keep decently covered genes (assumed higher abundance), or fragments (low abundance)
+        filter((cover1 > 0.5 & type != "fragmentsOnly") | type == "fragmentsOnly") %>% 
+        select(pipelineId, runId, everything())
+      
+      # genesDetected$fragmented = genesDetected$geneId %in% singleSeg$segments$geneId
       
       #---- Save detected results - but delete old first ----
       q = dbSendStatement(myConn, "DELETE FROM detectedARG WHERE pipelineId == ?", 
@@ -316,8 +326,8 @@ tryCatch({
       q = dbSendStatement(
         myConn, 
         paste("INSERT INTO detectedARG ",
-              "(geneId,nSeg,LNsum,KCsum,LNmax,KCmax,cover1,cover2,pipelineId,runId,fragmented)",
-              "VALUES(?,?,?,?,?,?,?,?,?,?,?)"), 
+              "(pipelineId,runId,geneId,fileDepth,nSeg,LNsum,KCsum,startPerc,LNmax,KCmax,startDepth,cover1,cover2,type)",
+              "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"), 
               params = unname(as.list(
                 genesDetected %>% select(-gene, -subtype, -clusterNr, -nBases))))
       dbClearResult(q)
@@ -328,7 +338,7 @@ tryCatch({
                 paste0(tempFolder, "genesDetected/genesDetected.csv"), row.names = F)
       
       #Write the unfragmented gfa files as separate files for viewing in Bandage
-      for(myGene in genesDetected$geneId[!genesDetected$fragmented]){
+      for(myGene in genesDetected$geneId[genesDetected$type != "fragmentsOnly"]){
         myGFA = list()
         myGFA$segments = gfa$segments %>% filter(geneId == myGene) %>% select(-geneId)
         myGFA$links = gfa$links %>% filter(geneId == myGene) %>% select(-geneId)
@@ -337,7 +347,7 @@ tryCatch({
       
       #Write the fragmented ones as a one GFA and fasta
       gfa_write(singleSeg, paste0(tempFolder, "fragmentGFA.gfa"))
-      gfa_writeUnitigs(singleSeg, paste0(tempFolder, "blastSegFragment.fasta"))
+      # gfa_writeUnitigs(singleSeg, paste0(tempFolder, "blastSegFragment.fasta"))
       
       #Feedback and Logs
       if(verbose > 0){cat("done\n")}
@@ -370,13 +380,11 @@ tryCatch({
       dir.create(sprintf("%sgenesDetected/simplifiedGFA", tempFolder), showWarnings = F)
       if(verbose > 0){cat("\n")}
       
-      blastSegments = map_df(genesDetected$geneId[!genesDetected$fragmented], function(myGene){
+      blastSegments = map_df(genesDetected$geneId[genesDetected$type != "fragmentsOnly"], function(myGene){
         
-        # if(verbose > 0){cat(sprintf(" %s (%s) ...", genesDetected[genesDetected$geneId == myGene, "ncbi"],
-        #                             genesDetected[genesDetected$geneId == myGene, "gene"]))}
         if(verbose > 0){cat(sprintf(" gene %i/%i ... ", 
-                                    which(myGene == genesDetected$geneId[!genesDetected$fragmented]), 
-                                    length(genesDetected$geneId[!genesDetected$fragmented])))}
+                                    which(myGene == genesDetected$geneId[genesDetected$type != "fragmentsOnly"]), 
+                                    length(genesDetected$geneId[genesDetected$type != "fragmentsOnly"])))}
         
         gfa = gfa_read(sprintf("%sgenesDetected/%s.gfa", tempFolder, myGene))
         
@@ -402,18 +410,12 @@ tryCatch({
           pull(name)
         
         #Keep pruning the graph to get rid of small appendages
-        gfa = gfa_trimLooseEnds(gfa, trimLength, keepRemoving = T, exclude = allStart)
+        gfa = gfa_trimLooseEnds(gfa, trimLength, keepRemoving = T, exclude = segmentOfInterest)
         
         #Remove parallel sequences by picking the shortest
-        gfa = gfa_removeRedundant(gfa, segmentOfInterest, exclude = allStart,
-                                  maxLN = trimLength)
+        gfa = gfa_removeRedundant(gfa, segmentOfInterest, maxLN = trimLength)
         
-        #Merge any start segments that are now in series
-        gfa = gfa_mergeSegments(
-          gfa,
-          exclude = gfa$segments$name[!str_detect(gfa$segments$name, "_start$")], 
-          prefix = "unitig", suffix = "_start")
-        
+
         #Colour the ARG segments green for easier display in Bandage and save results
         gfa = gfa_annotation(gfa, gfa$segments$name[
           str_detect(gfa$segments$name, "_start$")], color = "green")
@@ -430,7 +432,9 @@ tryCatch({
       #Create final table of fragmented and simplified GFA
       if(nrow(blastSegments) > 0){
 
-        blastSegments = bind_rows(blastSegments, singleSeg$segments)
+        blastSegments = bind_rows(
+          blastSegments %>% select(-start), 
+          singleSeg$segments %>% select(-start) %>% filter(LN >= 100)) 
         
         #Write a FASTA file with all segments that should be submitted to BLAST
         fasta_write(blastSegments$sequence, sprintf("%sblastSegments.fasta", tempFolder),
@@ -440,16 +444,16 @@ tryCatch({
         
         blastSegments = singleSeg$segments
         
-        #Create an empty file of simplified blast segments
-        system(sprintf("rm %s; touch %s", sprintf("%sblastSegments.fasta", tempFolder),
-                       sprintf("%sblastSegments.fasta", tempFolder)))
+        # #Create an empty file of simplified blast segments
+        # system(sprintf("rm %s; touch %s", sprintf("%sblastSegments.fasta", tempFolder),
+        #                sprintf("%sblastSegments.fasta", tempFolder)))
       }
       
-      blastSegments = blastSegments %>% mutate(blastId = name)
+      blastSegments = blastSegments %>% mutate(blastId = paste0(geneId, '_', name))
       
-      #Add the fragmented segments
-      system(sprintf("cat %sblastSegFragment.fasta %sblastSegments.fasta > %sblastSegments.fasta ", 
-             tempFolder, tempFolder, tempFolder))
+      # #Add the fragmented segments
+      # system(sprintf("cat %sblastSegFragment.fasta %sblastSegments.fasta > %sblastSegments.fasta ", 
+      #        tempFolder, tempFolder, tempFolder))
       
       write.csv(blastSegments, sprintf("%sblastSegments.csv", tempFolder), row.names = F)
       
