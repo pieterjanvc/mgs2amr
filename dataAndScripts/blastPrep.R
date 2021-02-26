@@ -186,7 +186,7 @@ tryCatch({
         )
       
       #Perform the start merging algorithm on all data at once
-      gfa = mergeStartSegments(gfa, maxGap = 500, maxStep = 25)
+      gfa = mergeStartSegments(gfa, maxGap = 500, maxStep = 20)
       
       #Add the geneId back to the links
       gfa$links = gfa$links %>% left_join(
@@ -233,7 +233,9 @@ tryCatch({
         mutate(
           cover1 = round(min(1, LNmax / nBases), 4),
           cover2 = round(min(1, LNsum / nBases), 4)) %>% 
-        group_by(gene) %>% filter(startPerc == max(startPerc)) %>% 
+        group_by(gene) %>% filter(
+          startPerc == max(startPerc) |
+            cover1 == max(cover1)) %>% 
       group_by(clusterNr, gene, subtype) %>% 
         filter(cover1 == max(cover1), startDepth == max(startDepth)) %>% 
         ungroup() %>% 
