@@ -158,17 +158,15 @@ tryCatch({
     
     # ---- 2. Detect important ARG ----
     #**********************************
-    if(nrow(logs %>% filter(actionId %in% c(9, 11))) > 0 | forceRedo){
+    if(nrow(logs %>% filter(actionId %in% c(9, 11))) > 0 & !forceRedo){
       
       #Feedback and Logs
       if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S -"), "Skip ARG detection, already done\n")}
       newLogs = rbind(newLogs, list(as.integer(Sys.time()), 9, "Skip ARG detection, already done"))
       
       genesDetected = read.csv(paste0(tempFolder, "genesDetected/genesDetected.csv"))
-      
-      if(nrow(logs %>% filter(actionId %in% c(12,14))) == 0 | forceRedo){
-        singleSeg = gfa_read(paste0(tempFolder, "fragmentGFA.gfa"))
-      }
+      singleSeg = gfa_read(paste0(tempFolder, "fragmentGFA.gfa"))
+
       
     } else {
       
