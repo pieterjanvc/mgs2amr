@@ -36,7 +36,7 @@ updateDBwhenError() {
 }
 
 #Options when script is run
-while getopts ":hi:s:o:n:t:fv:p:" opt; do
+while getopts ":hi:s:o:n:t:fv:p:m:" opt; do
   case $opt in
 	h) echo -e "\n"
 	   awk '/--- META2AMR.SH ---/,/-- END META2AMR.SH ---/' $baseFolder/readme.txt  
