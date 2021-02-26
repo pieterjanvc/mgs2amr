@@ -38,7 +38,7 @@ cutOff = function(numbers){
 }
 
 sample = "temp/G2Heidi019_1612974558"
-sample = toProcess$tempFolder[7]
+sample = toProcess$tempFolder[1]
 for(sample in toProcess$tempFolder){
   
   sampleName = str_extract(sample, "[^\\/]+(?=_\\d+$)")
@@ -58,10 +58,13 @@ for(sample in toProcess$tempFolder){
     select(query_title, hitId, taxid, accession , bact = title, bit_score, 
            score, evalue, identity, query_len, query_from, 
            query_to, hit_from, hit_to, align_len) %>% 
-    mutate(bact = str_remove_all(bact, "[^\\w\\s]")) %>% 
+    mutate(
+      bact = str_remove_all(bact, "[^\\w\\s]"),
+      start = str_detect(query_title, "_start$")) %>% 
     extract(bact, c("genus", "species", "extra"), 
             regex = "(\\w+)\\s+(\\w+)($|\\s+.*)") %>% 
-    filter(!species %in% c("bacterium", "xxx") & !is.na(species)) %>% 
+    filter(!species %in% c("bacterium", "xxx", "sp") & 
+             !is.na(species) & !start) %>% 
     mutate(plasmid = str_detect(extra, "plasmid|Plasmid"))
   
   #Expand results from clustering segments before blast
