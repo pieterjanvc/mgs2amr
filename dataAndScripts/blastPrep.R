@@ -89,7 +89,7 @@ tryCatch({
         if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S -"), 
                             "Load master GFA file for processing ... ")}
         gfa = gfa_read(gzfile(paste0(tempFolder, "/masterGFA.gfa.gz")))
-        if(verbose > 0){"done"}
+        if(verbose > 0){"done\n"}
       }
       
     } else { #Not processed yet ...
