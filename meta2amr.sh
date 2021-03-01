@@ -151,9 +151,13 @@ else
 	fi
 	
     #In case of a previous runId, load all the arguments from the database
-    inputFile=$($sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
+    inputFile1=$($sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
 	"SELECT value FROM scriptArguments \
-	WHERE scriptName = 'meta2amr.sh' AND argument = 'inputFile' AND runId = $firstRunId")
+	WHERE scriptName = 'meta2amr.sh' AND argument = 'inputFile1' AND runId = $firstRunId")
+	
+	inputFile2=$($sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
+	"SELECT value FROM scriptArguments \
+	WHERE scriptName = 'meta2amr.sh' AND argument = 'inputFile2' AND runId = $firstRunId")
 	
 	outputFolder=$($sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
 	"SELECT value FROM scriptArguments \
@@ -232,6 +236,7 @@ if [ -z "$MCsuccess" ]; then
 	#Generate temp folders
     mkdir -p $tempFolder/$tempName
 	mkdir -p $tempFolder/$tempName/metacherchant_logs
+	rm -r $tempFolder/$tempName/metacherchant_logs/*
 	echo $pipelineId > $tempFolder/$tempName/pipelineId
     
 	#MC generates a lot of output, we ignore this but when verbose = 2
@@ -300,7 +305,7 @@ Rscript=`grep -oP "rscript\s*=\s*\K(.*)" $baseFolder/settings.txt`
 
 #Set any option to modify the script
 scriptOptions=(keepAllMetacherchantData maxPathDist minBlastLength trimLength clusterIdentidy forceRedo, maxStep)
-scriptValues=(FALSE 1500 250 250 0.99 TRUE 0)
+scriptValues=(FALSE 1500 250 250 0.99 "$forceOverwrite" 0)
 
 if [ "${scriptValues[6]}" != 0 ]; then 
 	echo "  WARNING: the blast prep is limited to step ${scriptValues[6]}" 
