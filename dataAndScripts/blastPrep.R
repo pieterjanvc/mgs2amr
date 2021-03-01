@@ -301,14 +301,20 @@ tryCatch({
         filter(geneId %in% singleSeg$segments$geneId) %>% 
         filter(str_detect(name, "_start$"))
       
-      fragType = fragType %>% left_join(singleSeg$segments %>% select(-sequence, -LN),
-                         by = c("name", "geneId")) %>% 
-        group_by(geneId) %>% 
-        summarise(type = case_when(
-          sum(is.na(KC)) == 0 ~ "fragmentsOnly",
-          is.na(sum(KC[LN == max(LN)])) ~ "longestNoFragment",
-          TRUE ~ "longestFragment"
-        ))
+      if(nrow(fragType) > 0){
+        fragType = fragType %>% left_join(singleSeg$segments %>% select(-sequence, -LN),
+                                          by = c("name", "geneId")) %>% 
+          group_by(geneId) %>% 
+          summarise(type = case_when(
+            sum(is.na(KC)) == 0 ~ "fragmentsOnly",
+            is.na(sum(KC[LN == max(LN)])) ~ "longestNoFragment",
+            TRUE ~ "longestFragment"
+          ))
+      } else {
+        fragType = data.frame(geneId = "", type = NA)
+      }
+      
+      
       
       #Add to this new info to detected genes table
       genesDetected = genesDetected %>% left_join(fragType, by = "geneId") %>% 
@@ -347,7 +353,7 @@ tryCatch({
       }
       
       #Write the fragmented ones as a one GFA and fasta
-      gfa_write(singleSeg, paste0(tempFolder, "fragmentGFA.gfa"))
+      gfa_write(singleSeg, paste0(tempFolder, "fragmentGFA.gfa"), verbose = 0)
       # gfa_writeUnitigs(singleSeg, paste0(tempFolder, "blastSegFragment.fasta"))
       
       #Feedback and Logs
