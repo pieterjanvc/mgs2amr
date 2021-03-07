@@ -416,13 +416,12 @@ tryCatch({
         allStart = gfa$segments %>% filter(str_detect(name, "_start$")) %>%
           pull(name)
         
-        #Keep pruning the graph to get rid of small appendages
-        gfa = gfa_trimLooseEnds(gfa, trimLength, keepRemoving = T, exclude = segmentOfInterest)
-        
         #Remove parallel sequences by picking the shortest
         gfa = gfa_removeRedundant(gfa, segmentOfInterest, maxLN = trimLength)
         
-
+        #Keep pruning the graph to get rid of small appendages
+        gfa = gfa_trimLooseEnds(gfa, trimLength, keepRemoving = T, exclude = segmentOfInterest)
+        
         #Colour the ARG segments green for easier display in Bandage and save results
         gfa = gfa_annotation(gfa, gfa$segments$name[
           str_detect(gfa$segments$name, "_start$")], color = "green")
