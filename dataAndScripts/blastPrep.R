@@ -183,8 +183,46 @@ tryCatch({
           to = paste0(geneId, "_", to)
         )
       
-      #Perform the start merging algorithm on all data at once
-      gfa = mergeStartSegments(gfa, maxGap = 500, maxStep = 20)
+      # #Perform the start merging algorithm on all data at once
+      # gfa = mergeStartSegments(gfa, maxGap = 500, maxStep = 20)
+      
+      #Remove very low mean depth graphs with high number of nodes
+      myFilter = gfa$segments %>% group_by(geneId) %>% 
+        summarise(n = n(), LN = sum(LN), KC = sum(KC)) %>%
+        mutate(depth = KC / LN, myFilter = depth / n) %>% 
+        filter(myFilter < 0.001) %>% pull(geneId)
+      
+      gfa$segments = gfa$segments %>% filter(!geneId %in% myFilter)
+      gfa$links = gfa$links %>% filter(!geneId %in% myFilter)
+      
+      #Split the file in groups to merge start segments
+      myGoups = gfa$segments$geneId
+      steps = c(gfa$segments$geneId[seq(1, length(myGoups), by = 5000)], 
+                gfa$segments$geneId[nrow(gfa$segments)]) %>% unique()
+      myGoups = unique(gfa$segments$geneId)
+      
+      if(length(myGoups) > 1){
+        myGoups = mapply(function(x, y, z){
+          z[which(z == x):which(z == y)]
+        }, x = steps[-length(steps)], y = lead(steps)[-length(steps)], z = list(myGoups))
+        
+      } else {
+        myGoups = list(myGoups)
+      }
+      
+      #RUn the mergeStartSegments function per group 
+      gfa = lapply(myGoups, function(myId){
+        myGoup = list()
+        myGoup$segments = gfa$segments %>% filter(geneId %in% myId)
+        myGoup$links = gfa$links %>% filter(geneId %in% myId)
+        mergeStartSegments(myGoup, maxGap = 500, maxStep = 20)
+      })
+      
+      #Merge the results
+      gfa = list(
+        segments = bind_rows(sapply(gfa, "[", 1)),
+        links = bind_rows(sapply(gfa, "[", 2))
+      )
       
       #Add the geneId back to the links
       gfa$links = gfa$links %>% left_join(
@@ -417,10 +455,11 @@ tryCatch({
           pull(name)
         
         #Remove parallel sequences by picking the shortest
+        gfa = gfa_trimLooseEnds(gfa, trimLength, keepRemoving = F, exclude = segmentOfInterest)
         gfa = gfa_removeRedundant(gfa, segmentOfInterest, maxLN = trimLength)
         
         #Keep pruning the graph to get rid of small appendages
-        gfa = gfa_trimLooseEnds(gfa, trimLength, keepRemoving = T, exclude = segmentOfInterest)
+        gfa = gfa_trimLooseEnds(gfa, trimLength - 1, keepRemoving = T, exclude = segmentOfInterest)
         
         #Colour the ARG segments green for easier display in Bandage and save results
         gfa = gfa_annotation(gfa, gfa$segments$name[
