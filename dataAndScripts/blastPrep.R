@@ -188,7 +188,7 @@ tryCatch({
       
       #Remove very low mean depth graphs with high number of nodes
       myFilter = gfa$segments %>% group_by(geneId) %>% 
-        summarise(n = n(), LN = sum(LN), KC = sum(KC)) %>%
+        summarise(n = n(), LN = sum(LN), KC = sum(KC), .groups = "drop") %>%
         mutate(depth = KC / LN, myFilter = depth / n) %>% 
         filter(myFilter < 0.001) %>% pull(geneId)
       
@@ -212,10 +212,12 @@ tryCatch({
       
       #RUn the mergeStartSegments function per group 
       gfa = lapply(myGoups, function(myId){
+        groupId = which(names(myGoups) == myId[1])
         myGoup = list()
         myGoup$segments = gfa$segments %>% filter(geneId %in% myId)
         myGoup$links = gfa$links %>% filter(geneId %in% myId)
-        mergeStartSegments(myGoup, maxGap = 500, maxStep = 20)
+        mergeStartSegments(myGoup, maxGap = 500, maxStep = 20, 
+                           prefix = paste0("unitig", groupId, "x"))
       })
       
       #Merge the results
@@ -224,11 +226,25 @@ tryCatch({
         links = bind_rows(sapply(gfa, "[", 2))
       )
       
-      #Add the geneId back to the links
-      gfa$links = gfa$links %>% left_join(
+     
+      #Add the geneId back to the links and unitig names
+      gfa$links = gfa$links %>% distinct() %>% left_join(
         gfa$segments %>% select(name, geneId),
         by = c("from" = "name")
       )
+      
+      gfa$segments = gfa$segments %>% mutate(
+        name = ifelse(str_detect(name, "^unitig"), 
+                      paste0(geneId, "_", name), name)
+      )
+      
+      gfa$links = gfa$links %>% mutate(
+        from = ifelse(str_detect(from, "^unitig"), 
+                      paste0(geneId, "_", from), from),
+        to = ifelse(str_detect(to, "^unitig"), 
+                    paste0(geneId, "_", to), to)
+      )
+      
       
       if(verbose > 0){cat("done\n")}
       newLogs = rbind(newLogs, list(as.integer(Sys.time()), 8, 
@@ -347,7 +363,7 @@ tryCatch({
             sum(is.na(KC)) == 0 ~ "fragmentsOnly",
             is.na(sum(KC[LN == max(LN)])) ~ "longestNoFragment",
             TRUE ~ "longestFragment"
-          ))
+          ), .groups = "drop")
       } else {
         fragType = data.frame(geneId = "", type = NA)
       }
@@ -383,7 +399,8 @@ tryCatch({
                 paste0(tempFolder, "genesDetected/genesDetected.csv"), row.names = F)
       
       #Write the unfragmented gfa files as separate files for viewing in Bandage
-      for(myGene in genesDetected$geneId[genesDetected$type != "fragmentsOnly"]){
+      for(myGene in genesDetected$geneId[! genesDetected$type %in% 
+                                         c("fragmentsOnly", "longestFragment")]){
         myGFA = list()
         myGFA$segments = gfa$segments %>% filter(geneId == myGene) %>% select(-geneId)
         myGFA$links = gfa$links %>% filter(geneId == myGene) %>% select(-geneId)
@@ -425,11 +442,16 @@ tryCatch({
       dir.create(sprintf("%sgenesDetected/simplifiedGFA", tempFolder), showWarnings = F)
       if(verbose > 0){cat("\n")}
       
-      blastSegments = map_df(genesDetected$geneId[genesDetected$type != "fragmentsOnly"], function(myGene){
+      blastSegments = map_df(
+        genesDetected$geneId[! genesDetected$type %in% 
+                               c("fragmentsOnly", "longestFragment")], function(myGene){
         
-        if(verbose > 0){cat(sprintf(" gene %i/%i ... ", 
-                                    which(myGene == genesDetected$geneId[genesDetected$type != "fragmentsOnly"]), 
-                                    length(genesDetected$geneId[genesDetected$type != "fragmentsOnly"])))}
+        if(verbose > 0){
+          cat(sprintf(" gene %i/%i ... ", 
+                      which(myGene == genesDetected$geneId[! genesDetected$type %in% 
+                                                             c("fragmentsOnly", "longestFragment")]),
+                      length(genesDetected$geneId[! genesDetected$type %in% 
+                                                    c("fragmentsOnly", "longestFragment")])))}
         
         gfa = gfa_read(sprintf("%sgenesDetected/%s.gfa", tempFolder, myGene))
         
