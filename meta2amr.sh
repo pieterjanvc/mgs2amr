@@ -234,9 +234,9 @@ if [ -z "$MCsuccess" ]; then
 	if [ $verbose != "0" ]; then echo -e `date "+%T"`" - Start MetaCherchant ..."; fi;
 	
 	#Generate temp folders
-    mkdir -p $tempFolder/$tempName
+  mkdir -p $tempFolder/$tempName
 	mkdir -p $tempFolder/$tempName/metacherchant_logs
-	rm -r $tempFolder/$tempName/metacherchant_logs/*
+	rm -rf $tempFolder/$tempName/metacherchant_logs/*
 	echo $pipelineId > $tempFolder/$tempName/pipelineId
     
 	#MC generates a lot of output, we ignore this but when verbose = 2
