@@ -447,6 +447,7 @@ tryCatch({
         
         #Check if filter yields any results
         if(nrow(gfa$links) == 0){
+          if(verbose > 0){cat("done\n")}
           return(data.frame())
         }
         
@@ -478,27 +479,18 @@ tryCatch({
       if(nrow(blastSegments) > 0){
 
         blastSegments = bind_rows(
-          blastSegments %>% select(-start), 
-          singleSeg$segments %>% select(-start) %>% filter(LN >= 100)) 
-        
-        #Write a FASTA file with all segments that should be submitted to BLAST
-        fasta_write(blastSegments$sequence, sprintf("%sblastSegments.fasta", tempFolder),
-                    blastSegments$blastId, type = "n")
+          blastSegments %>% select(-start, -CL), 
+          singleSeg$segments %>% select(-start) %>% 
+            filter(LN >= 100)) %>% distinct() %>% 
+          mutate(blastId = paste0(geneId, '_', name)) 
         
       } else {
         
-        blastSegments = singleSeg$segments
+        blastSegments = singleSeg$segments %>% 
+          mutate(blastId = paste0(geneId, '_', name))
         
-        # #Create an empty file of simplified blast segments
-        # system(sprintf("rm %s; touch %s", sprintf("%sblastSegments.fasta", tempFolder),
-        #                sprintf("%sblastSegments.fasta", tempFolder)))
       }
       
-      blastSegments = blastSegments %>% mutate(blastId = paste0(geneId, '_', name))
-      
-      # #Add the fragmented segments
-      # system(sprintf("cat %sblastSegFragment.fasta %sblastSegments.fasta > %sblastSegments.fasta ", 
-      #        tempFolder, tempFolder, tempFolder))
       fasta_write(blastSegments$sequence, sprintf("%sblastSegments.fasta", tempFolder), 
                   blastSegments$blastId, type = "nucleotide")
       write.csv(blastSegments, sprintf("%sblastSegments.csv", tempFolder), row.names = F)
