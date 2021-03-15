@@ -183,21 +183,21 @@ tryCatch({
           to = paste0(geneId, "_", to)
         )
       
-      # #Perform the start merging algorithm on all data at once
-      # gfa = mergeStartSegments(gfa, maxGap = 500, maxStep = 20)
-      
       #Remove very low mean depth graphs with high number of nodes
-      myFilter = gfa$segments %>% group_by(geneId) %>% 
-        summarise(n = n(), LN = sum(LN), KC = sum(KC), .groups = "drop") %>%
-        mutate(depth = KC / LN, myFilter = depth / n) %>% 
-        filter(myFilter < 0.001) %>% pull(geneId)
+      myFilter = gfa$links %>%
+        group_by(geneId, from) %>% 
+        summarise(n = n(), .groups = "drop") %>%
+        group_by(geneId) %>% 
+        summarise(remove = (length(n[n > 4]) / n() > 0.05)  & n() > 2000,
+                  .groups = "drop") %>% 
+        filter(remove) %>% pull(geneId)
       
       gfa$segments = gfa$segments %>% filter(!geneId %in% myFilter)
       gfa$links = gfa$links %>% filter(!geneId %in% myFilter)
       
       #Split the file in groups to merge start segments
       myGoups = gfa$segments$geneId
-      steps = c(gfa$segments$geneId[seq(1, length(myGoups), by = 5000)], 
+      steps = c(gfa$segments$geneId[seq(1, length(myGoups), by = 100000)], 
                 gfa$segments$geneId[nrow(gfa$segments)]) %>% unique()
       myGoups = unique(gfa$segments$geneId)
       
@@ -207,17 +207,19 @@ tryCatch({
         }, x = steps[-length(steps)], y = lead(steps)[-length(steps)], z = list(myGoups))
         
       } else {
-        myGoups = list(myGoups)
+        myGoups = list(c(myGoups))
       }
       
-      #RUn the mergeStartSegments function per group 
+      #Cut out small appendages from graphs to make joining easier
+      gfa = gfa_trimLooseEnds(gfa, 100, keepRemoving = F)
+      
+      #Run the mergeStartSegments function per group 
       gfa = lapply(myGoups, function(myId){
-        groupId = which(names(myGoups) == myId[1])
+        print(myId)
         myGoup = list()
         myGoup$segments = gfa$segments %>% filter(geneId %in% myId)
         myGoup$links = gfa$links %>% filter(geneId %in% myId)
-        mergeStartSegments(myGoup, maxGap = 500, maxStep = 20, 
-                           prefix = paste0("unitig", groupId, "x"))
+        mergeStartSegments(myGoup, maxGap = 800, maxStep = 20)
       })
       
       #Merge the results
@@ -228,22 +230,23 @@ tryCatch({
       
      
       #Add the geneId back to the links and unitig names
-      gfa$links = gfa$links %>% distinct() %>% left_join(
-        gfa$segments %>% select(name, geneId),
-        by = c("from" = "name")
-      )
-      
-      gfa$segments = gfa$segments %>% mutate(
-        name = ifelse(str_detect(name, "^unitig"), 
-                      paste0(geneId, "_", name), name)
-      )
-      
-      gfa$links = gfa$links %>% mutate(
-        from = ifelse(str_detect(from, "^unitig"), 
-                      paste0(geneId, "_", from), from),
-        to = ifelse(str_detect(to, "^unitig"), 
-                    paste0(geneId, "_", to), to)
-      )
+      gfa$links$geneId = str_extract(gfa$links$from, "^\\d+")
+      # gfa$links = gfa$links %>% distinct() %>% left_join(
+      #   gfa$segments %>% select(name, geneId),
+      #   by = c("from" = "name")
+      # )
+      # 
+      # gfa$segments = gfa$segments %>% mutate(
+      #   name = ifelse(str_detect(name, "^unitig"), 
+      #                 paste0(geneId, "_", name), name)
+      # )
+      # 
+      # gfa$links = gfa$links %>% mutate(
+      #   from = ifelse(str_detect(from, "^unitig"), 
+      #                 paste0(geneId, "_", from), from),
+      #   to = ifelse(str_detect(to, "^unitig"), 
+      #               paste0(geneId, "_", to), to)
+      # )
       
       
       if(verbose > 0){cat("done\n")}
