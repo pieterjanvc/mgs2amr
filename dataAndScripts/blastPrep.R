@@ -10,6 +10,7 @@ suppressPackageStartupMessages(library(igraph))
 suppressPackageStartupMessages(library(gfaTools))
 suppressPackageStartupMessages(library(tidyr))
 suppressPackageStartupMessages(library(RSQLite))
+suppressPackageStartupMessages(library(parallel))
 
 # ---- FUNCTIONS ----
 #********************
@@ -42,6 +43,7 @@ trimLength = as.integer(args[[10]]) #Loose segments smaller than this will be cu
 clusterIdentidy  = as.numeric(args[[11]]) #The cluster identity percent used in usearch
 forceRedo = as.logical(args[[12]]) #If parts of the code have successfully run before a crash, do not repeat unless forceRedo = T
 maxStep= as.integer(args[[13]]) #Which parts of the script to run? If NA all is run
+keepLowQual = T
 
 maxStep = ifelse(maxStep == 0, 5, maxStep)
 
@@ -95,42 +97,85 @@ tryCatch({
     } else { #Not processed yet ...
       
       # ---- Merge all GFA files----
-      if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S -"), "Merge MetaCherchant output ... ")}
-      newLogs = rbind(newLogs, list(as.integer(Sys.time()), 3, "Start merging MetaCherchant output"))
+      if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S -"), "Filter and merge MetaCherchant output ... ")}
+      newLogs = rbind(newLogs, list(as.integer(Sys.time()), 3, "Start filtering and merging MetaCherchant output"))
       
-      if(nrow(logs %>% filter(actionId == 4)) == 0){
-        #Merge all metacherchant output GFAs
-        system(sprintf("cat $(find %s -name '*.gfa') > %smasterGFA.gfa", tempFolder, tempFolder))
-      }
+      myFiles = list.files(sprintf("%s", tempFolder), 
+                           ".gfa", recursive = T, full.names = T)
+
+      #This process can be done in parallel so speed things up
+      cl <- parallel::makeCluster(detectCores())
+      x = clusterEvalQ(cl, {
+        library(dplyr)
+        library(stringr)
+        library(gfaTools)
+      })
+      clusterExport(cl, varlist = c("tempFolder", "zipMethod", "keepLowQual"))
       
-      #Read the master GFA file as gfa object (fix MetaCherchant error!)
-      filePath = paste0(tempFolder, "masterGFA.gfa")
-      gfa = gfa_fixMetacherchant(filePath)
+      #Create a folder to save the low quality gfa's that are ignored
+      system(sprintf("mkdir -p %slowQualGfa", tempFolder))
       
-      #Read the raw file
-      myFile = str_split(readLines(filePath), "\t")
+      #Read all GFA files
+      gfa = suppressWarnings(parLapply(cl, myFiles, function(x){
+        
+        geneId = str_extract(x, "\\d+(?=/graph.gfa)")
+        gfa = gfa_fixMetacherchant(x)
+
+        #Check if the file is not empty
+        if(length(gfa) > 0){
+          gfa$segments$geneId = geneId
+          
+          #Check if the file is low or high quality
+          if(nrow(gfa$links) > 0){
+            gfa$links$geneId = geneId
+            keep = gfa$links %>%
+              group_by(geneId, from) %>%
+              summarise(n = n(), .groups = "drop") %>%
+              group_by(geneId) %>%
+              summarise(remove = (length(n[n > 4]) / n() > 0.05)  & n() > 2000,
+                        .groups = "drop") %>%
+              filter(remove) %>% nrow() == 0
+            
+            #In case of low quality, write to other folder (if set)
+             #but ignore for further analysis
+            if(keep){
+              gfa
+            } else {
+              if(keepLowQual){
+                gfa = list(
+                  segments = gfa$segments %>% select(-geneId),
+                  links = gfa$links %>% select(-geneId)
+                )
+                gfa_write(gfa, sprintf("%slowQualGfa/%s.gfa", tempFolder, geneId))
+                system(sprintf("%s %s", zipMethod,
+                               sprintf("%slowQualGfa/%s.gfa", tempFolder, geneId)))
+              }
+              geneId
+            }
+          } else {
+            gfa
+          }
+        } else {
+          NULL
+        }
+        
+      }))
       
-      #Get all IDs for which the file is not empty
-      geneId = system(paste("find ", tempFolder, " -name '*.gfa' | xargs wc -l"), intern = T)
+      rm(cl)
       
-      
-      geneId = str_match(geneId, "(\\d+).*/(\\d+)/graph\\.gfa$")
-      geneId = data.frame(geneId = geneId[,3], count = as.integer(geneId[,2])) %>% 
-        na.omit() 
-      
-      #Add the gene ID to the segments
-      gfa$segments$geneId = 
-        rep(geneId$geneId, geneId$count)[which(sapply(myFile, "[[", 1) == "S")]
-      
-      #Add the gene ID to the links
-      gfa$links$geneId = 
-        rep(geneId$geneId, geneId$count)[which(sapply(myFile, "[[", 1) == "L")]
-      
-      rm(myFile)
+      #Merge all the GFAs that we need for further analysis
+      x = sapply(gfa, is.character)
+      notUsed = gfa[x] %>% unlist()
+      gfa = gfa[!x]
+      gfa = list(
+        segments = bind_rows(sapply(gfa, "[", 1)),
+        links = bind_rows(sapply(gfa, "[", 2))
+      )
+      rm(x)
       
       if(verbose > 0){cat("done\n")}
       newLogs = rbind(newLogs, list(as.integer(Sys.time()), 4, 
-                                    "Finished merging MetaCherchant output"))
+                                    "Finished filtering and merging MetaCherchant output"))
       
       # ---- Update the master GFA file and zip it to save space ----
       if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S -"), "Write master GFA to zip ... ")}
@@ -138,6 +183,7 @@ tryCatch({
       
       gfa_write(gfa, paste0(tempFolder, "masterGFA.gfa"))
       system(sprintf("%s %s", zipMethod, paste0(tempFolder, "masterGFA.gfa")))
+      write(notUsed, sprintf("%slowQualGfa/lowQualGfa.txt", tempFolder))
       
       #Remove Metacherchant Data if set
       if(keepAllMetacherchantData == F & (nrow(logs %>% filter(actionId == 4)) == 0)){
@@ -183,18 +229,6 @@ tryCatch({
           to = paste0(geneId, "_", to)
         )
       
-      #Remove very low mean depth graphs with high number of nodes
-      myFilter = gfa$links %>%
-        group_by(geneId, from) %>% 
-        summarise(n = n(), .groups = "drop") %>%
-        group_by(geneId) %>% 
-        summarise(remove = (length(n[n > 4]) / n() > 0.05)  & n() > 2000,
-                  .groups = "drop") %>% 
-        filter(remove) %>% pull(geneId)
-      
-      gfa$segments = gfa$segments %>% filter(!geneId %in% myFilter)
-      gfa$links = gfa$links %>% filter(!geneId %in% myFilter)
-      
       #Split the file in groups to merge start segments
       myGoups = gfa$segments$geneId
       steps = c(gfa$segments$geneId[seq(1, length(myGoups), by = 100000)], 
@@ -231,24 +265,7 @@ tryCatch({
      
       #Add the geneId back to the links and unitig names
       gfa$links$geneId = str_extract(gfa$links$from, "^\\d+")
-      # gfa$links = gfa$links %>% distinct() %>% left_join(
-      #   gfa$segments %>% select(name, geneId),
-      #   by = c("from" = "name")
-      # )
-      # 
-      # gfa$segments = gfa$segments %>% mutate(
-      #   name = ifelse(str_detect(name, "^unitig"), 
-      #                 paste0(geneId, "_", name), name)
-      # )
-      # 
-      # gfa$links = gfa$links %>% mutate(
-      #   from = ifelse(str_detect(from, "^unitig"), 
-      #                 paste0(geneId, "_", from), from),
-      #   to = ifelse(str_detect(to, "^unitig"), 
-      #               paste0(geneId, "_", to), to)
-      # )
-      
-      
+
       if(verbose > 0){cat("done\n")}
       newLogs = rbind(newLogs, list(as.integer(Sys.time()), 8, 
                                     "Finished recovering ARG seed sequences"))
@@ -379,8 +396,6 @@ tryCatch({
         #Only keep decently covered genes (assumed higher abundance), or fragments (low abundance)
         filter((cover1 > 0.5 & type != "fragmentsOnly") | type == "fragmentsOnly") %>% 
         select(pipelineId, runId, everything())
-      
-      # genesDetected$fragmented = genesDetected$geneId %in% singleSeg$segments$geneId
       
       #---- Save detected results - but delete old first ----
       q = dbSendStatement(myConn, "DELETE FROM detectedARG WHERE pipelineId == ?", 
