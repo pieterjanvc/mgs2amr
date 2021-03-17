@@ -188,7 +188,7 @@ tryCatch({
       #Remove Metacherchant Data if set
       if(keepAllMetacherchantData == F & (nrow(logs %>% filter(actionId == 4)) == 0)){
         allDirs = list.dirs(tempFolder,recursive = F)
-        allDirs = allDirs[!str_detect(allDirs,"metacherchant_logs")]
+        allDirs = allDirs[!str_detect(allDirs,"metacherchant_logs|lowQualGfa")]
         system(sprintf("rm -R %s", paste(allDirs, collapse = " ")))
       }
       
@@ -235,7 +235,7 @@ tryCatch({
                 gfa$segments$geneId[nrow(gfa$segments)]) %>% unique()
       myGoups = unique(gfa$segments$geneId)
       
-      if(length(myGoups) > 1){
+      if(length(steps) > 2){
         myGoups = mapply(function(x, y, z){
           z[which(z == x):which(z == y)]
         }, x = steps[-length(steps)], y = lead(steps)[-length(steps)], z = list(myGoups))
@@ -249,7 +249,6 @@ tryCatch({
       
       #Run the mergeStartSegments function per group 
       gfa = lapply(myGoups, function(myId){
-        print(myId)
         myGoup = list()
         myGoup$segments = gfa$segments %>% filter(geneId %in% myId)
         myGoup$links = gfa$links %>% filter(geneId %in% myId)
