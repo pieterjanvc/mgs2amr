@@ -38,7 +38,22 @@ cutOff = function(numbers){
 }
 
 sample = "temp/G2Heidi019_1612974558"
-sample = toProcess$tempFolder[4]
+sample = toProcess$tempFolder[14]
+
+#Get the isolate info
+myConn = dbConnect(SQLite(), "sideStuff/isolateBrowserData.db")
+
+sampleInfo = str_extract(sample, "SRR[^\\_]+")
+
+sampleInfo = dbReadTable(myConn, "sampleInfo") %>% filter(Run == sampleInfo) %>% 
+  select(biosample_acc, Run, bact) %>% 
+  left_join(dbReadTable(myConn, "genoTypes"), by = "biosample_acc")
+
+dbDisconnect(myConn)
+
+genesDetected = read_csv(paste0(sample, "/genesDetected/genesDetected.csv")) %>% 
+  mutate(subtype = as.character(subtype))
+
 for(sample in toProcess$tempFolder){
   
   sampleName = str_extract(sample, "[^\\/]+(?=_\\d+$)")
@@ -64,7 +79,7 @@ for(sample in toProcess$tempFolder){
     extract(bact, c("genus", "species", "extra"), 
             regex = "(\\w+)\\s+(\\w+)($|\\s+.*)") %>% 
     filter(!species %in% c("bacterium", "xxx", "sp") & 
-             !is.na(species) & !start) %>% 
+             !is.na(species)) %>% 
     mutate(plasmid = str_detect(extra, "plasmid|Plasmid"))
   
   #Expand results from clustering segments before blast
@@ -83,19 +98,20 @@ for(sample in toProcess$tempFolder){
     select(-sequence, -name, -geneId)
   
   #Check the bacteria
-  allBact = blastOut %>% select(-c(score:hit_to)) %>% 
+  allBact = blastOut %>% 
+    select(-c(score:hit_to)) %>% 
     # filter(!plasmid, species != "sp") %>% 
     left_join(segmentInfo, by = c("segmentId" = "blastId")) %>% #Add segment info
-    group_by(segmentId) %>% 
+    group_by(start, segmentId) %>% 
     filter(bit_score == max(bit_score)) %>% 
-    group_by(segmentId, plasmid) %>%
+    group_by(start, segmentId, plasmid) %>%
     mutate(maxBit = max(bit_score)) %>% 
-    group_by(segmentId) %>% 
+    group_by(start, segmentId) %>% 
     filter(maxBit == max(maxBit), !plasmid) %>% 
     mutate(onlyOne = length(unique(genus)) == 1 & 
              length(unique(species))) %>% 
     filter(onlyOne) %>% 
-    group_by(genus, species) %>% 
+    group_by(start, genus, species) %>% 
     summarise(
       bit_score = sum(bit_score),
       depth = sum(KC / sum(LN)),
@@ -104,11 +120,11 @@ for(sample in toProcess$tempFolder){
     filter(depth <= depth[bit_score == max(bit_score)])
   
   #Get all data from the paths
-  test = list.files(
+  pathData = list.files(
     paste0(sample, "/genesDetected/simplifiedGFA"), 
     pattern = ".gfa", full.names = T)
   
-  pathData = map_df(test, function(myGFA){
+  pathData = map_df(pathData, function(myGFA){
     gfa = gfa_read(myGFA)
     if(nrow(gfa$links) > 0){
       segmentOfInterest = gfa$segments %>% filter(str_detect(name, "_start$")) %>%
@@ -125,6 +141,12 @@ for(sample in toProcess$tempFolder){
     
   })
   
+  fragments = gfa_read(paste0(sample, "/fragmentGFA.gfa"))
+  fragments = fragments$segments %>% select(segment = name, KC) %>% 
+    filter(! str_detect(segment, "_start$")) %>% 
+    mutate(dist = 0, geneId = str_extract(segment, "^\\d+"))
+  pathData = bind_rows(pathData, fragments)
+  
   #Get the result
   result = 
     blastOut %>% 
@@ -139,20 +161,25 @@ for(sample in toProcess$tempFolder){
       extra = ifelse(species == "sp", "xxx", extra) #fix species things to be more general
     ) %>%
     filter(coverage >= 0.9 | align_len > 250) %>%
-    group_by(segmentId, geneId, genus, species, extra, plasmid) %>% 
+    group_by(start, segmentId, geneId, genus, species, extra, plasmid) %>% 
     filter(bit_score == max(bit_score)) %>% distinct() %>% 
     ungroup() %>% left_join(pathData, by = c("geneId", "segment")) %>% 
     filter(!is.na(dist)) %>% rowwise() %>% 
     mutate(
       dist = dist + 1,
       val = sum(1 / dist:(dist + align_len)) * bit_score / align_len) %>% 
-    group_by(geneId, accession, genus, species, extra, plasmid) %>% 
+    group_by(start,geneId, accession, genus, species, extra, plasmid) %>% 
     summarise(val = sum(val), .groups = "drop") %>% 
-    group_by(geneId, genus, species, plasmid) %>% 
+    group_by(start,geneId, genus, species, plasmid) %>% 
     filter(val == max(val)) %>% ungroup() %>% 
     left_join(ARG %>% select(geneId, gene, subtype, clusterNr), by = "geneId") %>% 
-    select(gene, subtype, clusterNr, accession, genus, species, extra, plasmid, val) %>% distinct() %>% 
-    group_by(gene, subtype) %>%  filter(val >= cutOff(val))
-
+    select(start,gene, subtype, clusterNr, accession, genus, species, extra, plasmid, val) %>% distinct() 
+  
+    details = result %>% select(start,gene, subtype, accession, extra, plasmid, val)
+    
+    result = result %>% select(-accession, -extra) %>% distinct() %>% 
+    group_by(start,gene, subtype) %>%  filter(val >= cutOff(val)) %>% 
+      left_join(genesDetected, by = c("gene", "subtype"))
+  
     write_csv(result, paste0(sample, "/annotation.csv"))
 }
