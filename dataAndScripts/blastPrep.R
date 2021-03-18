@@ -79,7 +79,7 @@ tryCatch({
     
     # ---- 1. Clean up files and folders ----
     #****************************************
-    if(nrow(logs %>% filter(actionId %in% c(2, 4))) > 0){
+    if(nrow(logs %>% filter(actionId %in% c(2, 6))) > 0 | forceRedo){
       
       if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S -"), 
                           "Skip MetaCherchant cleanup, already done\n")}
@@ -87,7 +87,7 @@ tryCatch({
                                     "Skip MetaCherchant cleanup, already done"))
       
       #Takes long time to load, only do if next step is not completed (not needed afterwards)
-      if(nrow(logs %>% filter(actionId %in% c(5,7))) == 0 | forceRedo){
+      if(nrow(logs %>% filter(actionId %in% c(9,11))) == 0 | forceRedo){
         if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S -"), 
                             "Load master GFA file for processing ... ")}
         gfa = gfa_read(gzfile(paste0(tempFolder, "/masterGFA.gfa.gz")))
@@ -440,7 +440,7 @@ tryCatch({
     
     # ---- 3. Simplify the unfragmented GFA files  ---
     #*************************************************
-    if(nrow(logs %>% filter(actionId %in% c(9, 11))) > 0 & !forceRedo){
+    if(nrow(logs %>% filter(actionId %in% c(12,14,15))) > 0 & !forceRedo){
       
       #Feedback and Logs
       if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S -"), 
@@ -462,7 +462,7 @@ tryCatch({
       blastSegments = map_df(
         genesDetected$geneId[! genesDetected$type %in% 
                                c("fragmentsOnly", "longestFragment")], function(myGene){
-        
+
         if(verbose > 0){
           cat(sprintf(" gene %i/%i ... ", 
                       which(myGene == genesDetected$geneId[! genesDetected$type %in% 
@@ -497,15 +497,24 @@ tryCatch({
         #Remove parallel sequences by picking the shortest
         gfa = gfa_trimLooseEnds(gfa, trimLength, keepRemoving = F, exclude = segmentOfInterest)
         gfa = gfa_removeRedundant(gfa, segmentOfInterest, maxLN = trimLength)
+        gfa = gfa_mergeSegments(
+          gfa, exclude = segmentOfInterest,
+          extraSummaries = list(
+            name = function(x) paste0(str_extract(x$name[1], "^\\d+"), "_unitig")
+          ))
         
         #Keep pruning the graph to get rid of small appendages
-        gfa = gfa_trimLooseEnds(gfa, trimLength - 1, keepRemoving = T, exclude = segmentOfInterest)
+        gfa = gfa_trimLooseEnds(
+          gfa, trimLength - 1, keepRemoving = T, exclude = segmentOfInterest,
+          extraSummaries = list(
+            name = function(x) paste0(str_extract(x$name[1], "^\\d+"), "_unitig")
+          ))
         
         #Colour the ARG segments green for easier display in Bandage and save results
         gfa = gfa_annotation(gfa, gfa$segments$name[
           str_detect(gfa$segments$name, "_start$")], color = "green")
-        gfa_write(gfa, sprintf("%s/genesDetected/simplifiedGFA/%s_simplified.gfa", 
-                               tempFolder, myGene))
+        # gfa_write(gfa, sprintf("%s/genesDetected/simplifiedGFA/%s_simplified.gfa", 
+        #                        tempFolder, myGene))
         
         if(verbose > 0){cat("done\n")}
         
@@ -562,7 +571,7 @@ tryCatch({
     
     # ---- 4. Extract segments for BLAST  ---
     #****************************************
-    if(nrow(logs %>% filter(actionId %in% c(12, 14))) > 0 & !forceRedo){
+    if(nrow(logs %>% filter(actionId %in% c(16,18))) > 0 & !forceRedo){
       
       #Feedback and Logs
       if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S -"), 
@@ -644,13 +653,20 @@ tryCatch({
                folder = tempFolder))
       } 
       
-      #Insert into DB
+      #Update DB
       blastSubmissions$pipelineId = pipelineId
       blastSubmissions$runId = runId
       blastSubmissions = blastSubmissions %>% 
         select(pipelineId,runId,RID,timeStamp,tempName,fastaFile,statusCode,statusMessage,folder)
       
+      #Delete old ones fist in case of a redo
       myConn = dbConnect(SQLite(), sprintf("%sdataAndScripts/meta2amr.db", baseFolder))
+      
+      q = dbSendStatement(myConn, "DELETE FROM blastSubmissions WHERE pipelineId == ?", 
+                          params = pipelineId)
+      dbClearResult(q)
+      
+      #Add the new ones
       q = dbSendStatement(
         myConn, 
         paste("INSERT INTO blastSubmissions",
