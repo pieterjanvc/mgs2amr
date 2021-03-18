@@ -38,7 +38,7 @@ cutOff = function(numbers){
 }
 
 sample = "temp/G2Heidi019_1612974558"
-sample = toProcess$tempFolder[1]
+sample = toProcess$tempFolder[4]
 for(sample in toProcess$tempFolder){
   
   sampleName = str_extract(sample, "[^\\/]+(?=_\\d+$)")
@@ -80,7 +80,7 @@ for(sample in toProcess$tempFolder){
   
   #Get the KC and LN for the segments
   segmentInfo =  read_csv(paste0(sample, "/blastSegments.csv"), col_types = cols()) %>% 
-    select(-sequence, -name, -geneId, -CL)
+    select(-sequence, -name, -geneId)
   
   #Check the bacteria
   allBact = blastOut %>% select(-c(score:hit_to)) %>% 
@@ -110,10 +110,10 @@ for(sample in toProcess$tempFolder){
   
   pathData = map_df(test, function(myGFA){
     gfa = gfa_read(myGFA)
-    segmentOfInterest = gfa$segments %>% filter(str_detect(name, "_start$")) %>%
-      filter(LN == max(LN)) %>% filter(KC == max(KC)) %>% slice(1) %>% pull(name)
-    
     if(nrow(gfa$links) > 0){
+      segmentOfInterest = gfa$segments %>% filter(str_detect(name, "_start$")) %>%
+        filter(LN == max(LN)) %>% filter(KC == max(KC)) %>% slice(1) %>% pull(name)
+      
       pathsToSegmentTable(gfa, segmentOfInterest) %>% 
         filter(dist < Inf) %>% group_by(segment) %>% 
         filter(dist == min(dist)) %>% 
