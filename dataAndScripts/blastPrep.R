@@ -530,12 +530,12 @@ tryCatch({
           blastSegments %>% select(-start, -CL), 
           singleSeg$segments %>% select(-start) %>% 
             filter(LN >= 100)) %>% distinct() %>% 
-          mutate(blastId = paste0(geneId, '_', name)) 
+          mutate(blastId = name) 
         
       } else {
         
         blastSegments = singleSeg$segments %>% 
-          mutate(blastId = paste0(geneId, '_', name))
+          mutate(blastId = name)
         
       }
       
