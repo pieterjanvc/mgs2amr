@@ -68,7 +68,10 @@ for(sample in toProcess$tempFolder){
                pattern = "blastSegmentsClustered\\d+.json.gz"),
     blast_readResults, outFormat = "dataFrame1") %>% bind_rows()
   
-  #Extract data we need 
+  # test = blastOut #REMOVE !!!
+  blastOut = test
+  
+  #Extract data we need + transform
   blastOut = blastOut %>% 
     select(query_title, hitId, taxid, accession , bact = title, bit_score, 
            score, evalue, identity, query_len, query_from, 
@@ -78,6 +81,8 @@ for(sample in toProcess$tempFolder){
       start = str_detect(query_title, "_start$")) %>% 
     extract(bact, c("genus", "species", "extra"), 
             regex = "(\\w+)\\s+(\\w+)($|\\s+.*)") %>% 
+    #Sp. will be pasted with taxid to make it unique
+    mutate(species = ifelse(species == "sp", paste0(species, taxid), species)) %>% 
     filter(!species %in% c("bacterium", "xxx", "sp") & 
              !is.na(species)) %>% 
     mutate(plasmid = str_detect(extra, "plasmid|Plasmid"))
@@ -119,6 +124,7 @@ for(sample in toProcess$tempFolder){
     ) %>% 
     filter(depth <= depth[bit_score == max(bit_score)])
   
+  
   #Get all data from the paths
   pathData = list.files(
     paste0(sample, "/genesDetected/simplifiedGFA"), 
@@ -152,7 +158,7 @@ for(sample in toProcess$tempFolder){
     blastOut %>% 
     filter(
       extra != "",
-      genus %in% allBact$genus,
+      genus %in% allBact$genus, #Only keep the bact of interest
       species %in% allBact$species
     ) %>% #fix weird extra
     select(-hit_from, -hit_to) %>% #somtimes more than one match like repeat? (ignore)
@@ -160,23 +166,28 @@ for(sample in toProcess$tempFolder){
       coverage = align_len / query_len, #coverage of segment
       extra = ifelse(species == "sp", "xxx", extra) #fix species things to be more general
     ) %>%
-    filter(coverage >= 0.9 | align_len > 250) %>%
+    filter(coverage >= 0.9 | align_len > 250) %>% #filter by segment coverage
     group_by(start, segmentId, geneId, genus, species, extra, plasmid) %>% 
     filter(bit_score == max(bit_score)) %>% distinct() %>% 
     ungroup() %>% left_join(pathData, by = c("geneId", "segment")) %>% 
-    filter(!is.na(dist)) %>% rowwise() %>% 
+    filter(!is.na(dist)) %>% rowwise() %>% #Only keep segments that are in a path to start
     mutate(
-      dist = dist + 1,
-      val = sum(1 / dist:(dist + align_len)) * bit_score / align_len) %>% 
+      dist = ifelse(dist < 1, 1, dist), #Avoid division by 0
+      val = sum(1 / dist:(dist + align_len)) * 
+        bit_score / align_len #Scale the bit_score based off distance to start
+      ) %>% 
     group_by(start,geneId, accession, genus, species, extra, plasmid) %>% 
-    summarise(val = sum(val), .groups = "drop") %>% 
+    summarise(val = sum(val), .groups = "drop") %>% #Summary per geneId
     group_by(start,geneId, genus, species, plasmid) %>% 
-    filter(val == max(val)) %>% ungroup() %>% 
-    left_join(ARG %>% select(geneId, gene, subtype, clusterNr), by = "geneId") %>% 
-    select(start,gene, subtype, clusterNr, accession, genus, species, extra, plasmid, val) %>% distinct() 
+    filter(val == max(val)) %>% ungroup() %>% #only keep best subspecies (extra) per species
+    left_join(ARG %>% select(geneId, gene, subtype, clusterNr), by = "geneId") %>% #Add ARG info
+    select(start,gene, subtype, clusterNr, accession, genus, species, extra, plasmid, val) %>% 
+    distinct() 
   
+    #Keep the details for subspecies separate
     details = result %>% select(start,gene, subtype, accession, extra, plasmid, val)
     
+    #Aggregate on species level
     result = result %>% select(-accession, -extra) %>% distinct() %>% 
     group_by(start,gene, subtype) %>%  filter(val >= cutOff(val)) %>% 
       left_join(genesDetected, by = c("gene", "subtype"))
