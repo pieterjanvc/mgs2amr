@@ -3,7 +3,7 @@
 #*************************
 
 library(gfaTools)
-library(tidyverse)
+library(tidyverse, warn.conflicts = FALSE)
 library(RSQLite)
 
 maxPathDist = 1500
@@ -43,7 +43,7 @@ cutOff = function(numbers, percent = 0.95){
 
 sample = "temp/E12Heidi011_SRR4017917_0.1_1615998709"
 sample = "temp/E12Heidi011_SRR4017912_0.05_1615998142"
-sample = toProcess$tempFolder[15]
+sample = toProcess$tempFolder[12]
 
 #Get the isolate info
 myConn = dbConnect(SQLite(), "sideStuff/isolateBrowserData.db")
@@ -327,7 +327,7 @@ for(sample in toProcess$tempFolder){
     mutate(
       startVal = min(startVal / (nBases*1.81), 1),
       notStartVal = min(notStartVal / (maxPathDist*2*1.81), 1)
-    )
+    ) %>% 
     arrange(genus, species, desc(val))
   
   # test = result %>% select(-accession, -extra) %>% distinct() %>% 
