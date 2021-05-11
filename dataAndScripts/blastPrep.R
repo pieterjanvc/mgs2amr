@@ -120,9 +120,9 @@ tryCatch({
         
         geneId = str_extract(x, "\\d+(?=/graph.gfa)")
         gfa = gfa_fixMetacherchant(x)
-
+        
         #Check if the file is not empty
-        if(length(gfa) > 0){
+        if(nrow(gfa$segments) > 0){
           gfa$segments$geneId = geneId
           
           #Check if the file is low or high quality
@@ -168,8 +168,8 @@ tryCatch({
       notUsed = gfa[x] %>% unlist()
       gfa = gfa[!x]
       gfa = list(
-        segments = bind_rows(sapply(gfa, "[", 1)),
-        links = bind_rows(sapply(gfa, "[", 2))
+        segments = bind_rows(sapply(gfa, "[[", 1)),
+        links = bind_rows(sapply(gfa, "[[", 2))
       )
       rm(x)
       
