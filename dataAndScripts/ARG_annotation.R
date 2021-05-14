@@ -42,8 +42,8 @@ cutOff = function(numbers, percent = 0.95){
 }
 
 sample = "temp/E12Heidi011_SRR4017917_0.1_1615998709"
-sample = "temp/E12Heidi011_SRR4017912_0.05_1615998142"
-sample = toProcess$tempFolder[12]
+sample = "temp/mixfile_SRR2449036_1620769664"
+sample = toProcess$tempFolder[22]
 
 #Get the isolate info
 myConn = dbConnect(SQLite(), "sideStuff/isolateBrowserData.db")
@@ -99,8 +99,11 @@ for(sample in toProcess$tempFolder){
   #Expand results from clustering segments before blast
   clusterOut = read.table(paste0(sample, "/blastSegments.out")) %>% 
     select(segmentId = V9, clusterId = V10) %>% distinct() %>% 
-    mutate(clusterId = ifelse(clusterId == "*", segmentId, clusterId)) %>% 
-    extract(segmentId, into = c("geneId", "segment"), regex = "^([^_]+)_(.*)", remove = F) %>% 
+    mutate(
+      clusterId = ifelse(clusterId == "*", segmentId, clusterId),
+      geneId = str_extract(segmentId, "^([^_]+)")
+      ) %>% 
+    # extract(segmentId, into = c("geneId", "segment"), regex = "^([^_]+)_(.*)", remove = F) %>% 
     filter(clusterId %in% blastOut$query_title) 
   
   blastOut = clusterOut %>% 
@@ -132,6 +135,7 @@ for(sample in toProcess$tempFolder){
       depth = sum(KC / sum(LN)),
       .groups = "drop"
     ) %>% 
+    group_by(start) %>% 
     filter(depth <= depth[bit_score == max(bit_score)])
   
   
@@ -150,7 +154,7 @@ for(sample in toProcess$tempFolder){
           data.frame(
             pathId = path$id,
             startOrientation = path$startOrientation,
-            segment = path$segmentOrder)
+            segmentId = path$segmentOrder)
         }) %>% 
         left_join(
           pathsToSegmentTable(gfa, segmentOfInterest) %>% 
@@ -159,7 +163,7 @@ for(sample in toProcess$tempFolder){
             select(segment, KC, LN, dist) %>% 
             mutate(geneId = str_extract(segment, "^\\d+")) %>% 
             distinct(),
-          by = "segment"
+          by = c("segmentId" = "segment")
         ) %>% 
         filter(LN >=250) %>% 
         group_by(geneId, pathId) %>% mutate(
@@ -184,14 +188,18 @@ for(sample in toProcess$tempFolder){
     mutate(
       dist = ifelse(str_detect(segment, "_start$"), -1* LN, 0),
       order = ifelse(dist == 0, 1, 2),
-      type = "fragment") 
+      type = "fragment") %>% 
+    rename(segmentId = segment)
   
-  fragments = fragments %>% left_join(
-    fragments %>% select(pathId, segment) %>% 
-      filter(str_detect(segment, "_start$")) %>% 
-      group_by(segment) %>% mutate(startOrientation = 1:n() -1),
-    by = c("pathId", "segment")) %>% group_by(pathId) %>% 
-    mutate(startOrientation = sum(startOrientation, na.rm = T))
+  if(nrow(fragments) > 0){
+    fragments = fragments %>% left_join(
+      fragments %>% select(pathId, segmentId) %>% 
+        filter(str_detect(segmentId, "_start$")) %>% 
+        group_by(segmentId) %>% mutate(startOrientation = 1:n() -1),
+      by = c("pathId", "segmentId")) %>% group_by(pathId) %>% 
+      mutate(startOrientation = sum(startOrientation, na.rm = T))
+  }
+ 
   
   pathData = bind_rows(pathData, fragments)
   
@@ -212,7 +220,7 @@ for(sample in toProcess$tempFolder){
     filter(coverage >= 0.95 | (align_len > 500 & coverage >= 0.90)) %>% #filter by segment coverage
     group_by(start, segmentId, geneId, genus, species, extra, plasmid) %>% 
     filter(bit_score == max(bit_score)) %>% distinct() %>% #only one subspecies per segment
-    ungroup() %>% left_join(pathData, by = c("geneId", "segment")) %>% 
+    ungroup() %>% left_join(pathData, by = c("geneId", "segmentId")) %>% 
     filter(!is.na(dist)) %>% rowwise() %>% #Only keep segments that are in a path to start
     mutate(
       dist = ifelse(dist < 1, 1, dist) #Avoid division by 0
