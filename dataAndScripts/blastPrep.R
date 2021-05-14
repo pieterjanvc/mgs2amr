@@ -303,19 +303,30 @@ tryCatch({
                   startPerc = startPerc[LN == LNmax],
                   startDepth = KCmax / LNmax,
                   .groups = 'drop') %>% rowwise() %>% 
+        # filter(gene == "blaTEM") %>%
         mutate(
           cover1 = round(min(1, LNmax / nBases), 4),
-          cover2 = round(min(1, LNsum / nBases), 4)) %>% 
-        group_by(gene) %>% filter(
-          startPerc == max(startPerc) |
-            cover1 == max(cover1)) %>% 
-      group_by(clusterNr, gene, subtype) %>% 
-        filter(cover1 == max(cover1), startDepth == max(startDepth)) %>% 
+          cover2 = round(min(1, LNsum / nBases), 4),
+          val = cover1 * startPerc * KCmax) %>% 
+        group_by(gene) %>% 
+        mutate(simToBest = between(fileDepth, 
+                                   fileDepth[val == max(val)][1] * 0.9,
+                                   fileDepth[val == max(val)][1] * 1.1)) %>% 
+        group_by(gene, simToBest) %>% arrange(desc(val)) %>% slice(1) %>% 
         ungroup() %>% 
-        mutate(pipelineId = pipelineId, runId = runId) %>% 
-        group_by(gene, subtype) %>% filter(cover1 == max(cover1)) %>% slice(1) %>% 
-        group_by(clusterNr) %>% filter(cover1 == max(cover1)) %>% slice(1) %>% 
-        ungroup() %>% arrange(desc(cover1))
+        filter(cover1 >= 0.5, startDepth / fileDepth >= 0.5) %>% 
+        select(-val, -simToBest)
+        # filter(adjCov == max(adjCov)) %>% 
+        # group_by(gene) %>% filter(
+        #   startPerc == max(startPerc) |
+        #     cover1 == max(cover1)) %>% 
+      # group_by(clusterNr, gene, subtype) %>% 
+      #   filter(cover1 == max(cover1), startDepth == max(startDepth)) %>% 
+      #   ungroup() %>% 
+      #   mutate(pipelineId = pipelineId, runId = runId) %>% 
+      #   group_by(gene, subtype) %>% filter(cover1 == max(cover1)) %>% slice(1) %>% 
+      #   group_by(clusterNr) %>% filter(cover1 == max(cover1)) %>% slice(1) %>% 
+      #   ungroup() %>% arrange(desc(cover1))
 
       #Only keep genes that are minimum 90% covered (or use cut-off when higher) 
       # genesDetected = genesDetected %>% 
