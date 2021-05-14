@@ -102,6 +102,7 @@ tryCatch({
       
       myFiles = list.files(sprintf("%s", tempFolder), 
                            ".gfa", recursive = T, full.names = T)
+      myFiles = myFiles[!str_detect(myFiles, "lowQualGfa")]
 
       #This process can be done in parallel so speed things up
       cl <- parallel::makeCluster(detectCores())
@@ -114,6 +115,7 @@ tryCatch({
       
       #Create a folder to save the low quality gfa's that are ignored
       system(sprintf("mkdir -p %slowQualGfa", tempFolder))
+      system(sprintf("rm -f %slowQualGfa/*", tempFolder))
       
       #Read all GFA files
       gfa = suppressWarnings(parLapply(cl, myFiles, function(x){
@@ -168,8 +170,8 @@ tryCatch({
       notUsed = gfa[x] %>% unlist()
       gfa = gfa[!x]
       gfa = list(
-        segments = bind_rows(sapply(gfa, "[[", 1)),
-        links = bind_rows(sapply(gfa, "[[", 2))
+        segments = bind_rows(sapply(gfa, "[", 1)),
+        links = bind_rows(sapply(gfa, "[", 2))
       )
       rm(x)
       
