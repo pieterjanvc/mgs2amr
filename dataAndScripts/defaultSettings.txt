@@ -1,0 +1,30 @@
+#-----------------------------------------------------------
+#      DEPENDENCIES & DEFAULT PARAMETERS FOR META2AMR
+#-----------------------------------------------------------
+# NOTE: Do NOT quote values unless quotation is part of it
+#  ex.1: var=test 1; NOT var="test 1"
+#  ex.2: var=test "test" test; NOT "test \"test\" test"
+
+--- GENERAL DEPENDENCIES
+sqlite3=sqlite3
+rscript=Rscript
+metacherchant=metacherchant.sh
+#This needs to be the usearch base folder
+usearch=usearch11.0.667
+
+--- META2AMR.SH
+meta2amrTemp=
+meta2amrVerbose=1
+meta2amrForceOverwrite=FALSE
+
+--- LOCALBLAST.SH
+localBlastVerbose=1
+localBlastBlastn=blastn
+localBlastDB=nt
+
+--- REMOTEBLAST.SH
+remoteBlastVerbose=1
+remoteBlastBlastn=https://blast.ncbi.nlm.nih.gov/Blast.cgi
+remoteBlastEntrez=txid2 [ORGN]
+remoteBlastTimeout=7200
+remoteBlastCheckFreq=120

@@ -55,6 +55,11 @@ echo -e `date "+%T"`"\e[32m - Start the setup check...\e[0m\n"
 #----------------------------
 echo "1) Check dependencies..."
 
+#Check if settings file exists
+if [ ! -f "$baseFolder/settings.txt" ]; then
+	cp $baseFolder/dataAndScripts/backupSettings.txt $baseFolder/settings.txt
+fi
+
 #Check if sqlite3 is installed
 sqlite3=`grep -oP "sqlite3\s*=\s*\K(.*)" $baseFolder/settings.txt`
 testTool=`command -v $sqlite3`
