@@ -40,37 +40,6 @@ CREATE TABLE IF NOT EXISTS "logs" (
 	"actionName" text,
 	FOREIGN KEY("runId") REFERENCES "scriptUse"("runId") ON UPDATE CASCADE ON DELETE CASCADE
 );
--- Tables related to Mixing Metagenomes
-CREATE TABLE IF NOT EXISTS "seqData" (
-	"seqId"	integer primary key,
-	"sampleName" text NOT NULL,
-	"readCount" text integer NOT NULL,
-	"sampleType" text,
-	"description" text,
-	"SRR" text,
-	"SAMN" text
-);
-CREATE TABLE IF NOT EXISTS "seqFiles" (
-	"fileId" integer primary key,
-	"seqId" integer NOT NULL,
-	"fileName" text NOT NULL,
-	"folder" text NOT NULL,
-	"modDate" text NOT NULL,
-	"fileSize" integer NOT NULL,
-	FOREIGN KEY("seqId") REFERENCES "seqData"("seqId") ON UPDATE CASCADE ON DELETE CASCADE
-);
-CREATE TABLE IF NOT EXISTS "mixMeta" (
-    "runId" integer NOT NULL,
-	"mixInSeqId" integer NOT NULL,
-	"metaFileSeqId" integer NOT NULL,	
-	"type" text NOT NULL,
-	"relativeAbundance" real NOT NULL,
-	"nReadsUsed" integer NOT NULL,
-	PRIMARY KEY("runId", "mixInSeqId"),
-	FOREIGN KEY("runId") REFERENCES "scriptUse"("runId") ON UPDATE CASCADE,
-	FOREIGN KEY("metaFileSeqId") REFERENCES "seqData"("seqId") ON UPDATE CASCADE ON DELETE CASCADE,
-	FOREIGN KEY("mixInSeqId") REFERENCES "seqData"("seqId") ON UPDATE CASCADE ON DELETE CASCADE
-);
 -- Table that stores options used to prepare BLAST
 CREATE TABLE IF NOT EXISTS "blastPrepOptions" (
     "prepId" integer primary key,

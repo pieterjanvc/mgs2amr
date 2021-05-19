@@ -100,21 +100,6 @@ $sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
 	VALUES($runId,'setup.R',$(date '+%s'),2,'R packages installed')"
 echo -e " - R and dependent packages are present"
 
-
-#Check if bbmap is installed or the reformat.sh script can be reached
-testTool=`grep -oP "reformat\s*=\s*\K(.*)" $baseFolder/settings.txt`
-if [ -z `command -v $testTool` ]; then 
-	echo -e "\e[91mThe bbmap package does not seem to be installed as a system application\n"\
-	"If you have unzipped the package in a custom folder,\n update the path to the 'reformat.sh' script in the settings file\n"\
-	$baseFolder/settings.txt"\e[0m"
-	updateDBwhenError "$runId" "The bbmap package does not seem to be installed"
-	exit 1;
-fi;
-$sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
-	"INSERT INTO logs (runId,tool,timeStamp,actionId,actionName)
-	VALUES($runId,'setup.sh',$(date '+%s'),3,'bbmap installed')"
-echo -e " - bbmap is present"
-
 #Check if usearch is installed or the reformat.sh script can be reached
 testTool=`grep -oP "usearch\s*=\s*\K(.*)" $baseFolder/settings.txt`
 if [ -z `command -v $testTool` ]; then 
