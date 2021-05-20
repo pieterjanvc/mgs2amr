@@ -102,7 +102,7 @@ tryCatch({
       
       myFiles = list.files(sprintf("%s", tempFolder), 
                            ".gfa", recursive = T, full.names = T)
-      myFiles = myFiles[!str_detect(myFiles, "lowQualGfa")]
+      myFiles = myFiles[!str_detect(myFiles, "masterGFA")]
 
       #This process can be done in parallel so speed things up
       cl <- parallel::makeCluster(detectCores())
@@ -114,8 +114,8 @@ tryCatch({
       clusterExport(cl, varlist = c("tempFolder", "zipMethod", "keepLowQual"))
       
       #Create a folder to save the low quality gfa's that are ignored
-      system(sprintf("mkdir -p %slowQualGfa", tempFolder))
-      system(sprintf("rm -f %slowQualGfa/*", tempFolder))
+      # system(sprintf("mkdir -p %slowQualGfa", tempFolder))
+      # system(sprintf("rm -f %slowQualGfa/*", tempFolder))
       
       #Read all GFA files
       gfa = suppressWarnings(parLapply(cl, myFiles, function(x){
@@ -125,40 +125,47 @@ tryCatch({
         
         #Check if the file is not empty
         if(nrow(gfa$segments) > 0){
+          
           gfa$segments$geneId = geneId
           
-          #Check if the file is low or high quality
           if(nrow(gfa$links) > 0){
             gfa$links$geneId = geneId
-            keep = gfa$links %>%
-              group_by(geneId, from) %>%
-              summarise(n = n(), .groups = "drop") %>%
-              group_by(geneId) %>%
-              summarise(remove = (length(n[n > 4]) / n() > 0.05)  & n() > 2000,
-                        .groups = "drop") %>%
-              filter(remove) %>% nrow() == 0
-            
-            #In case of low quality, write to other folder (if set)
-             #but ignore for further analysis
-            if(keep){
-              gfa
-            } else {
-              if(keepLowQual){
-                gfa = list(
-                  segments = gfa$segments %>% select(-geneId),
-                  links = gfa$links %>% select(-geneId)
-                )
-                gfa_write(gfa, sprintf("%slowQualGfa/%s.gfa", tempFolder, geneId))
-                system(sprintf("%s %s", zipMethod,
-                               sprintf("%slowQualGfa/%s.gfa", tempFolder, geneId)))
-              }
-              geneId
-            }
-          } else {
-            gfa
           }
+          
+          return(gfa)
+          
+          # #Check if the file is low or high quality
+          # if(nrow(gfa$links) > 0){
+          #   gfa$links$geneId = geneId
+          #   keep = gfa$links %>%
+          #     group_by(geneId, from) %>%
+          #     summarise(n = n(), .groups = "drop") %>%
+          #     group_by(geneId) %>%
+          #     summarise(remove = (length(n[n > 4]) / n() > 0.05)  & n() > 2000,
+          #               .groups = "drop") %>%
+          #     filter(remove) %>% nrow() == 0
+          #   
+          #   #In case of low quality, write to other folder (if set)
+          #    #but ignore for further analysis
+          #   if(keep){
+          #     gfa
+          #   } else {
+          #     if(keepLowQual){
+          #       gfa = list(
+          #         segments = gfa$segments %>% select(-geneId),
+          #         links = gfa$links %>% select(-geneId)
+          #       )
+          #       gfa_write(gfa, sprintf("%slowQualGfa/%s.gfa", tempFolder, geneId))
+          #       system(sprintf("%s %s", zipMethod,
+          #                      sprintf("%slowQualGfa/%s.gfa", tempFolder, geneId)))
+          #     }
+          #     geneId
+          #   }
+          # } else {
+          #   gfa
+          # }
         } else {
-          NULL
+          return(NULL)
         }
         
       }))
@@ -184,8 +191,8 @@ tryCatch({
       newLogs = rbind(newLogs, list(as.integer(Sys.time()), 5, "Start writing master GFA to zip"))
       
       gfa_write(gfa, paste0(tempFolder, "masterGFA.gfa"))
-      system(sprintf("%s %s", zipMethod, paste0(tempFolder, "masterGFA.gfa")))
-      write(notUsed, sprintf("%slowQualGfa/lowQualGfa.txt", tempFolder))
+      system(sprintf("%s -f %s", zipMethod, paste0(tempFolder, "masterGFA.gfa")))
+      # write(notUsed, sprintf("%slowQualGfa/lowQualGfa.txt", tempFolder))
       
       #Remove Metacherchant Data if set
       if(keepAllMetacherchantData == F & (nrow(logs %>% filter(actionId == 4)) == 0)){
@@ -250,6 +257,7 @@ tryCatch({
       gfa = gfa_trimLooseEnds(gfa, 100, keepRemoving = F)
       
       #Run the mergeStartSegments function per group 
+      #TODO consider parallel
       gfa = lapply(myGoups, function(myId){
         myGoup = list()
         myGoup$segments = gfa$segments %>% filter(geneId %in% myId)
@@ -348,33 +356,72 @@ tryCatch({
           geneId %in% genesDetected$geneId,
           from %in% mySegments | 
             to %in% mySegments) 
-      singleSeg = c(singleSeg$from, singleSeg$to) %>% unique()
       
       #Save start segments that do not connect to anything (isolated)
-      mySegments = mySegments[!mySegments %in% singleSeg]
+      mySegments = mySegments[!mySegments %in% c(singleSeg$from, singleSeg$to) %>% unique()]
       
-      #Get all segments that only connect to a start segment (i.e. are end segments)
+      singleSeg = c(singleSeg$from, singleSeg$to) %>% unique()
       singleSeg = singleSeg[!str_detect(singleSeg, "_start$")]
       
-      singleSeg = gfa$links %>% 
+      singleSeg = gfa$links %>%
         filter(
           geneId %in% genesDetected$geneId,
-          from %in% singleSeg | 
-            to %in% singleSeg) %>% 
-        mutate(start = (str_detect(from, "_start") | 
-                          str_detect(to, "_start"))) 
+          from %in% singleSeg |
+            to %in% singleSeg) %>%
+        mutate(start = (str_detect(from, "_start") |
+                          str_detect(to, "_start")))
       
-      singleSeg = singleSeg %>% group_by(geneId) %>% 
+      singleSeg = singleSeg %>% group_by(geneId) %>%
         filter(!any(
-          from[start] %in% c(from[!start], to[!start])) & 
+          from[start] %in% c(from[!start], to[!start])) &
             !any(to[start] %in% c(from[!start], to[!start])))
+      
+      singleSeg = singleSeg %>% select(from, to, geneId)
+      singleSeg[(nrow(singleSeg)+1):(nrow(singleSeg)*2),] = data.frame(
+        from  = singleSeg$to,
+        to = singleSeg$from,
+        geneId = singleSeg$geneId
+      ) 
+      
+      singleSeg = singleSeg %>% 
+        # distinct() %>% 
+        filter(str_detect(from, "_start$")) %>% 
+        group_by(from) %>% summarise(n = n()) %>% 
+        filter(n == 1) %>% pull(from)
+      
+      
+      
+      # # singleSeg = c(singleSeg$from, singleSeg$to) %>% unique()
+      # # 
+      # # #Save start segments that do not connect to anything (isolated)
+      # # mySegments = mySegments[!mySegments %in% singleSeg]
+      # # 
+      # #Get all segments that only connect to a start segment (i.e. are end segments)
+      # singleSeg = singleSeg[!str_detect(singleSeg, "_start$")]
+      # test = c(singleSeg$from, singleSeg$to) %>% unique()
+      # test = test[!str_detect(test, "_start$")]
+      # 
+      # test = gfa$links %>%
+      #   filter(
+      #     geneId %in% genesDetected$geneId,
+      #     from %in% test |
+      #       to %in% test) %>%
+      #   mutate(start = (str_detect(from, "_start") |
+      #                     str_detect(to, "_start")))
+      # 
+      # singleSeg = test %>% group_by(geneId) %>%
+      #   filter(!any(
+      #     from[start] %in% c(from[!start], to[!start])) &
+      #       !any(to[start] %in% c(from[!start], to[!start])))
+      # 
       
       #GFA should ONLY have single fragments - not combi ...
       
-      singleSeg = unique(c(mySegments, singleSeg$from, singleSeg$to))
+      singleSeg = unique(c(mySegments, singleSeg))
       
       #Add graphs that only consist of a single start segment
       onlyStartSeg = gfa$segments$geneId[!gfa$segments$geneId %in% gfa$links$geneId]
+      onlyStartSeg = onlyStartSeg[onlyStartSeg %in% genesDetected$geneId]
       
       #Build a GFA that contains all these short GFAs (will be individual islands)
       singleSeg = list(segments = gfa$segments %>% 
@@ -407,6 +454,7 @@ tryCatch({
         mutate(type = replace_na(type, "noFragments")) %>% 
         #Only keep decently covered genes (assumed higher abundance), or fragments (low abundance)
         filter((cover1 > 0.5 & type != "fragmentsOnly") | type == "fragmentsOnly") %>% 
+        mutate(pipelineId = pipelineId, runId = runId) %>% 
         select(pipelineId, runId, everything())
       
       #---- Save detected results - but delete old first ----
@@ -425,8 +473,8 @@ tryCatch({
       dbDisconnect(myConn)
       
       dir.create(sprintf("%sgenesDetected", tempFolder), showWarnings = F)
-      write.csv(genesDetected, 
-                paste0(tempFolder, "genesDetected/genesDetected.csv"), row.names = F)
+      write_csv(genesDetected, 
+                paste0(tempFolder, "genesDetected/genesDetected.csv"))
       
       #Write the unfragmented gfa files as separate files for viewing in Bandage
       for(myGene in genesDetected$geneId[! genesDetected$type %in% 
