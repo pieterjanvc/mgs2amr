@@ -3,12 +3,9 @@
 #**********************
 # ---- Blast prep ----
 #*********************
-suppressPackageStartupMessages(library(stringr))
-suppressPackageStartupMessages(library(dplyr))
-suppressPackageStartupMessages(library(purrr))
+suppressPackageStartupMessages(library(tidyverse))
 suppressPackageStartupMessages(library(igraph))
 suppressPackageStartupMessages(library(gfaTools))
-suppressPackageStartupMessages(library(tidyr))
 suppressPackageStartupMessages(library(RSQLite))
 suppressPackageStartupMessages(library(parallel))
 
