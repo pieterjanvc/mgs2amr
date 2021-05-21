@@ -12,7 +12,7 @@ if(as.integer(R.version$major) < 4){
 }
 
 #Check R packages
-packages = c("tidyverse", "RSQLite", "igraph", "gfaTools")
+packages = c("tidyverse", "RSQLite", "igraph", "gfaTools", "parallel")
 installed = packages %in% installed.packages()[,1]
 
 if(!all(installed)){
