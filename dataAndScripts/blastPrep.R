@@ -246,31 +246,75 @@ tryCatch({
         )
       
       #Split the file in groups to merge start segments
-      myGoups = gfa$segments$geneId
-      steps = c(gfa$segments$geneId[seq(1, length(myGoups), by = 100000)], 
-                gfa$segments$geneId[nrow(gfa$segments)]) %>% unique()
-      myGoups = unique(gfa$segments$geneId)
+      myGroups = gfa$links %>% group_by(geneId) %>% summarise(n = n())
       
-      if(length(steps) > 2){
-        myGoups = mapply(function(x, y, z){
-          z[which(z == x):which(z == y)]
-        }, x = steps[-length(steps)], y = lead(steps)[-length(steps)], z = list(myGoups))
+      myGroup = 1
+      curSum = 0
+      myResult = rep(0, nrow(myGroups))
+      for(i in 1:nrow(myGroups)){
         
-      } else {
-        myGoups = list(c(myGoups))
+        curSum = curSum + myGroups$n[i]
+        
+        if(curSum >= 100000){
+          curSum = 0
+          myGroup = myGroup + 1
+        }
+        
+        myResult[i] = myGroup
       }
+      
+      myGroups$group = myResult
+      
+      # myGoups = gfa$segments$geneId
+      # steps = c(gfa$segments$geneId[seq(1, length(myGoups), by = 100000)], 
+      #           gfa$segments$geneId[nrow(gfa$segments)]) %>% unique()
+      # myGoups = unique(gfa$segments$geneId)
+      # 
+      # if(length(steps) > 2){
+      #   myGoups = mapply(function(x, y, z){
+      #     z[which(z == x):which(z == y)]
+      #   }, x = steps[-length(steps)], y = lead(steps)[-length(steps)], z = list(myGoups))
+      #   
+      # } else {
+      #   myGoups = list(c(myGoups))
+      # }
       
       #Cut out small appendages from graphs to make joining easier
       gfa = gfa_trimLooseEnds(gfa, 100, keepRemoving = F)
       
       #Run the mergeStartSegments function per group 
       #TODO consider parallel
-      gfa = lapply(myGoups, function(myId){
-        myGoup = list()
-        myGoup$segments = gfa$segments %>% filter(geneId %in% myId)
-        myGoup$links = gfa$links %>% filter(geneId %in% myId)
-        mergeStartSegments(myGoup, maxGap = 800, maxStep = 20)
+      # gfa = lapply(myGoups, function(myId){
+      #   myGoup = list()
+      #   myGoup$segments = gfa$segments %>% filter(geneId %in% myId)
+      #   myGoup$links = gfa$links %>% filter(geneId %in% myId)
+      #   mergeStartSegments(myGoup, maxGap = 800, maxStep = 20)
+      # })
+      
+      #This process can be done in parallel so speed things up
+      cl <- parallel::makeCluster(detectCores())
+      x = clusterEvalQ(cl, {
+        library(dplyr)
+        library(gfaTools)
       })
+      clusterExport(cl, varlist = c("myGroups", "gfa"))
+      
+      #Create a folder to save the low quality gfa's that are ignored
+      # system(sprintf("mkdir -p %slowQualGfa", tempFolder))
+      # system(sprintf("rm -f %slowQualGfa/*", tempFolder))
+      
+      #Read all GFA files
+      gfa = suppressWarnings(parLapply(cl, unique(myGroups$group), function(myGroup){
+        
+        myGenes = myGroups$geneId[myGroups$group == myGroup]
+        mergeStartSegments(
+          list(
+            segments = gfa$segments %>% 
+              filter(geneId %in% myGenes) %>% as.data.frame(),
+            links = gfa$links %>% 
+              filter(geneId %in% myGenes) %>% as.data.frame())
+          )
+        }))
       
       #Merge the results
       gfa = list(
