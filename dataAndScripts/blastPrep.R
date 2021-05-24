@@ -87,7 +87,11 @@ tryCatch({
       if(nrow(logs %>% filter(actionId %in% c(9,11))) == 0 | forceRedo){
         if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S -"), 
                             "Load master GFA file for processing ... ")}
-        gfa = gfa_read(gzfile(paste0(tempFolder, "/masterGFA.gfa.gz")))
+        # gfa = gfa_read(gzfile(paste0(tempFolder, "/masterGFA.gfa.gz")))
+        gfa = list()
+        gfa$segments = read_csv(paste0(tempFolder, "masterGFA_segments.csv.gz"))
+        gfa$links = read_csv(paste0(tempFolder, "masterGFA_links.csv.gz"))
+        
         if(verbose > 0){cat("done\n")}
       }
       
@@ -187,8 +191,14 @@ tryCatch({
       if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S -"), "Write master GFA to zip ... ")}
       newLogs = rbind(newLogs, list(as.integer(Sys.time()), 5, "Start writing master GFA to zip"))
       
-      gfa_write(gfa, paste0(tempFolder, "masterGFA.gfa"))
-      system(sprintf("%s -f %s", zipMethod, paste0(tempFolder, "masterGFA.gfa")))
+      # gfa_write(gfa, paste0(tempFolder, "masterGFA.gfa"))
+      # system(sprintf("%s -f %s", zipMethod, paste0(tempFolder, "masterGFA.gfa")))
+      
+      write_csv(gfa$segments, paste0(tempFolder, "masterGFA_segments.csv"))
+      system(sprintf("%s -f %s", zipMethod, paste0(tempFolder, "masterGFA_segments.csv")))
+      write_csv(gfa$links, paste0(tempFolder, "masterGFA_links.csv"))
+      system(sprintf("%s -f %s", zipMethod, paste0(tempFolder, "masterGFA_links.csv")))
+      
       # write(notUsed, sprintf("%slowQualGfa/lowQualGfa.txt", tempFolder))
       
       #Remove Metacherchant Data if set
