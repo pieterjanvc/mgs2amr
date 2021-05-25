@@ -76,7 +76,7 @@ tryCatch({
     
     # ---- 1. Clean up files and folders ----
     #****************************************
-    if(nrow(logs %>% filter(actionId %in% c(2, 6))) > 0 | forceRedo){
+    if(nrow(logs %>% filter(actionId %in% c(2, 6))) > 0){
       
       if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S -"), 
                           "Skip MetaCherchant cleanup, already done\n")}
@@ -88,9 +88,18 @@ tryCatch({
         if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S -"), 
                             "Load master GFA file for processing ... ")}
         # gfa = gfa_read(gzfile(paste0(tempFolder, "/masterGFA.gfa.gz")))
-        gfa = list()
-        gfa$segments = read_csv(paste0(tempFolder, "masterGFA_segments.csv.gz"))
-        gfa$links = read_csv(paste0(tempFolder, "masterGFA_links.csv.gz"))
+        system(sprintf("%s -d %s", zipMethod, paste0(tempFolder, "masterGFA.db.gz")))
+        myConn = dbConnect(SQLite(), sprintf("%smasterGFA.db", tempFolder))
+        gfa = list(
+          segments = dbReadTable(myConn, "segments"),
+          links = dbReadTable(myConn, "links")
+        )
+        dbDisconnect(myConn)
+        
+        # gfa$segments = read_csv(paste0(tempFolder, "masterGFA_segments.csv.gz")) %>% 
+        #   as.data.frame()
+        # gfa$links = read_csv(paste0(tempFolder, "masterGFA_links.csv.gz")) %>% 
+        #   as.data.frame()
         
         if(verbose > 0){cat("done\n")}
       }
@@ -188,16 +197,16 @@ tryCatch({
                                     "Finished filtering and merging MetaCherchant output"))
       
       # ---- Update the master GFA file and zip it to save space ----
-      if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S -"), "Write master GFA to zip ... ")}
-      newLogs = rbind(newLogs, list(as.integer(Sys.time()), 5, "Start writing master GFA to zip"))
+      if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S -"), "Write master GFA ... ")}
+      newLogs = rbind(newLogs, list(as.integer(Sys.time()), 5, "Start writing master GFA"))
       
       # gfa_write(gfa, paste0(tempFolder, "masterGFA.gfa"))
       # system(sprintf("%s -f %s", zipMethod, paste0(tempFolder, "masterGFA.gfa")))
       
-      write_csv(gfa$segments, paste0(tempFolder, "masterGFA_segments.csv"))
-      system(sprintf("%s -f %s", zipMethod, paste0(tempFolder, "masterGFA_segments.csv")))
-      write_csv(gfa$links, paste0(tempFolder, "masterGFA_links.csv"))
-      system(sprintf("%s -f %s", zipMethod, paste0(tempFolder, "masterGFA_links.csv")))
+      myConn = dbConnect(SQLite(), sprintf("%smasterGFA.db", tempFolder))
+      dbWriteTable(myConn, "segments", gfa$segments, overwrite = T)
+      dbWriteTable(myConn, "links", gfa$links, overwrite = T)
+      dbDisconnect(myConn)
       
       # write(notUsed, sprintf("%slowQualGfa/lowQualGfa.txt", tempFolder))
       
@@ -236,15 +245,6 @@ tryCatch({
       if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S -"), "Recover ARG seed sequences ... ")}
       newLogs = rbind(newLogs, list(as.integer(Sys.time()), 7, "Start recovering ARG seed sequences"))
       
-      #Add the geneId to the segment names to make sure they are unique 
-      gfa$segments = gfa$segments %>% 
-        mutate(name = paste0(geneId, "_", name))
-      gfa$links = gfa$links %>% 
-        mutate(
-          from = paste0(geneId, "_", from),
-          to = paste0(geneId, "_", to)
-        )
-      
       #Split the file in groups to merge start segments
       myGroups = gfa$links %>% group_by(geneId) %>% summarise(n = n())
       
@@ -255,7 +255,7 @@ tryCatch({
         
         curSum = curSum + myGroups$n[i]
         
-        if(curSum >= 100000){
+        if(curSum >= 250000){
           curSum = 0
           myGroup = myGroup + 1
         }
@@ -279,9 +279,6 @@ tryCatch({
       #   myGoups = list(c(myGoups))
       # }
       
-      #Cut out small appendages from graphs to make joining easier
-      gfa = gfa_trimLooseEnds(gfa, 100, keepRemoving = F)
-      
       #Run the mergeStartSegments function per group 
       #TODO consider parallel
       # gfa = lapply(myGoups, function(myId){
@@ -296,8 +293,9 @@ tryCatch({
       x = clusterEvalQ(cl, {
         library(dplyr)
         library(gfaTools)
+        library(RSQLite)
       })
-      clusterExport(cl, varlist = c("myGroups", "gfa"))
+      clusterExport(cl, varlist = c("myGroups", "tempFolder"))
       
       #Create a folder to save the low quality gfa's that are ignored
       # system(sprintf("mkdir -p %slowQualGfa", tempFolder))
@@ -307,14 +305,41 @@ tryCatch({
       gfa = suppressWarnings(parLapply(cl, unique(myGroups$group), function(myGroup){
         
         myGenes = myGroups$geneId[myGroups$group == myGroup]
+        
+        myConn = dbConnect(SQLite(), sprintf("%smasterGFA.db", tempFolder))
+        gfaGroup = list(
+          segments = dbGetQuery(
+            myConn, 
+            sprintf('SELECT * FROM segments WHERE geneId IN (%s)',
+                    paste(myGenes, collapse = ","))),
+          links = dbGetQuery(
+            myConn, 
+            sprintf('SELECT * FROM links WHERE geneId IN (%s)',
+                    paste(myGenes, collapse = ","))))
+        dbDisconnect(myConn)
+        
+        #Add the geneId to the segment names to make sure they are unique 
+        gfaGroup$segments = gfaGroup$segments %>% 
+          mutate(name = paste0(geneId, "_", name))
+        gfaGroup$links = gfaGroup$links %>% 
+          mutate(
+            from = paste0(geneId, "_", from),
+            to = paste0(geneId, "_", to)
+          )
+        
+        #Cut out small appendages from graphs to make joining easier
+        gfaGroup = gfa_trimLooseEnds(gfaGroup, 100, keepRemoving = F)
+        
+        #Merge the start segments
         mergeStartSegments(
           list(
-            segments = gfa$segments %>% 
-              filter(geneId %in% myGenes) %>% as.data.frame(),
-            links = gfa$links %>% 
-              filter(geneId %in% myGenes) %>% as.data.frame())
-          )
+            segments = gfaGroup$segments %>% filter(geneId %in% myGenes) ,
+            links = gfaGroup$links %>% filter(geneId %in% myGenes)
+          ))
+        
         }))
+      
+      rm(cl)
       
       #Merge the results
       gfa = list(
@@ -345,7 +370,7 @@ tryCatch({
       myConn = dbConnect(SQLite(), sprintf("%sdataAndScripts/meta2amr.db", baseFolder))
       argGenes = dbGetQuery(myConn, "SELECT geneId, clusterNr, gene, subtype, nBases FROM ARG") %>%
         mutate(geneId = as.character(geneId))
-      
+
       #Detect the most likely genes
       genesDetected = kmerCounts %>% 
         group_by(geneId) %>% mutate(
@@ -826,6 +851,10 @@ finally = {
     "INSERT INTO logs (runId,tool,timeStamp,actionId,actionName) VALUES(?,?,?,?,?)", 
     params = unname(as.list(newLogs)))
   dbClearResult(q)
-  
   dbDisconnect(myConn)  
+  
+  if(file.exists(sprintf("%smasterGFA.db", tempFolder))){
+    system(sprintf("%s -f %s", zipMethod, sprintf("%smasterGFA.db", tempFolder)))
+  }
+  
 })
