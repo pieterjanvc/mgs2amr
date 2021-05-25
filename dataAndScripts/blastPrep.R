@@ -452,12 +452,15 @@ tryCatch({
           from[start] %in% c(from[!start], to[!start])) &
             !any(to[start] %in% c(from[!start], to[!start])))
       
-      singleSeg = singleSeg %>% select(from, to, geneId)
-      singleSeg[(nrow(singleSeg)+1):(nrow(singleSeg)*2),] = data.frame(
-        from  = singleSeg$to,
-        to = singleSeg$from,
-        geneId = singleSeg$geneId
-      ) 
+      if(nrow(singleSeg) > 0){
+        singleSeg = singleSeg %>% select(from, to, geneId)
+        singleSeg[(nrow(singleSeg)+1):(nrow(singleSeg)*2),] = data.frame(
+          from  = singleSeg$to,
+          to = singleSeg$from,
+          geneId = singleSeg$geneId
+        )
+      }
+       
       
       singleSeg = singleSeg %>% 
         # distinct() %>% 
