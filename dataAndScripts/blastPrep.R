@@ -40,7 +40,6 @@ trimLength = as.integer(args[[10]]) #Loose segments smaller than this will be cu
 clusterIdentidy  = as.numeric(args[[11]]) #The cluster identity percent used in usearch
 forceRedo = as.logical(args[[12]]) #If parts of the code have successfully run before a crash, do not repeat unless forceRedo = T
 maxStep= as.integer(args[[13]]) #Which parts of the script to run? If NA all is run
-keepLowQual = T
 
 maxStep = ifelse(maxStep == 0, 5, maxStep)
 
@@ -121,11 +120,7 @@ tryCatch({
         library(stringr)
         library(gfaTools)
       })
-      clusterExport(cl, varlist = c("tempFolder", "zipMethod", "keepLowQual"))
-      
-      #Create a folder to save the low quality gfa's that are ignored
-      # system(sprintf("mkdir -p %slowQualGfa", tempFolder))
-      # system(sprintf("rm -f %slowQualGfa/*", tempFolder))
+      clusterExport(cl, varlist = c("tempFolder", "zipMethod"))
       
       #Read all GFA files
       gfa = suppressWarnings(parLapply(cl, myFiles, function(x){
@@ -143,37 +138,7 @@ tryCatch({
           }
           
           return(gfa)
-          
-          # #Check if the file is low or high quality
-          # if(nrow(gfa$links) > 0){
-          #   gfa$links$geneId = geneId
-          #   keep = gfa$links %>%
-          #     group_by(geneId, from) %>%
-          #     summarise(n = n(), .groups = "drop") %>%
-          #     group_by(geneId) %>%
-          #     summarise(remove = (length(n[n > 4]) / n() > 0.05)  & n() > 2000,
-          #               .groups = "drop") %>%
-          #     filter(remove) %>% nrow() == 0
-          #   
-          #   #In case of low quality, write to other folder (if set)
-          #    #but ignore for further analysis
-          #   if(keep){
-          #     gfa
-          #   } else {
-          #     if(keepLowQual){
-          #       gfa = list(
-          #         segments = gfa$segments %>% select(-geneId),
-          #         links = gfa$links %>% select(-geneId)
-          #       )
-          #       gfa_write(gfa, sprintf("%slowQualGfa/%s.gfa", tempFolder, geneId))
-          #       system(sprintf("%s %s", zipMethod,
-          #                      sprintf("%slowQualGfa/%s.gfa", tempFolder, geneId)))
-          #     }
-          #     geneId
-          #   }
-          # } else {
-          #   gfa
-          # }
+
         } else {
           return(NULL)
         }
@@ -183,7 +148,7 @@ tryCatch({
       rm(cl)
       
       #Merge all the GFAs that we need for further analysis
-      x = sapply(gfa, is.character)
+      x = sapply(gfa, is.null)
       notUsed = gfa[x] %>% unlist()
       gfa = gfa[!x]
       gfa = list(
@@ -208,12 +173,10 @@ tryCatch({
       dbWriteTable(myConn, "links", gfa$links, overwrite = T)
       dbDisconnect(myConn)
       
-      # write(notUsed, sprintf("%slowQualGfa/lowQualGfa.txt", tempFolder))
-      
       #Remove Metacherchant Data if set
       if(keepAllMetacherchantData == F & (nrow(logs %>% filter(actionId == 4)) == 0)){
         allDirs = list.dirs(tempFolder,recursive = F)
-        allDirs = allDirs[!str_detect(allDirs,"metacherchant_logs|lowQualGfa")]
+        allDirs = allDirs[!str_detect(allDirs,"metacherchant_logs")]
         system(sprintf("rm -R %s", paste(allDirs, collapse = " ")))
       }
       
@@ -296,10 +259,6 @@ tryCatch({
         library(RSQLite)
       })
       clusterExport(cl, varlist = c("myGroups", "tempFolder"))
-      
-      #Create a folder to save the low quality gfa's that are ignored
-      # system(sprintf("mkdir -p %slowQualGfa", tempFolder))
-      # system(sprintf("rm -f %slowQualGfa/*", tempFolder))
       
       #Read all GFA files
       gfa = suppressWarnings(parLapply(cl, unique(myGroups$group), function(myGroup){
