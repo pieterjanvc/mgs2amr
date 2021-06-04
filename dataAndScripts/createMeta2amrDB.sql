@@ -66,12 +66,13 @@ CREATE TABLE IF NOT EXISTS "blastSubmissions" (
 -- Table that stores all ARG
 CREATE TABLE IF NOT EXISTS "ARG" (
     "geneId" integer primary key,
-	"refId" text,
+	"prot" text,
+	"nucl" text,
 	"gene" test,
 	"subtype" text,
 	"info" text,
 	"nBases" integer,
-	"clusterNr" integer
+	"clusterNr" text
 );
 -- Table that stores all ARG detected in a sample
 CREATE TABLE IF NOT EXISTS "detectedARG" (
