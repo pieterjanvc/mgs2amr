@@ -39,6 +39,8 @@ IMPORTANT: Update the paths to all dependencies in the 'settings.txt' file
 
 --- META2AMR.SH ---
 Evaluate a metagenome for pathogenic bacterial species and their AMR
+The ARG tested obtained from https://www.ncbi.nlm.nih.gov/bioproject/PRJNA313047
+ Last update of this list: 2021-06-04
 
 Arguments [h|i|s|o|n|t|m|v]
  -h Read the help documentation
