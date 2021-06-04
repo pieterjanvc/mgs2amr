@@ -77,9 +77,6 @@ results = map_df(1:nrow(toProcess), function(i){
                pattern = "blastSegmentsClustered\\d+.json.gz"),
     blast_readResults, outFormat = "dataFrame1") %>% bind_rows()
   
-  # test = blastOut #REMOVE !!!
-  # blastOut = test
-  
   #Extract data we need + transform
   blastOut = blastOut %>% 
     select(query_title, hitId, taxid, accession , bact = title, bit_score, 
@@ -107,7 +104,6 @@ results = map_df(1:nrow(toProcess), function(i){
       clusterId = ifelse(clusterId == "*", segmentId, clusterId),
       geneId = str_extract(segmentId, "^([^_]+)")
       ) %>% 
-    # extract(segmentId, into = c("geneId", "segment"), regex = "^([^_]+)_(.*)", remove = F) %>% 
     filter(clusterId %in% blastOut$query_title) 
   
   blastOut = clusterOut %>% 
@@ -194,27 +190,7 @@ results = map_df(1:nrow(toProcess), function(i){
   fragments = gfa_read(paste0(sample, "/fragmentsOnly.gfa"))
   # fragments = gfa_read(paste0(sample, "/fragmentGFA.gfa"))
   if(nrow(fragments$segments) > 0){
-    # fragments = fragments$links %>% select(from, to, geneId) %>% 
-    #   mutate(pathId = 1:n()) %>% 
-    #   pivot_longer(c(from, to), names_to = NULL, values_to = "segment") %>% 
-    #   left_join(fragments$segments %>% select(name, LN, KC), by = c("segment" = "name")) %>% 
-    #   group_by(pathId) %>% 
-    #   filter(any(LN >= 100)) %>% ungroup() %>% 
-    #   mutate(
-    #     dist = ifelse(str_detect(segment, "_start$"), -1* LN, 0),
-    #     order = ifelse(dist == 0, 1, 2),
-    #     type = "fragment") %>% 
-    #   rename(segmentId = segment)
-    # 
-    # if(nrow(fragments) > 0){
-    #   fragments = fragments %>% left_join(
-    #     fragments %>% select(pathId, segmentId) %>% 
-    #       filter(str_detect(segmentId, "_start$")) %>% 
-    #       group_by(segmentId) %>% mutate(startOrientation = 1:n() -1),
-    #     by = c("pathId", "segmentId")) %>% group_by(pathId) %>% 
-    #     mutate(startOrientation = sum(startOrientation, na.rm = T))
-    # }
-    
+
     fragments = fragments$segments %>% 
       select(segmentId = name, LN, KC, geneId) %>% 
       group_by(geneId) %>% 
@@ -247,17 +223,9 @@ results = map_df(1:nrow(toProcess), function(i){
     filter(!is.na(dist)) %>% rowwise() %>% #Only keep segments that are in a path to start
     mutate(
       dist = ifelse(dist < 1, 1, dist) #Avoid division by 0
-      # val = bit_score
-        # sum(1 / dist:(dist + align_len)) * 
-        # bit_score / align_len #Scale the bit_score based off distance to start
-      # val2 = sum(1 / dist:(dist + min(align_len, 1500))) * 
-      #   min(score, 1500) / min(align_len, 1500)
       ) %>% group_by(geneId, accession, genus, species, extra, pathId, 
                      start, startOrientation) %>% 
-    # mutate(completePath = sum(unique(order)) / sum(min(2,max(order)):max(order))) %>% 
-    # mutate(completePath = sum(unique(order)) / sum(1:max(order))) %>% 
     mutate(
-      # completePath = length(unique(order[order != 1])) == (max(order) - 1),
       completePath = length(unique(order[order != 1])) == (max(order) - 1),
       score = sum(score),
       bit_score = sum(bit_score)
@@ -266,17 +234,6 @@ results = map_df(1:nrow(toProcess), function(i){
     filter(completePath) %>% select(-dist, -order, -hitId) %>% 
     distinct()
   
-  # test = result %>% filter(!start) %>% 
-  #   select(segmentId, genus, species,val) %>% 
-  #   group_by(segmentId, genus, species) %>% 
-  #   filter(val == max(val)) %>% 
-  #   distinct() %>% group_by(segmentId) %>% 
-  #   filter(val >= cutOff(val, 0.99)) %>% 
-  #   group_by(segmentId) %>% 
-  #   mutate(n = n()) %>% ungroup() %>% filter(n == 1) %>% 
-  #   mutate(geneId = as.integer(str_extract(segmentId, "^\\d+"))) %>% 
-  #   group_by(geneId) %>% 
-  #   filter(length(unique(paste(genus, species))) == 1)
   result$startOrientation[result$start] = 0
   result = result %>% 
     select(start,geneId, accession, genus, species, 
@@ -292,25 +249,12 @@ results = map_df(1:nrow(toProcess), function(i){
       total_score = sum(score),
       total_bit_score = sum(bit_score)
     ) %>% ungroup() %>% 
-    # group_by(geneId, pathId) %>% 
-    # filter(total_bit_score == max(total_bit_score))
-    # summarise(val = sum(val), .groups = "drop") %>% #Summary per geneId
-    # group_by(start,geneId, genus, species, plasmid) %>% 
-    # filter(total_bit_score == max(total_bit_score)) %>% ungroup() %>% #only keep best subspecies (extra) per species
-    left_join(ARG %>% select(geneId, gene, subtype, clusterNr), by = "geneId") %>% #Add ARG info
-    # select(geneId, gene, subtype, clusterNr, accession, genus, species, extra, 
-    #        start, plasmid, bit_score, score, total_bit_score) %>% 
-    # distinct() %>% 
+     left_join(ARG %>% select(geneId, gene, subtype, clusterNr), by = "geneId") %>% #Add ARG info
     mutate(val = total_bit_score)
   
-    #Keep the details for subspecies separate
-  # details = result %>% 
-  #   select(gene, subtype, accession, genus, species, extra, start, plasmid, val)
     
-    #Aggregate on species level
+  #Aggregate on species level
   test = result %>% 
-    # group_by(gene, subtype, genus, species, extra, start, plasmid) %>% 
-    # arrange(desc(val)) %>% slice(1) %>% select(-accession, -extra) %>% 
     group_by(geneId, gene, subtype, accession, genus, species, extra, plasmid, pathId) %>% 
     summarise(startVal = max(0,bit_score[start]), 
               notStartVal = max(0,bit_score[!start]),
@@ -323,11 +267,6 @@ results = map_df(1:nrow(toProcess), function(i){
     ) %>% 
     group_by(geneId, pathId) %>%
     filter(val == max(val)) %>% 
-    # group_by(geneId, gene, subtype, accession, genus, species, extra, plasmid) %>% 
-    # mutate(
-    #   startVal = startVal[1],
-    #   notStartVal = sum(notStartVal),
-    #   ) %>% 
     group_by(geneId) %>%
     filter(val == max(val)) %>% ungroup() %>% 
     select(-pathId) %>% distinct()
@@ -363,28 +302,6 @@ results = map_df(1:nrow(toProcess), function(i){
     arrange(genus, species, desc(val))
   
   test
-  # test = result %>% select(-accession, -extra) %>% distinct() %>% 
-  #     group_by(start,gene, subtype) %>%  filter(val >= cutOff(val)) %>%
-  #     # group_by(start,gene, subtype, genus, species) %>%  filter(val >= cutOff(val)) %>% 
-  #     left_join(genesDetected, by = c("gene", "subtype")) %>% 
-  #     left_join(test %>% select(-segmentId, -val, filter = n) %>% distinct(), 
-  #               by = c("geneId", "genus", "species")) %>% 
-  #     group_by(geneId) %>% 
-  #     mutate(
-  #       filter = ifelse(is.na(filter) & any(filter == 1,  na.rm = T), 0, 1),
-  #       cover = ifelse(type == "fragmentsOnly", cover2, cover1)) %>% 
-  #     filter(filter == 1) %>% 
-  #     group_by(geneId, genus, species) %>% filter(val == max(val)) %>% ungroup() %>% 
-  #     group_by(gene) %>% filter(cover >= min(0.9, max(cover)) | type != "fragmentsOnly")
-  #   
-  # result = result %>% 
-  #     select(geneId, gene, subtype, genus, species, plasmid, val, val2, cover, startPerc, type, everything()) %>%  
-  #     arrange(gene, desc(cover), desc(val), desc(startPerc),genus, species)
-  #   
-  # result = result %>% 
-  #     select(geneId, gene, subtype, genus, species, plasmid, val, val2, cover, startPerc, type, everything()) %>%  
-  #     arrange(genus, species, desc(type), gene, desc(cover), desc(val), desc(startPerc))
-    
   
   # write_csv(result, paste0(sample, "/annotation.csv"))
 })
