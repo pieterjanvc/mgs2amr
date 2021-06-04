@@ -357,7 +357,7 @@ tryCatch({
                                    fileDepth[val == max(val)][1] * 1.1)) %>% 
         group_by(gene, simToBest) %>% arrange(desc(val)) %>% slice(1) %>% 
         ungroup() %>% 
-        filter(cover1 >= 0.5, startDepth / fileDepth >= 0.5) %>% 
+        filter(cover1 >= 0.25, startDepth / fileDepth >= 0.25) %>% 
         select(-val, -simToBest)
         # filter(adjCov == max(adjCov)) %>% 
         # group_by(gene) %>% filter(
@@ -393,7 +393,7 @@ tryCatch({
             to %in% mySegments) 
       
       #Save start segments that do not connect to anything (isolated)
-      mySegments = mySegments[!mySegments %in% c(singleSeg$from, singleSeg$to) %>% unique()]
+      mySegments = mySegments[!mySegments %in% unique(c(singleSeg$from, singleSeg$to))]
       
       singleSeg = c(singleSeg$from, singleSeg$to) %>% unique()
       singleSeg = singleSeg[!str_detect(singleSeg, "_start$")]
@@ -425,7 +425,8 @@ tryCatch({
         # distinct() %>% 
         filter(str_detect(from, "_start$")) %>% 
         group_by(from) %>% summarise(n = n()) %>% 
-        filter(n == 1) %>% pull(from)
+        filter(n < 3) %>% 
+        pull(from)
       
       
       
@@ -478,8 +479,8 @@ tryCatch({
           group_by(geneId) %>% 
           summarise(type = case_when(
             sum(is.na(KC)) == 0 ~ "fragmentsOnly",
-            is.na(sum(KC[LN == max(LN)])) ~ "longestNoFragment",
-            TRUE ~ "longestFragment"
+            is.na(sum(KC[LN == max(LN)])) ~ "longestFragment",
+            TRUE ~ "longestNoFragment"
           ), .groups = "drop")
       } else {
         fragType = data.frame(geneId = "", type = NA)
@@ -491,7 +492,7 @@ tryCatch({
       genesDetected = genesDetected %>% left_join(fragType, by = "geneId") %>% 
         mutate(type = replace_na(type, "noFragments")) %>% 
         #Only keep decently covered genes (assumed higher abundance), or fragments (low abundance)
-        filter((cover1 > 0.5 & type != "fragmentsOnly") | type == "fragmentsOnly") %>% 
+        filter((cover1 > 0.1 & type != "fragmentsOnly") | type == "fragmentsOnly") %>% 
         mutate(pipelineId = pipelineId, runId = runId) %>% 
         select(pipelineId, runId, everything())
       
@@ -622,18 +623,30 @@ tryCatch({
         
       }) 
       
+      id = genesDetected$geneId[genesDetected$type == "fragmentsOnly"]
+      fragmentsOnly = list() 
+      fragmentsOnly$segments = gfa$segments %>% filter(geneId %in% id)
+      fragmentsOnly$links = gfa$links %>% filter(geneId %in% id)
+
+      fragmentsOnly = gfa_mergeSegments(fragmentsOnly, extraSummaries = list(
+        name = function(x) paste0(str_extract(x$name[1], "^\\d+"), "_unitig"),
+        geneId = function(x) str_extract(x$name[1], "^\\d+")
+      ))
+      
+      gfa_write(fragmentsOnly, sprintf("%sfragmentsOnly.gfa", tempFolder))
+      
       #Create final table of fragmented and simplified GFA
       if(nrow(blastSegments) > 0){
 
         blastSegments = bind_rows(
           blastSegments %>% select(-start, -CL), 
-          singleSeg$segments %>% select(-start) %>% 
+          fragmentsOnly$segments %>% select(-start) %>% 
             filter(LN >= 100)) %>% distinct() %>% 
           mutate(blastId = name) 
         
       } else {
         
-        blastSegments = singleSeg$segments %>% 
+        blastSegments = fragmentsOnly$segments %>% 
           mutate(blastId = name)
         
       }
