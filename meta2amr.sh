@@ -257,7 +257,7 @@ if [ -z "$MCsuccess" ]; then
 		--k 31 \
 		--coverage=5 \
 		--reads $inputFile \
-		--seq $baseFolder/dataAndScripts/ARG_06Jan2020.fasta \
+		--seq $baseFolder/dataAndScripts/ARG.fasta \
 		--maxradius 2000 \
 		--output $tempFolder/$tempName \
 		--work-dir $tempFolder/$tempName/metacherchant_logs \
