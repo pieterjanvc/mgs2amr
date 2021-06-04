@@ -42,26 +42,30 @@ cutOff = function(numbers, percent = 0.95){
 }
 
 sample = "temp/E12Heidi011_SRR4017917_0.1_1615998709"
-sample = "temp/mixfile_SRR2449036_1620769664"
-sample = toProcess$tempFolder[22]
+sample = "temp/test1"
+sample = toProcess$tempFolder[1]
 
 #Get the isolate info
-myConn = dbConnect(SQLite(), "sideStuff/isolateBrowserData.db")
-
-sampleInfo = str_extract(sample, "SRR[^\\_]+")
-
-sampleInfo = dbReadTable(myConn, "sampleInfo") %>% filter(Run == sampleInfo) %>% 
-  select(biosample_acc, Run, bact) %>% 
-  left_join(dbReadTable(myConn, "genoTypes"), by = "biosample_acc")
-
-dbDisconnect(myConn)
-
-genesDetected = read_csv(paste0(sample, "/genesDetected/genesDetected.csv")) %>% 
-  mutate(subtype = as.character(subtype))
-
-for(sample in toProcess$tempFolder){
+# myConn = dbConnect(SQLite(), "sideStuff/isolateBrowserData.db")
+# 
+# sampleInfo = str_extract(sample, "SRR[^\\_]+")
+# 
+# sampleInfo = dbReadTable(myConn, "sampleInfo") %>% filter(Run == sampleInfo) %>% 
+#   select(biosample_acc, Run, bact) %>% 
+#   left_join(dbReadTable(myConn, "genoTypes"), by = "biosample_acc")
+# 
+# dbDisconnect(myConn)
+options(readr.num_columns = 0)
+i = 6
+results = list()
+results = map_df(1:nrow(toProcess), function(i){
+# for(i in 1:2){
   
+  sample = toProcess$tempFolder[i]
   sampleName = str_extract(sample, "[^\\/]+(?=_\\d+$)")
+  genesDetected = read_csv(paste0(sample, "/genesDetected/genesDetected.csv")) %>% 
+    mutate(subtype = as.character(subtype))
+  
   print(paste("Annotating the genes for", sampleName))
   
   # ---- FILTERING DATA ----
@@ -149,27 +153,35 @@ for(sample in toProcess$tempFolder){
       segmentOfInterest = gfa$segments %>% filter(str_detect(name, "_start$")) %>%
         filter(LN == max(LN)) %>% filter(KC == max(KC)) %>% slice(1) %>% pull(name)
       
-      gfa_pathsToSegment(gfa, segmentOfInterest, returnList = T, pathSegmentsOnly = T) %>% 
+      x = gfa_pathsToSegment(gfa, segmentOfInterest, returnList = T, pathSegmentsOnly = T) %>% 
         map_df(function(path){
           data.frame(
             pathId = path$id,
             startOrientation = path$startOrientation,
             segmentId = path$segmentOrder)
-        }) %>% 
-        left_join(
-          pathsToSegmentTable(gfa, segmentOfInterest) %>% 
-            filter(dist < Inf) %>% group_by(segment) %>% 
-            filter(dist == min(dist)) %>% 
-            select(segment, KC, LN, dist) %>% 
-            mutate(geneId = str_extract(segment, "^\\d+")) %>% 
-            distinct(),
-          by = c("segmentId" = "segment")
-        ) %>% 
-        filter(LN >=250) %>% 
-        group_by(geneId, pathId) %>% mutate(
-          pathId = as.integer(pathId),
-          order = n():1,
-          type = "full")
+        })
+      
+      if(nrow(x) == 0 ){
+        data.frame()
+      }
+      else{
+        x %>% 
+          left_join(
+            pathsToSegmentTable(gfa, segmentOfInterest) %>% 
+              filter(dist < Inf) %>% group_by(segment) %>% 
+              filter(dist == min(dist)) %>% 
+              select(segment, KC, LN, dist) %>% 
+              mutate(geneId = str_extract(segment, "^\\d+")) %>% 
+              distinct(),
+            by = c("segmentId" = "segment")
+          ) %>% 
+          filter(LN >=250) %>% 
+          group_by(geneId, pathId) %>% mutate(
+            pathId = as.integer(pathId),
+            order = n():1,
+            type = "full")
+      }
+      
       
       
     } else {
@@ -178,28 +190,39 @@ for(sample in toProcess$tempFolder){
     
   })
   
-  fragments = gfa_read(paste0(sample, "/fragmentGFA.gfa"))
-  fragments = fragments$links %>% select(from, to, geneId) %>% 
-    mutate(pathId = 1:n()) %>% 
-    pivot_longer(c(from, to), names_to = NULL, values_to = "segment") %>% 
-    left_join(fragments$segments %>% select(name, LN, KC), by = c("segment" = "name")) %>% 
-    group_by(pathId) %>% 
-    filter(any(LN >= 250)) %>% ungroup() %>% 
-    mutate(
-      dist = ifelse(str_detect(segment, "_start$"), -1* LN, 0),
-      order = ifelse(dist == 0, 1, 2),
-      type = "fragment") %>% 
-    rename(segmentId = segment)
   
-  if(nrow(fragments) > 0){
-    fragments = fragments %>% left_join(
-      fragments %>% select(pathId, segmentId) %>% 
-        filter(str_detect(segmentId, "_start$")) %>% 
-        group_by(segmentId) %>% mutate(startOrientation = 1:n() -1),
-      by = c("pathId", "segmentId")) %>% group_by(pathId) %>% 
-      mutate(startOrientation = sum(startOrientation, na.rm = T))
+  fragments = gfa_read(paste0(sample, "/fragmentsOnly.gfa"))
+  # fragments = gfa_read(paste0(sample, "/fragmentGFA.gfa"))
+  if(nrow(fragments$segments) > 0){
+    # fragments = fragments$links %>% select(from, to, geneId) %>% 
+    #   mutate(pathId = 1:n()) %>% 
+    #   pivot_longer(c(from, to), names_to = NULL, values_to = "segment") %>% 
+    #   left_join(fragments$segments %>% select(name, LN, KC), by = c("segment" = "name")) %>% 
+    #   group_by(pathId) %>% 
+    #   filter(any(LN >= 100)) %>% ungroup() %>% 
+    #   mutate(
+    #     dist = ifelse(str_detect(segment, "_start$"), -1* LN, 0),
+    #     order = ifelse(dist == 0, 1, 2),
+    #     type = "fragment") %>% 
+    #   rename(segmentId = segment)
+    # 
+    # if(nrow(fragments) > 0){
+    #   fragments = fragments %>% left_join(
+    #     fragments %>% select(pathId, segmentId) %>% 
+    #       filter(str_detect(segmentId, "_start$")) %>% 
+    #       group_by(segmentId) %>% mutate(startOrientation = 1:n() -1),
+    #     by = c("pathId", "segmentId")) %>% group_by(pathId) %>% 
+    #     mutate(startOrientation = sum(startOrientation, na.rm = T))
+    # }
+    
+    fragments = fragments$segments %>% 
+      select(segmentId = name, LN, KC, geneId) %>% 
+      group_by(geneId) %>% 
+      mutate(pathId = 1, startOrientation = 0:(n()-1),
+             order = 1, type = "fragment", dist = 0)
+  } else {
+    fragments = data.frame()
   }
- 
   
   pathData = bind_rows(pathData, fragments)
   
@@ -333,11 +356,13 @@ for(sample in toProcess$tempFolder){
               by = "geneId") %>% 
     rowwise() %>% 
     mutate(
+      pipelineId = toProcess$pipelineId[i],
       startVal = min(startVal / (nBases*1.81), 1),
       notStartVal = min(notStartVal / (maxPathDist*2*1.81), 1)
     ) %>% 
     arrange(genus, species, desc(val))
   
+  test
   # test = result %>% select(-accession, -extra) %>% distinct() %>% 
   #     group_by(start,gene, subtype) %>%  filter(val >= cutOff(val)) %>%
   #     # group_by(start,gene, subtype, genus, species) %>%  filter(val >= cutOff(val)) %>% 
@@ -361,8 +386,9 @@ for(sample in toProcess$tempFolder){
   #     arrange(genus, species, desc(type), gene, desc(cover), desc(val), desc(startPerc))
     
   
-  write_csv(result, paste0(sample, "/annotation.csv"))
-}
+  # write_csv(result, paste0(sample, "/annotation.csv"))
+})
 
-
+results = results %>% select(pipelineId, everything())
+write_csv(results, 'sideStuff/annotationResults_2.csv')
 
