@@ -468,10 +468,24 @@ tryCatch({
                        links = gfa$links %>% filter(
                          from %in% singleSeg | to %in% singleSeg))
       
+      #Consider fragment only if small piece of gene 
+      myFilter = gfa$segments %>% select(name, LN, geneId) %>% 
+        filter(geneId %in% singleSeg$segments$geneId, 
+               name %in% c(singleSeg$links$from, singleSeg$links$to)) %>% 
+        group_by(geneId) %>% summarise(LN = sum(LN), n = n()) %>% 
+        filter(!(n < 4 & LN > 500))
+      
+      singleSeg = list(segments = gfa$segments %>% 
+                         filter(name %in% singleSeg | geneId %in% onlyStartSeg), 
+                       links = gfa$links %>% filter(
+                         from %in% singleSeg | to %in% singleSeg))
+      
       #Check fragment type
       fragType = gfa$segments %>% select(name, geneId, LN) %>% 
         filter(geneId %in% singleSeg$segments$geneId) %>% 
         filter(str_detect(name, "_start$"))
+      
+     
       
       if(nrow(fragType) > 0){
         fragType = fragType %>% left_join(singleSeg$segments %>% select(-sequence, -LN),
