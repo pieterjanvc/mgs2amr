@@ -56,7 +56,7 @@ sample = toProcess$tempFolder[1]
 # 
 # dbDisconnect(myConn)
 options(readr.num_columns = 0)
-i = 6
+i = 5
 results = list()
 results = map_df(1:nrow(toProcess), function(i){
 # for(i in 1:2){
@@ -126,18 +126,18 @@ results = map_df(1:nrow(toProcess), function(i){
     mutate(maxBit = max(bit_score)) %>% 
     group_by(start, segmentId) %>% 
     filter(maxBit == max(maxBit), !plasmid) %>% 
-    mutate(onlyOne = length(unique(genus)) == 1 & 
-             length(unique(species))) %>% 
+    mutate(onlyOne = length(unique(genus)) == 1) %>% 
     filter(onlyOne) %>% 
-    group_by(start, genus, species) %>% 
+    group_by(genus, species) %>% 
     summarise(
       bit_score = sum(bit_score),
       depth = sum(KC / sum(LN)),
       .groups = "drop"
     ) %>% 
-    group_by(start) %>% 
-    filter(depth <= depth[bit_score == max(bit_score)])
-  
+    # group_by(start) %>%
+    filter(depth / bit_score < 0.01)
+    # filter(depth <= depth[bit_score == max(bit_score)])
+
   
   pathData = list.files(
     paste0(sample, "/genesDetected/simplifiedGFA"), 
@@ -258,7 +258,7 @@ results = map_df(1:nrow(toProcess), function(i){
     group_by(geneId, gene, subtype, accession, genus, species, extra, plasmid, pathId) %>% 
     summarise(startVal = max(0,bit_score[start]), 
               notStartVal = max(0,bit_score[!start]),
-              val = total_bit_score[1]) %>% 
+              val = total_bit_score[1], .groups = "drop") %>% 
     group_by(geneId, gene, subtype, genus, species) %>% 
     mutate(
       startVal = ifelse(startVal == 0, max(startVal) / 2, startVal),
@@ -307,5 +307,5 @@ results = map_df(1:nrow(toProcess), function(i){
 })
 
 results = results %>% select(pipelineId, everything())
-write_csv(results, 'sideStuff/annotationResults_2.csv')
+write_csv(results, 'sideStuff/annotationResults_3.csv')
 
