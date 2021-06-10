@@ -76,7 +76,7 @@ fi
 
 if [ -z ${memory+x} ]; then 
 	# memory=$(expr $(free -h | grep -oP "Mem:\s+[^\s]+\s+[^\s]+\s+\K([\d\.]+)") - 4)
-	memory="16G"
+	memory="32G"
 fi
 
 if [ -z ${pipelineId+x} ]; then 	
