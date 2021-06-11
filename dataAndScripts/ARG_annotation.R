@@ -56,7 +56,7 @@ sample = toProcess$tempFolder[1]
 # 
 # dbDisconnect(myConn)
 options(readr.num_columns = 0)
-i = 5
+i = 26
 results = list()
 results = map_df(1:nrow(toProcess), function(i){
 # for(i in 1:2){
@@ -118,25 +118,28 @@ results = map_df(1:nrow(toProcess), function(i){
   #Check the bacteria
   allBact = blastOut %>% 
     select(-c(score:hit_to)) %>% 
-    # filter(!plasmid, species != "sp") %>% 
+    filter(!start, !plasmid) %>%
     left_join(segmentInfo, by = c("segmentId" = "blastId")) %>% #Add segment info
     group_by(start, segmentId) %>% 
     filter(bit_score == max(bit_score)) %>% 
     group_by(start, segmentId, plasmid) %>%
     mutate(maxBit = max(bit_score)) %>% 
     group_by(start, segmentId) %>% 
-    filter(maxBit == max(maxBit), !plasmid) %>% 
+    filter(maxBit == max(maxBit)) %>% 
     mutate(onlyOne = length(unique(genus)) == 1) %>% 
     filter(onlyOne) %>% 
-    group_by(genus, species) %>% 
+    group_by(genus, species, extra) %>% 
     summarise(
       bit_score = sum(bit_score),
       depth = sum(KC / sum(LN)),
       .groups = "drop"
     ) %>% 
+    group_by(genus, species) %>% 
+    filter(bit_score == max(bit_score)) %>% ungroup() %>% 
     # group_by(start) %>%
-    filter(depth / bit_score < 0.01)
-    # filter(depth <= depth[bit_score == max(bit_score)])
+    # filter(depth / bit_score < 0.01)
+    # filter(genus %in% c("Acinetobacter", "Enterobacter"))
+    filter(depth <= depth[bit_score == max(bit_score)][1])
 
   
   pathData = list.files(
@@ -200,112 +203,158 @@ results = map_df(1:nrow(toProcess), function(i){
     fragments = data.frame()
   }
   
-  pathData = bind_rows(pathData, fragments)
+  pathData = bind_rows(pathData, fragments)  %>%  ungroup()
   
-  #Get the result
+  #NEW?? - KEEP??
+  pathData = pathData %>% group_by(geneId, pathId, startOrientation) %>% 
+    mutate(totalLN = sum(LN[dist >= 0])) %>% ungroup()
+  
   result = 
     blastOut %>% 
-    # mutate(species = ifelse(species == "cloacae", "hormaechei", species)) %>% 
     filter(
       extra != "",
-      genus %in% allBact$genus, #Only keep the bact of interest
+      genus %in% allBact$genus,
       species %in% allBact$species
-    ) %>% #fix weird extra
-    select(-hit_from, -hit_to) %>% #somtimes more than one match like repeat? (ignore)
-    mutate(
-      coverage = align_len / query_len, #coverage of segment
-      extra = ifelse(species == "sp", "xxx", extra) #fix species things to be more general
+      # geneId == "1683"
+      # accession == "CP038500"
+      # start
     ) %>%
-    filter(coverage >= 0.95 | (align_len > 500 & coverage >= 0.90)) %>% #filter by segment coverage
-    group_by(start, segmentId, geneId, genus, species, extra, plasmid) %>% 
-    filter(bit_score == max(bit_score)) %>% distinct() %>% #only one subspecies per segment
-    ungroup() %>% left_join(pathData, by = c("geneId", "segmentId")) %>% 
-    filter(!is.na(dist)) %>% rowwise() %>% #Only keep segments that are in a path to start
-    mutate(
-      dist = ifelse(dist < 1, 1, dist) #Avoid division by 0
-      ) %>% group_by(geneId, accession, genus, species, extra, pathId, 
-                     start, startOrientation) %>% 
-    mutate(
-      completePath = length(unique(order[order != 1])) == (max(order) - 1),
-      score = sum(score),
-      bit_score = sum(bit_score)
-      ) %>%
-    ungroup() %>% 
-    filter(completePath) %>% select(-dist, -order, -hitId) %>% 
-    distinct()
-  
-  result$startOrientation[result$start] = 0
-  result = result %>% 
-    select(start,geneId, accession, genus, species, 
-           extra, plasmid, pathId, bit_score, score) %>% 
-    group_by(geneId, genus, species, extra, start, pathId) %>% 
-    mutate(
-      score = max(score),
-      bit_score = max(bit_score)
+    mutate(coverage = align_len / query_len) %>% #calculate coverage
+    group_by(start, segmentId, geneId, hitId, accession) %>% 
+    filter(bit_score == max(bit_score)) %>% #Remove multiple hits in one bact
+    slice(1) %>% ungroup() %>% 
+    left_join(pathData %>% select(-geneId), by = "segmentId") %>% #Add path data
+    select(start,segmentId, geneId, accession, plasmid, genus, species, strain, extra, bit_score, 
+           align_len, coverage, pathId, startOrientation, KC, LN, totalLN, dist, order, type) %>% 
+    group_by(start,geneId, plasmid, accession, genus, species, strain, extra, pathId, startOrientation) %>% 
+    summarise( #Calculate the path score (further segments + less coverage = reduced score)
+      pathScore = bit_score * coverage / (max(dist,0) * 0.01 + 1),
+      pathAlignLN = sum(align_len),
+      pathLN = max(totalLN),
+      pathPerc = sum(align_len) / max(totalLN),
+      order = paste(order, collapse = ",")
+      # depth = sum(KC / sum(LN)), .groups = "drop"
     ) %>% 
-    arrange(desc(bit_score)) %>% slice(1) %>% 
-    group_by(geneId, accession, genus, species, extra, pathId) %>% 
-    mutate(
-      total_score = sum(score),
-      total_bit_score = sum(bit_score)
-    ) %>% ungroup() %>% 
-     left_join(ARG %>% select(geneId, gene, subtype, clusterNr), by = "geneId") %>% #Add ARG info
-    mutate(val = total_bit_score)
+    group_by(start, geneId, accession, startOrientation) %>% #only keep best per accession
+    filter(pathPerc == max(pathPerc)) %>% slice(1) %>% 
+    group_by(across(-c(pathId:order))) %>% 
+    summarise(pathScore = sum(pathScore), #Sum path scores for both sides (if 2)
+              pathPerc = max(pathPerc),
+              nSides = n()) %>% 
+    group_by(start, geneId) %>% #Keep best scores per gene
+    filter(
+      pathScore == max(pathScore, na.rm = T)) %>% ungroup() %>% 
+    # select(-pathId) %>% distinct() %>% 
+    left_join(ARG, by = "geneId") %>% #Add ARG data
+    select(start, geneId, gene, subtype, genus, species, strain, 
+           extra, pathScore, nSides, pathPerc, everything()) %>% 
+    group_by(start, geneId, genus, species) %>% #Reduce to species level (no strain)
+    filter(pathScore == max(pathScore)) %>% slice(1)
   
-    
-  #Aggregate on species level
-  test = result %>% 
-    group_by(geneId, gene, subtype, accession, genus, species, extra, plasmid, pathId) %>% 
-    summarise(startVal = max(0,bit_score[start]), 
-              notStartVal = max(0,bit_score[!start]),
-              val = total_bit_score[1], .groups = "drop") %>% 
-    group_by(geneId, gene, subtype, genus, species) %>% 
-    mutate(
-      startVal = ifelse(startVal == 0, max(startVal) / 2, startVal),
-      notStartVal = ifelse(notStartVal == 0, max(notStartVal) / 2, notStartVal),
-      val = startVal + notStartVal
-    ) %>% 
-    group_by(geneId, pathId) %>%
-    filter(val == max(val)) %>% 
-    group_by(geneId) %>%
-    filter(val == max(val)) %>% ungroup() %>% 
-    select(-pathId) %>% distinct()
-  
-  details = test
-  test = test %>% 
-    group_by(geneId, gene, subtype, genus, species, plasmid) %>% 
-    arrange(desc(val)) %>% slice(1) %>% 
-    group_by(geneId, gene, subtype, genus, species) %>%
-    mutate(plasmid = case_when(
-      sum(any(plasmid) + any(!plasmid)) == 2 ~ max(val[plasmid]) / 
-        (max(val[plasmid]) + max(val[!plasmid])),
-      any(plasmid) ~ 1,
-      TRUE ~ 0
-    ))
-  
-  details = result
-  
-  test = test %>% group_by(geneId, gene, subtype, genus, species) %>% 
-    arrange(desc(val)) %>% slice(1) %>% 
-    ungroup() %>% select(-extra, -accession) %>% 
-    left_join(genesDetected %>% 
-                mutate(geneId = as.character(geneId)) %>% 
-                select(geneId, nBases, startPerc, startDepth, cover1, 
-                       cover2, KCsum, type),
-              by = "geneId") %>% 
-    rowwise() %>% 
-    mutate(
-      pipelineId = toProcess$pipelineId[i],
-      startVal = min(startVal / (nBases*1.81), 1),
-      notStartVal = min(notStartVal / (maxPathDist*2*1.81), 1)
-    ) %>% 
-    arrange(genus, species, desc(val))
-  
-  test
+  # #Get the result
+  # result = 
+  #   blastOut %>% 
+  #   # mutate(species = ifelse(species == "cloacae", "hormaechei", species)) %>% 
+  #   filter(
+  #     extra != "",
+  #     genus %in% allBact$genus, #Only keep the bact of interest
+  #     species %in% allBact$species
+  #   ) %>% #fix weird extra
+  #   select(-hit_from, -hit_to) %>% #somtimes more than one match like repeat? (ignore)
+  #   mutate(
+  #     coverage = align_len / query_len, #coverage of segment
+  #     extra = ifelse(species == "sp", "xxx", extra) #fix species things to be more general
+  #   ) %>%
+  #   filter(coverage >= 0.95 | (align_len > 500 & coverage >= 0.90)) %>% #filter by segment coverage
+  #   group_by(start, segmentId, geneId, genus, species, extra, plasmid) %>% 
+  #   filter(bit_score == max(bit_score)) %>% distinct() %>% #only one subspecies per segment
+  #   ungroup() %>% left_join(pathData, by = c("geneId", "segmentId")) %>% 
+  #   filter(!is.na(dist)) %>% rowwise() %>% #Only keep segments that are in a path to start
+  #   mutate(
+  #     dist = ifelse(dist < 1, 1, dist) #Avoid division by 0
+  #     ) %>% group_by(geneId, accession, genus, species, extra, pathId, 
+  #                    start, startOrientation) %>% 
+  #   mutate(
+  #     completePath = length(unique(order[order != 1])) == (max(order) - 1),
+  #     score = sum(score),
+  #     bit_score = sum(bit_score)
+  #     ) %>%
+  #   ungroup() %>% 
+  #   filter(completePath) %>% select(-dist, -order, -hitId) %>% 
+  #   distinct()
+  # 
+  # result$startOrientation[result$start] = 0
+  # result = result %>% 
+  #   select(start,geneId, accession, genus, species, 
+  #          extra, plasmid, pathId, bit_score, score) %>% 
+  #   group_by(geneId, genus, species, extra, start, pathId) %>% 
+  #   mutate(
+  #     score = max(score),
+  #     bit_score = max(bit_score)
+  #   ) %>% 
+  #   arrange(desc(bit_score)) %>% slice(1) %>% 
+  #   group_by(geneId, accession, genus, species, extra, pathId) %>% 
+  #   mutate(
+  #     total_score = sum(score),
+  #     total_bit_score = sum(bit_score)
+  #   ) %>% ungroup() %>% 
+  #    left_join(ARG %>% select(geneId, gene, subtype, clusterNr), by = "geneId") %>% #Add ARG info
+  #   mutate(val = total_bit_score)
+  # 
+  #   
+  # #Aggregate on species level
+  # test = result %>% 
+  #   group_by(geneId, gene, subtype, accession, genus, species, extra, plasmid, pathId) %>% 
+  #   summarise(startVal = max(0,bit_score[start]), 
+  #             notStartVal = max(0,bit_score[!start]),
+  #             val = total_bit_score[1], .groups = "drop") %>% 
+  #   group_by(geneId, gene, subtype, genus, species) %>% 
+  #   mutate(
+  #     startVal = ifelse(startVal == 0, max(startVal) / 2, startVal),
+  #     notStartVal = ifelse(notStartVal == 0, max(notStartVal) / 2, notStartVal),
+  #     val = startVal + notStartVal
+  #   ) %>% 
+  #   group_by(geneId, pathId) %>%
+  #   filter(val == max(val)) %>% 
+  #   group_by(geneId) %>%
+  #   filter(val == max(val)) %>% ungroup() %>% 
+  #   select(-pathId) %>% distinct()
+  # 
+  # details = test
+  # test = test %>% 
+  #   group_by(geneId, gene, subtype, genus, species, plasmid) %>% 
+  #   arrange(desc(val)) %>% slice(1) %>% 
+  #   group_by(geneId, gene, subtype, genus, species) %>%
+  #   mutate(plasmid = case_when(
+  #     sum(any(plasmid) + any(!plasmid)) == 2 ~ max(val[plasmid]) / 
+  #       (max(val[plasmid]) + max(val[!plasmid])),
+  #     any(plasmid) ~ 1,
+  #     TRUE ~ 0
+  #   ))
+  # 
+  # details = result
+  # 
+  # test = test %>% group_by(geneId, gene, subtype, genus, species) %>% 
+  #   arrange(desc(val)) %>% slice(1) %>% 
+  #   ungroup() %>% select(-extra, -accession) %>% 
+  #   left_join(genesDetected %>% 
+  #               mutate(geneId = as.character(geneId)) %>% 
+  #               select(geneId, nBases, startPerc, startDepth, cover1, 
+  #                      cover2, KCsum, type),
+  #             by = "geneId") %>% 
+  #   rowwise() %>% 
+  #   mutate(
+  #     pipelineId = toProcess$pipelineId[i],
+  #     startVal = min(startVal / (nBases*1.81), 1),
+  #     notStartVal = min(notStartVal / (maxPathDist*2*1.81), 1)
+  #   ) %>% 
+  #   arrange(genus, species, desc(val))
+  # 
+  # test
   
   # write_csv(result, paste0(sample, "/annotation.csv"))
 })
 
 results = results %>% select(pipelineId, everything())
-write_csv(results, 'sideStuff/annotationResults_3.csv')
+write_csv(results, 'sideStuff/annotationResults_4.csv')
 
