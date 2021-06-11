@@ -25,7 +25,7 @@ blastArgs = list(
   db = "nt",
   evalue = "1e-10",
   word_size = 64,
-  max_target_seqs = 50,
+  max_target_seqs = 100,
   taxidlist = sprintf("%sdataAndScripts/%s", baseFolder, "bact.txids")
 )
 
