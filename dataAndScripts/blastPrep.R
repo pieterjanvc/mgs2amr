@@ -43,6 +43,8 @@ maxStep= as.integer(args[[13]]) #Which parts of the script to run? If NA all is 
 
 maxStep = ifelse(maxStep == 0, 5, maxStep)
 
+maxPathSteps = 1500
+
 #Generate a list out of the settings file
 settings = readLines(paste0(baseFolder, "settings.txt"))
 settings = settings[str_detect(settings,"^\\s*[^=#]+=.*$")]
@@ -573,7 +575,20 @@ tryCatch({
       dir.create(sprintf("%sgenesDetected/simplifiedGFA", tempFolder), showWarnings = F)
       if(verbose > 0){cat("\n")}
       
-      blastSegments = map_df(
+      cl <- parallel::makeCluster(detectCores())
+      x = clusterEvalQ(cl, {
+        library(dplyr)
+        library(stringr)
+        library(gfaTools)
+        library(igraph)
+      })
+      clusterExport(cl, 
+                    varlist = c("genesDetected", "tempFolder", "verbose",
+                                "maxPathDist", "maxPathSteps", "trimLength", 
+                                "minBlastLength"))
+      
+      #Read all GFA files
+      blastSegments = suppressWarnings(parLapply(cl,
         genesDetected$geneId[! genesDetected$type %in% 
                                c("fragmentsOnly", "longestFragment")], function(myGene){
 
@@ -591,12 +606,25 @@ tryCatch({
           return(data.frame())
         }
         
+        #Remove disconnected pieces that do not contain a start segment
+        myGraph = graph_from_data_frame(gfa$links %>% select(from, to), directed = F)
+        myGraph = components(myGraph)$membership
+        myGraph = data.frame(
+          name = names(myGraph),
+          group = myGraph
+        ) %>% 
+          group_by(group) %>% 
+          filter(any(str_detect(name, "_start$")))
+        
+        gfa = gfa_filterSegments(gfa, myGraph$name)
+        
         #Get largest start segment
         segmentOfInterest = gfa$segments %>% filter(str_detect(name, "_start$")) %>%
           filter(LN == max(LN)) %>% filter(KC == max(KC)) %>% slice(1) %>% pull(name)
         
         #Stay within maxPathDist around this segment
-        gfa = gfa_neighbourhood(gfa, segmentOfInterest, maxPathDist, noLoops = T)
+        gfa = gfa_neighbourhood(gfa, segmentOfInterest, maxPathDist, 
+                                maxPathSteps, noLoops = T)
         
         #Check if filter yields any results
         if(nrow(gfa$links) == 0){
@@ -632,10 +660,14 @@ tryCatch({
         
         if(verbose > 0){cat("done\n")}
         
-        gfa$segments %>% filter(LN > minBlastLength) %>% 
-          mutate(geneId = myGene)
+        return(gfa$segments %>% filter(LN > minBlastLength) %>% 
+          mutate(geneId = myGene))
         
-      }) 
+      })) 
+      
+      rm(cl)
+      
+      blastSegments = bind_rows(blastSegments)
       
       id = genesDetected$geneId[genesDetected$type == "fragmentsOnly"]
       fragmentsOnly = list() 
