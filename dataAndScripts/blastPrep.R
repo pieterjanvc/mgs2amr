@@ -573,8 +573,8 @@ tryCatch({
       newLogs = rbind(newLogs, list(as.integer(Sys.time()), 13, "Start simplifying GFA files"))
       
       dir.create(sprintf("%sgenesDetected/simplifiedGFA", tempFolder), showWarnings = F)
-      if(verbose > 0){cat("\n")}
-      
+
+      #Process in parallel
       cl <- parallel::makeCluster(detectCores())
       x = clusterEvalQ(cl, {
         library(dplyr)
@@ -592,13 +592,6 @@ tryCatch({
         genesDetected$geneId[! genesDetected$type %in% 
                                c("fragmentsOnly", "longestFragment")], function(myGene){
 
-        if(verbose > 0){
-          cat(sprintf(" gene %i/%i ... ", 
-                      which(myGene == genesDetected$geneId[! genesDetected$type %in% 
-                                                             c("fragmentsOnly", "longestFragment")]),
-                      length(genesDetected$geneId[! genesDetected$type %in% 
-                                                    c("fragmentsOnly", "longestFragment")])))}
-        
         gfa = gfa_read(sprintf("%sgenesDetected/%s.gfa", tempFolder, myGene))
         
         #Check if filter yields any results
@@ -622,7 +615,7 @@ tryCatch({
         segmentOfInterest = gfa$segments %>% filter(str_detect(name, "_start$")) %>%
           filter(LN == max(LN)) %>% filter(KC == max(KC)) %>% slice(1) %>% pull(name)
         
-        #Stay within maxPathDist around this segment
+        #Stay within maxPathDist / maxPathSteps around this segment
         gfa = gfa_neighbourhood(gfa, segmentOfInterest, maxPathDist, 
                                 maxPathSteps, noLoops = T)
         
@@ -658,17 +651,16 @@ tryCatch({
         gfa_write(gfa, sprintf("%s/genesDetected/simplifiedGFA/%s_simplified.gfa",
                                tempFolder, myGene))
         
-        if(verbose > 0){cat("done\n")}
-        
         return(gfa$segments %>% filter(LN > minBlastLength) %>% 
           mutate(geneId = myGene))
         
       })) 
       
       rm(cl)
-      
       blastSegments = bind_rows(blastSegments)
+      if(verbose > 0){cat("done\n")}
       
+      #Extract fragmented genes from master GFA
       id = genesDetected$geneId[genesDetected$type == "fragmentsOnly"]
       fragmentsOnly = list() 
       fragmentsOnly$segments = gfa$segments %>% filter(geneId %in% id)
