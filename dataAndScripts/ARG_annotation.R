@@ -56,7 +56,7 @@ sample = toProcess$tempFolder[1]
 # 
 # dbDisconnect(myConn)
 options(readr.num_columns = 0)
-i = 26
+i = 20
 results = list()
 results = map_df(1:nrow(toProcess), function(i){
 # for(i in 1:2){
@@ -87,7 +87,8 @@ results = map_df(1:nrow(toProcess), function(i){
             regex = "(\\w+)\\s+(\\w+)($|\\s+.*)") %>% 
     #Sp. will be pasted with taxid to make it unique
     mutate(species = ifelse(species == "sp", paste0(species, taxid), species)) %>% 
-    filter(!species %in% c("bacterium", "xxx", "sp") & 
+    filter(!genus %in% c("uncultured", "mixed"),
+           !species %in% c("bacterium") & 
              !is.na(species)) %>% 
     mutate(
       subspecies = str_extract(extra, "(?<=subsp\\s)[^\\s]+"),
@@ -116,30 +117,32 @@ results = map_df(1:nrow(toProcess), function(i){
     select(-sequence, -name, -geneId)
   
   #Check the bacteria
-  allBact = blastOut %>% 
+  allBact2 = blastOut %>% 
     select(-c(score:hit_to)) %>% 
-    filter(!start, !plasmid) %>%
+    filter(!start) %>% distinct() %>% 
     left_join(segmentInfo, by = c("segmentId" = "blastId")) %>% #Add segment info
     group_by(start, segmentId) %>% 
     filter(bit_score == max(bit_score)) %>% 
-    group_by(start, segmentId, plasmid) %>%
+    group_by(start, segmentId) %>%
     mutate(maxBit = max(bit_score)) %>% 
     group_by(start, segmentId) %>% 
     filter(maxBit == max(maxBit)) %>% 
     mutate(onlyOne = length(unique(genus)) == 1) %>% 
     filter(onlyOne) %>% 
-    group_by(genus, species, extra) %>% 
+    group_by(taxid, genus, species, extra) %>% 
     summarise(
       bit_score = sum(bit_score),
       depth = sum(KC / sum(LN)),
       .groups = "drop"
     ) %>% 
-    group_by(genus, species) %>% 
-    filter(bit_score == max(bit_score)) %>% ungroup() %>% 
+    group_by(taxid, genus, species) %>% 
+    filter(bit_score == max(bit_score)) %>% 
+    slice(1) %>% ungroup()
+  
     # group_by(start) %>%
     # filter(depth / bit_score < 0.01)
     # filter(genus %in% c("Acinetobacter", "Enterobacter"))
-    filter(depth <= depth[bit_score == max(bit_score)][1])
+    # filter(depth <= depth[bit_score == max(bit_score)][1])
 
   
   pathData = list.files(
@@ -198,7 +201,7 @@ results = map_df(1:nrow(toProcess), function(i){
       select(segmentId = name, LN, KC, geneId) %>% 
       group_by(geneId) %>% 
       mutate(pathId = 1, startOrientation = 0:(n()-1),
-             order = 1, type = "fragment", dist = 0)
+             order = 1, type = "fragment", dist = -1) #change back !!!?
   } else {
     fragments = data.frame()
   }
@@ -212,12 +215,14 @@ results = map_df(1:nrow(toProcess), function(i){
   result = 
     blastOut %>% 
     filter(
+      # geneId == "1683",
+      # accession %in%  c("CP043048", "CP043047"),
+      # accession %in%  c("CP033858", "MK531543"),
+      # accession %in%  c("CP051263", "CP025710"),
+      # start,
       extra != "",
       genus %in% allBact$genus,
       species %in% allBact$species
-      # geneId == "1683"
-      # accession == "CP038500"
-      # start
     ) %>%
     mutate(coverage = align_len / query_len) %>% #calculate coverage
     group_by(start, segmentId, geneId, hitId, accession) %>% 
@@ -249,7 +254,10 @@ results = map_df(1:nrow(toProcess), function(i){
     select(start, geneId, gene, subtype, genus, species, strain, 
            extra, pathScore, nSides, pathPerc, everything()) %>% 
     group_by(start, geneId, genus, species) %>% #Reduce to species level (no strain)
-    filter(pathScore == max(pathScore)) %>% slice(1)
+    filter(pathScore == max(pathScore)) %>% slice(1) %>% 
+    group_by(gene, subtype) %>% 
+    filter(pathScore == max(pathScore)) %>% 
+    arrange(genus, species, gene, desc(pathScore))
   
   # #Get the result
   # result = 
