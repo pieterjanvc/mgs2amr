@@ -5,10 +5,11 @@
 library(gfaTools)
 library(tidyverse, warn.conflicts = FALSE)
 library(RSQLite)
-
-maxPathDist = 1500
+library(igraph)
+library(visNetwork)
 
 #Get the arguments
+baseFolder = "/mnt/meta2amrData/meta2amr/"
 tempFolder = formatPath("temp/", endWithSlash = F)
 pipelineIds = NULL
 
@@ -25,6 +26,12 @@ if(length(pipelineIds) > 0){
 }
 
 dbDisconnect(myConn)
+
+#Generate a list out of the settings file
+settings = readLines(paste0(baseFolder, "settings.txt"))
+settings = settings[str_detect(settings,"^\\s*[^=#]+=.*$")]
+settings = str_match(settings, "\\s*([^=\\s]+)\\s*=\\s*(.*)")
+settings = setNames(str_trim(settings[,3]), settings[,2])
 
 
 # ---- FUNCTIONS ----
@@ -56,9 +63,9 @@ sample = toProcess$tempFolder[1]
 # 
 # dbDisconnect(myConn)
 options(readr.num_columns = 0)
-i = 20
+i = 30
 results = list()
-results = map_df(1:nrow(toProcess), function(i){
+# results = map_df(1:nrow(toProcess), function(i){
 # for(i in 1:2){
   
   sample = toProcess$tempFolder[i]
@@ -254,6 +261,8 @@ results = map_df(1:nrow(toProcess), function(i){
     group_by(geneId) %>% filter(pathScore == max(pathScore)) %>% 
     select(-pathId) %>% distinct()
   
+  #---- Remove duplicate genes ---
+  #-------------------------------
   getSegments = map_df(list.files(
     paste0(sample, "/genesDetected/simplifiedGFA"), 
     pattern = ".gfa", full.names = T), function(x) gfa_read(x)$segments)
@@ -263,13 +272,23 @@ results = map_df(1:nrow(toProcess), function(i){
   getSegments = getSegments %>% filter(name %in% myFilter)
   
   fasta_write(getSegments$sequence, 
-              sprintf("%s/ARGsimilarities.fasta", sample),
+              sprintf("%s/ARGsim.fasta", sample),
               getSegments$name, type = "n")
+  
+  #Add the reverse complement (usearch does not do that when calc_distmx)
+  system(sprintf("%s -fastx_revcomp %s -label_suffix _RC -fastaout %s >/dev/null 2>&1",
+                 settings["usearch"],
+                 sprintf("%s/ARGsim.fasta", sample),
+                 sprintf("%s/ARGsim_RC.fasta", sample)))
+  system(sprintf("cat %1$s %2$s > %3$s; rm %1$s %2$s >/dev/null 2>&1",
+                 sprintf("%s/ARGsim.fasta", sample),
+                 sprintf("%s/ARGsim_RC.fasta", sample),
+                 sprintf("%s/ARGsimilarities.fasta", sample)))
   
   #Use cluster_fast to reduce number of segments by grouping in identity clusters
   verbose = 2
-  system(sprintf("/opt/usearch11.0.667 -calc_distmx %s -tabbedout %s -termdist 0.1 %s",
-                 # settings["usearch"],
+  system(sprintf("%s -calc_distmx %s -tabbedout %s -termdist 0.1 %s",
+                 settings["usearch"],
                  sprintf("%s/ARGsimilarities.fasta", sample),
                  sprintf("%s/ARGsimilarities.out", sample),
                  ifelse(verbose < 2, " >/dev/null 2>&1", " 2>&1")))
@@ -278,6 +297,7 @@ results = map_df(1:nrow(toProcess), function(i){
   #Group identical ARG and remove the duplicate (weak) ones
   identicalARG = read_delim(sprintf("%s/ARGsimilarities.out", sample), "\t", col_names = F) %>% 
     filter(X1 != X2) %>% 
+    mutate(X1 = str_remove(X1, "_RC$"), X2 = str_remove(X2, "_RC$")) %>% 
     left_join(pathData %>% filter(order < 3) %>% 
                 select(segmentId, d1 = depth, o1 = order, LN1 = LN, KC1 = KC) %>% 
                 distinct(), by = c("X1" = "segmentId")) %>% 
@@ -290,24 +310,26 @@ results = map_df(1:nrow(toProcess), function(i){
       gene1 = str_extract(X1, "^\\d+"),
       gene2 = str_extract(X2, "^\\d+"),
       LNdiff = min(LN1, LN2) / max(LN1, LN2)
-    ) %>% filter(LNdiff > 0.9) %>% 
+    ) %>% 
+    #Remove alignments that are too big in size difference, unless start
+    filter(LNdiff > 0.9 | (X3 == 0 & o1 == 1)) %>% 
     mutate(gene = ifelse(d1 > d2, gene1, gene2),
            depth = ifelse(d1 > d2, d1, d2))
   
+  #Build a graph to see how the genes are connected
   myFilter = graph_from_data_frame(data.frame(
     from = identicalARG$gene1, to = identicalARG$gene2
   ), directed = F)
   
+  #Only consider similarities if at least two pieces align
   myFilter = as_adjacency_matrix(myFilter, sparse = F)
-  
   myFilter = as.data.frame(myFilter) 
   myFilter = myFilter %>% mutate(geneId = colnames(myFilter)) %>% 
     pivot_longer(-geneId) %>% filter(value > 1)
-  
   identicalARG = identicalARG %>% 
     filter(gene1 %in% myFilter$geneId, gene2 %in% myFilter$geneId)
   
-  
+  #Build the graph again and evaluate cliques
   identicalARG = graph_from_data_frame(data.frame(
     from = identicalARG$gene1, to = identicalARG$gene2
   ), directed = F)
@@ -323,6 +345,7 @@ results = map_df(1:nrow(toProcess), function(i){
                (ARGgroup != i & !geneId %in% geneId[ARGgroup == i]))
   }
   
+  #Per ARG group, filter out the best by using the gene statistics
   identicalARG = identicalARG %>% 
     left_join(genesDetected %>% 
                 mutate(geneId = as.character(geneId)) %>%
@@ -331,8 +354,14 @@ results = map_df(1:nrow(toProcess), function(i){
     mutate(val = startPerc * startDepth * cover1) %>% 
     group_by(ARGgroup) %>% mutate(keep = val == max(val)) %>% ungroup()
   
+  #Only keep the genes that are the best in their cluster (i.e. remove duplicates)
+  result = result %>% 
+    left_join(identicalARG %>% select(geneId, keep), by = "geneId") %>% 
+    mutate(keep = replace_na(keep, T)) %>% 
+    filter(keep) %>% select(-keep)
   
-  # Generate the bacterial clusters
+  #---- Collapse overlapping bacteria ---
+  #--------------------------------------
   bactGroups = blastOut %>% 
     rowwise() %>% 
     mutate(
@@ -345,7 +374,8 @@ results = map_df(1:nrow(toProcess), function(i){
     slice(1) %>% ungroup() %>% 
     select(segmentId, geneId, taxid, accession, plasmid, genus, species, strain, 
            extra, bit_score, coverage, ident) %>% 
-    left_join(pathData %>% select(segmentId, order, startOrientation, dist, depth) %>% 
+    left_join(pathData %>% 
+                select(segmentId, order, startOrientation, dist, depth, type) %>% 
                 distinct(), by = "segmentId") %>% 
     filter(!is.na(dist), order < 3) %>% 
     left_join(genesDetected %>% 
@@ -354,9 +384,9 @@ results = map_df(1:nrow(toProcess), function(i){
     rowwise() %>% 
     mutate(pathScore = bit_score * coverage / (max(dist,0) * 0.01 + 1)) %>% 
     group_by(geneId, genus, species) %>% 
-    filter(n_distinct(startOrientation[order == 2]) == 2) %>% 
-    group_by(segmentId) %>% filter(pathScore == max(pathScore)) %>% 
-    ungroup()
+    filter(n_distinct(startOrientation[order == 2]) == 2 | any(type == "fragment")) %>% 
+    # group_by(segmentId) %>% filter(pathScore == max(pathScore)) %>%
+    ungroup() 
 
   bactGroups = map_df(unique(bactGroups$geneId), function(x){
     x = bactGroups %>% filter(geneId == x) %>% 
@@ -367,24 +397,35 @@ results = map_df(1:nrow(toProcess), function(i){
       data.frame()
     }
     
-  }) %>% distinct() %>% 
-    select(from = V1, to = V2)
+  }) 
   
-  bactGroups = graph_from_data_frame(bactGroups, directed = F)
+  #Similar to the ARG clustering, use graphs / cliques to detect overlap
+  if(nrow(bactGroups) > 0){
+    bactGroups = graph_from_data_frame(bactGroups  %>% distinct() %>% 
+                                         select(from = V1, to = V2), directed = F)
+    
+    bactGroups = map_df(sapply(max_cliques(bactGroups), names), function(x){
+      data.frame(taxid = x)
+    }, .id = "bactGroup")
+    
+    for(i in unique(bactGroups$bactGroup)[n_distinct(bactGroups$bactGroup):2]){
+      bactGroups = bactGroups %>% 
+        filter(bactGroup == i | 
+                 (bactGroup != i & !taxid %in% taxid[bactGroup == i]))
+    }
+    bactGroups = bactGroups %>% mutate(bactGroup = as.integer(bactGroup))
+    
+    test = result %>% 
+      left_join(bactGroups %>% mutate(taxid = as.integer(taxid)), by = "taxid")
+  } else {
+    test = result %>% 
+      group_by(genus, species) %>% 
+      mutate(bactGroup = cur_group_id())
 
-  bactGroups = map_df(sapply(max_cliques(bactGroups), names), function(x){
-    data.frame(taxid = x)
-  }, .id = "bactGroup")
-  
-  for(i in unique(bactGroups$bactGroup)[n_distinct(bactGroups$bactGroup):2]){
-    bactGroups = bactGroups %>% 
-      filter(bactGroup == i | 
-               (bactGroup != i & !taxid %in% taxid[bactGroup == i]))
   }
-  bactGroups = bactGroups %>% mutate(bactGroup = as.integer(bactGroup))
   
-  test = result %>% 
-    left_join(bactGroups %>% mutate(taxid = as.integer(taxid)), by = "taxid") %>% 
+  #Only keep bacteria that are really present
+  test = test %>% 
     filter(taxid %in% allBact2$taxid) %>% 
     group_by(genus, species) %>% 
     mutate(bactGroup = ifelse(is.na(bactGroup), max(.$bactGroup, na.rm = T) + 
@@ -405,9 +446,9 @@ results = map_df(1:nrow(toProcess), function(i){
       to = test$gene
     ) %>% distinct()
   
-  visNetwork(nodes, edges, height = "800px")
+  visNetwork(nodes, edges, height = "1000px")
   
-})
+# })
 
 # results = results %>% select(pipelineId, everything())
 # write_csv(results, 'sideStuff/annotationResults_4.csv')
