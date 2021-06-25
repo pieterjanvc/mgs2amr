@@ -96,12 +96,7 @@ tryCatch({
           links = dbReadTable(myConn, "links")
         )
         dbDisconnect(myConn)
-        
-        # gfa$segments = read_csv(paste0(tempFolder, "masterGFA_segments.csv.gz")) %>% 
-        #   as.data.frame()
-        # gfa$links = read_csv(paste0(tempFolder, "masterGFA_links.csv.gz")) %>% 
-        #   as.data.frame()
-        
+
         if(verbose > 0){cat("done\n")}
       }
       
@@ -167,9 +162,6 @@ tryCatch({
       if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S -"), "Write master GFA ... ")}
       newLogs = rbind(newLogs, list(as.integer(Sys.time()), 5, "Start writing master GFA"))
       
-      # gfa_write(gfa, paste0(tempFolder, "masterGFA.gfa"))
-      # system(sprintf("%s -f %s", zipMethod, paste0(tempFolder, "masterGFA.gfa")))
-      
       myConn = dbConnect(SQLite(), sprintf("%smasterGFA.db", tempFolder))
       dbWriteTable(myConn, "segments", gfa$segments, overwrite = T)
       dbWriteTable(myConn, "links", gfa$links, overwrite = T)
@@ -229,29 +221,6 @@ tryCatch({
       }
       
       myGroups$group = myResult
-      
-      # myGoups = gfa$segments$geneId
-      # steps = c(gfa$segments$geneId[seq(1, length(myGoups), by = 100000)], 
-      #           gfa$segments$geneId[nrow(gfa$segments)]) %>% unique()
-      # myGoups = unique(gfa$segments$geneId)
-      # 
-      # if(length(steps) > 2){
-      #   myGoups = mapply(function(x, y, z){
-      #     z[which(z == x):which(z == y)]
-      #   }, x = steps[-length(steps)], y = lead(steps)[-length(steps)], z = list(myGoups))
-      #   
-      # } else {
-      #   myGoups = list(c(myGoups))
-      # }
-      
-      #Run the mergeStartSegments function per group 
-      #TODO consider parallel
-      # gfa = lapply(myGoups, function(myId){
-      #   myGoup = list()
-      #   myGoup$segments = gfa$segments %>% filter(geneId %in% myId)
-      #   myGoup$links = gfa$links %>% filter(geneId %in% myId)
-      #   mergeStartSegments(myGoup, maxGap = 800, maxStep = 20)
-      # })
       
       #This process can be done in parallel so speed things up
       cl <- parallel::makeCluster(detectCores())
@@ -361,21 +330,7 @@ tryCatch({
         ungroup() %>% 
         filter(cover1 >= 0.25, startDepth / fileDepth >= 0.25) %>% 
         select(-val, -simToBest)
-        # filter(adjCov == max(adjCov)) %>% 
-        # group_by(gene) %>% filter(
-        #   startPerc == max(startPerc) |
-        #     cover1 == max(cover1)) %>% 
-      # group_by(clusterNr, gene, subtype) %>% 
-      #   filter(cover1 == max(cover1), startDepth == max(startDepth)) %>% 
-      #   ungroup() %>% 
-      #   mutate(pipelineId = pipelineId, runId = runId) %>% 
-      #   group_by(gene, subtype) %>% filter(cover1 == max(cover1)) %>% slice(1) %>% 
-      #   group_by(clusterNr) %>% filter(cover1 == max(cover1)) %>% slice(1) %>% 
-      #   ungroup() %>% arrange(desc(cover1))
 
-      #Only keep genes that are minimum 90% covered (or use cut-off when higher) 
-      # genesDetected = genesDetected %>% 
-      #   filter(cover1 >= cutOff(genesDetected$cover1))
       
       # ---- Get all fragmented GFA (only start seg or one connection) ----
       #********************************************************************
@@ -429,33 +384,7 @@ tryCatch({
         group_by(from) %>% summarise(n = n()) %>% 
         filter(n < 3) %>% 
         pull(from)
-      
-      
-      
-      # # singleSeg = c(singleSeg$from, singleSeg$to) %>% unique()
-      # # 
-      # # #Save start segments that do not connect to anything (isolated)
-      # # mySegments = mySegments[!mySegments %in% singleSeg]
-      # # 
-      # #Get all segments that only connect to a start segment (i.e. are end segments)
-      # singleSeg = singleSeg[!str_detect(singleSeg, "_start$")]
-      # test = c(singleSeg$from, singleSeg$to) %>% unique()
-      # test = test[!str_detect(test, "_start$")]
-      # 
-      # test = gfa$links %>%
-      #   filter(
-      #     geneId %in% genesDetected$geneId,
-      #     from %in% test |
-      #       to %in% test) %>%
-      #   mutate(start = (str_detect(from, "_start") |
-      #                     str_detect(to, "_start")))
-      # 
-      # singleSeg = test %>% group_by(geneId) %>%
-      #   filter(!any(
-      #     from[start] %in% c(from[!start], to[!start])) &
-      #       !any(to[start] %in% c(from[!start], to[!start])))
-      # 
-      
+
       #GFA should ONLY have single fragments - not combi ...
       
       singleSeg = unique(c(mySegments, singleSeg))
@@ -527,7 +456,11 @@ tryCatch({
       dbClearResult(q)
       dbDisconnect(myConn)
       
-      dir.create(sprintf("%sgenesDetected", tempFolder), showWarnings = F)
+      myDir = sprintf("%sgenesDetected", tempFolder)
+      if(dir.exists(myDir)){
+        unlink(myDir, recursive = T)
+      }
+      dir.create(myDir, showWarnings = F)
       write_csv(genesDetected, 
                 paste0(tempFolder, "genesDetected/genesDetected.csv"))
       
@@ -542,8 +475,7 @@ tryCatch({
       
       #Write the fragmented ones as a one GFA and fasta
       gfa_write(singleSeg, paste0(tempFolder, "fragmentGFA.gfa"), verbose = 0)
-      # gfa_writeUnitigs(singleSeg, paste0(tempFolder, "blastSegFragment.fasta"))
-      
+
       #Feedback and Logs
       if(verbose > 0){cat("done\n")}
       newLogs = rbind(newLogs, list(as.integer(Sys.time()), 11, "Finished detecting ARG"))
@@ -671,7 +603,7 @@ tryCatch({
         geneId = function(x) str_extract(x$name[1], "^\\d+")
       ))
       
-      gfa_write(fragmentsOnly, sprintf("%sfragmentsOnly.gfa", tempFolder))
+      gfa_write(fragmentsOnly, sprintf("%sfragmentsOnly.gfa", tempFolder), verbose = 0)
       
       #Create final table of fragmented and simplified GFA
       if(nrow(blastSegments) > 0){
@@ -751,6 +683,8 @@ tryCatch({
       fastaPaths = blastSegments %>% filter(blastId %in% (fastaPaths %>% filter(V10 == "*") %>% pull("V9")))
       
       #FASTA to blast should not contain more than 250,000 nucleotides per file (split if needed)
+      x = file.remove(list.files(sprintf("%s",tempFolder), 
+                             pattern = "blastSegmentsClustered", full.names = T))
       nFiles = ceiling(sum(fastaPaths$LN) / 250000)
       maxPerFile = ceiling(nrow(fastaPaths) / nFiles)
       
@@ -771,6 +705,7 @@ tryCatch({
   
   
   if(maxStep > 4 & nrow(genesDetected) > 0){
+    
     # ---- 5. Finalise preparation ---
     #*********************************
     
