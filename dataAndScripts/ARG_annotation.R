@@ -63,7 +63,7 @@ sample = toProcess$tempFolder[1]
 # 
 # dbDisconnect(myConn)
 options(readr.num_columns = 0)
-i = 30
+# i = 2
 results = list()
 # results = map_df(1:nrow(toProcess), function(i){
 # for(i in 1:2){
@@ -383,8 +383,8 @@ results = list()
                 select(geneId, gene, subtype), by = "geneId") %>% 
     rowwise() %>% 
     mutate(pathScore = bit_score * coverage / (max(dist,0) * 0.01 + 1)) %>% 
-    group_by(geneId, genus, species) %>% 
-    filter(n_distinct(startOrientation[order == 2]) == 2 | any(type == "fragment")) %>% 
+    group_by(geneId, genus, species) %>%
+    filter(n_distinct(startOrientation[order == 2]) == 2 | any(type == "fragment")) %>%
     # group_by(segmentId) %>% filter(pathScore == max(pathScore)) %>%
     ungroup() 
 
@@ -404,9 +404,37 @@ results = list()
     bactGroups = graph_from_data_frame(bactGroups  %>% distinct() %>% 
                                          select(from = V1, to = V2), directed = F)
     
+    # bactGroups = map_df(sapply(max_cliques(bactGroups), names), function(x){
+    #   data.frame(taxid = x)
+    # }, .id = "bactGroup")
+    
     bactGroups = map_df(sapply(max_cliques(bactGroups), names), function(x){
       data.frame(taxid = x)
-    }, .id = "bactGroup")
+    }, .id = "bactGroup") %>% left_join(
+      data.frame(
+        taxid = names(components(bactGroups)$membership),
+        membership = components(bactGroups)$membership)
+    ) 
+    
+    test = bactGroups %>% 
+      group_by(membership) %>% 
+      mutate(nCliques = n_distinct(bactGroup)) %>% 
+      group_by(taxid, membership, nCliques) %>% 
+      summarise(nPartOf = n()) %>% 
+      filter(nCliques == nPartOf)
+    
+    bactGroups$groupHead = F
+    for(member in unique(test$membership)){
+      bactGroups[bactGroups$membership == member, "bactGroup"] = 
+        min(bactGroups[bactGroups$membership == member, "bactGroup"])
+      bactGroups = bactGroups %>% mutate(
+        groupHead = ifelse(groupHead | taxid %in% 
+                             (test %>% filter(membership == member) %>% pull(taxid)),
+                           T, F)
+      )
+    }
+    
+    bactGroups = bactGroups %>% distinct()
     
     for(i in unique(bactGroups$bactGroup)[n_distinct(bactGroups$bactGroup):2]){
       bactGroups = bactGroups %>% 
@@ -430,24 +458,29 @@ results = list()
     group_by(genus, species) %>% 
     mutate(bactGroup = ifelse(is.na(bactGroup), max(.$bactGroup, na.rm = T) + 
                                 cur_group_id(), bactGroup)) %>% 
-    group_by(gene, genus) %>% 
+    group_by(gene, subtype, genus) %>% 
     filter(pathScore == max(pathScore)) %>% slice(1)  %>% 
     group_by(bactGroup) %>%
-    mutate(bactGroup = paste(paste(genus, species) %>% unique(), collapse = ", "))
+    mutate(bactGroup = ifelse(
+      any(groupHead),
+      paste(paste(genus[groupHead], species[groupHead]) %>% 
+              unique(), collapse = ", "),
+      paste(paste(genus, species) %>% unique(), collapse = ", ")),
+           subtype = paste(gene, subtype))
   
   nodes = data.frame(
-    id = c(test$gene, test$bactGroup) %>% unique(),
-    label = c(test$gene, test$bactGroup) %>% unique()
+    id = c(test$subtype, test$bactGroup) %>% unique(),
+    label = c(test$subtype, test$bactGroup) %>% unique()
   )
   
   edges = 
     data.frame(
       from = test$bactGroup,
-      to = test$gene
+      to = test$subtype
     ) %>% distinct()
   
   visNetwork(nodes, edges, height = "1000px")
-  
+  sampleName
 # })
 
 # results = results %>% select(pipelineId, everything())
