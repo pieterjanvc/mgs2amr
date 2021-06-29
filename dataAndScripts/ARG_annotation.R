@@ -365,7 +365,14 @@ results = list()
   identicalARG = read_delim(sprintf("%s/ARGsimilarities.out", sample), "\t", col_names = F) %>% 
     filter(X1 != X2) %>% 
     mutate(X1 = str_remove(X1, "_RC$"), X2 = str_remove(X2, "_RC$")) %>% 
-    distinct() %>% 
+    distinct() %>% rowwise() %>% 
+    mutate(
+      start = str_detect(X1, "_start"),
+      groupId = paste(sort(c(str_extract(X1, "^\\d+"),
+                             str_extract(X2, "^\\d+"))), collapse = "_")) %>% 
+    group_by(groupId) %>% 
+    filter(any(start)) %>% ungroup() %>% 
+    select(-start, -groupId) %>% distinct() %>% 
     left_join(pathData %>% filter(order < 3) %>% 
                 select(segmentId, d1 = depth, o1 = order, LN1 = LN, KC1 = KC) %>% 
                 distinct(), by = c("X1" = "segmentId")) %>% 
@@ -419,14 +426,23 @@ results = list()
                 mutate(geneId = as.character(geneId)) %>%
                 select(geneId, gene, subtype, startPerc, startDepth, cover1), 
               by = "geneId") %>% 
-    mutate(val = startPerc * startDepth * cover1) %>% 
+    mutate(val = startPerc * startDepth * cover1,
+           ARGgroup = as.integer(ARGgroup)) %>% 
     group_by(ARGgroup) %>% mutate(keep = val == max(val)) %>% ungroup()
   
   #Only keep the genes that are the best in their cluster (i.e. remove duplicates)
   result = result %>% 
-    left_join(identicalARG %>% select(geneId, keep), by = "geneId") %>% 
-    mutate(keep = replace_na(keep, T)) %>% 
-    filter(keep) %>% select(-keep)
+    left_join(identicalARG %>% 
+                select(geneId, ARGgroup, keep), by = "geneId") %>% 
+    group_by(geneId) %>% 
+    mutate(ARGgroup = ifelse(is.na(ARGgroup), cur_group_id() + 
+                               max(.$ARGgroup, na.rm = T), ARGgroup)) %>% 
+    mutate(keep = replace_na(keep, T),
+           subtype = ifelse(is.na(subtype), gene, subtype)) %>% 
+    filter(keep) %>% select(-keep) %>% 
+    group_by(ARGgroup) %>% 
+    mutate(ARGgroupName = paste(unique(subtype), collapse = " "))
+    
   
   #---- Collapse overlapping bacteria ---
   #--------------------------------------
@@ -542,7 +558,8 @@ results = list()
     filter(taxid %in% allBact2$taxid) %>% 
     group_by(genus, species) %>% 
     mutate(bactGroup = ifelse(is.na(bactGroup), max(.$bactGroup, na.rm = T) + 
-                                cur_group_id(), bactGroup)) %>% 
+                                cur_group_id(), bactGroup),
+           groupHead = replace_na(groupHead, T)) %>% 
     group_by(gene, subtype, genus) %>% 
     filter(pathScore == max(pathScore)) %>% slice(1)  %>% 
     group_by(bactGroup) %>%
@@ -550,18 +567,17 @@ results = list()
       any(groupHead),
       paste(paste(genus[groupHead], species[groupHead]) %>% 
               unique(), collapse = ", "),
-      paste(paste(genus, species) %>% unique(), collapse = ", ")),
-           subtype = paste(gene, subtype))
+      paste(paste(genus, species) %>% unique(), collapse = ", ")))
   
   nodes = data.frame(
-    id = c(test$subtype, test$bactGroup) %>% unique(),
-    label = c(test$subtype, test$bactGroup) %>% unique()
+    id = c(test$ARGgroupName, test$bactGroup) %>% unique(),
+    label = c(test$ARGgroupName, test$bactGroup) %>% unique()
   )
   
   edges = 
     data.frame(
       from = test$bactGroup,
-      to = test$subtype
+      to = test$ARGgroupName
     ) %>% distinct()
   
   visNetwork(nodes, edges, height = "1000px")
