@@ -123,41 +123,6 @@ results = list()
   segmentInfo =  read_csv(paste0(sample, "/blastSegments.csv"), col_types = cols()) %>% 
     select(-sequence, -name, -geneId)
  
-  
-  
-  #Check the bacteria
-  allBact2 = blastOut %>% 
-    rowwise() %>% 
-    mutate(
-      ident = identity / align_len,
-      coverage = min(align_len / query_len, 1),
-    ) %>%
-    filter(coverage == 1 , ident >= 0.95) %>%
-    select(segmentId, geneId, hitId, bit_score, 
-           accession, taxid, genus, species, extra) %>% 
-    group_by(segmentId, geneId, hitId, accession) %>% 
-    filter(bit_score == max(bit_score)) %>% #Remove multiple hits (keep best)
-    slice(1) %>% ungroup() %>% 
-    
-    left_join(segmentInfo, by = c("segmentId" = "blastId")) %>% #Add segment info
-    
-    group_by(segmentId) %>% 
-    mutate(onlyOne = length(unique(genus)) < 2) %>% 
-    filter(onlyOne) %>% 
-    group_by(taxid, accession, genus, species, extra) %>% 
-    summarise(
-      bit_score = sum(bit_score),
-      depth = sum(KC) / sum(LN),
-      .groups = "drop"
-    ) %>% 
-    group_by(taxid, genus, species) %>% 
-    filter(bit_score == max(bit_score)) %>% 
-    slice(1) %>% ungroup()
-  
-  blastOut = blastOut %>% 
-    filter(taxid %in% allBact2$taxid)
-  
-  
   pathData = list.files(
     paste0(sample, "/genesDetected/simplifiedGFA"), 
     pattern = ".gfa", full.names = T)
@@ -199,7 +164,19 @@ results = list()
       
       
       
-    } else {
+    } else if(nrow(gfa$segments) > 0){
+      gfa$segments %>% 
+        select(segmentId = name, KC, LN) %>% 
+        mutate(
+          pathId = 1:n(),
+          startOrientation = 0,
+          geneId = str_extract(segmentId, "^\\d+"),
+          dist = ifelse(str_detect(segmentId, "_start$"), -LN, 0),
+          order = 1,
+          type = "full"
+        )
+      
+    } else{
       data.frame()
     }
     
@@ -226,6 +203,96 @@ results = list()
     mutate(
       depth = KC / LN,
       totalLN = sum(LN[dist >= 0])) %>% ungroup()
+  
+  
+  #Check the bacteria -----------
+  allBact2 = blastOut %>%
+    rowwise() %>%
+    mutate(
+      ident = identity / align_len,
+      coverage = min(align_len / query_len, 1),
+    ) %>%
+    filter(coverage == 1 , ident >= 0.95) %>%
+    select(segmentId, geneId, hitId, bit_score,
+           accession, taxid, genus, species, extra) %>%
+    group_by(segmentId, geneId, hitId, accession) %>%
+    filter(bit_score == max(bit_score)) %>% #Remove multiple hits (keep best)
+    slice(1) %>% ungroup() %>%
+    
+    left_join(segmentInfo, by = c("segmentId" = "blastId")) %>% #Add segment info
+    
+    group_by(geneId, segmentId) %>%
+    mutate(onlyOne = length(unique(genus)) < 2) %>%
+    filter(onlyOne) %>%
+    group_by(geneId, taxid, accession, genus, species, extra) %>%
+    summarise(
+      bit_score = sum(bit_score),
+      depth = sum(KC) / sum(LN),
+      .groups = "drop"
+    ) %>%
+    group_by(geneId, taxid, genus, species) %>%
+    filter(bit_score == max(bit_score)) %>%
+    slice(1) %>% ungroup() %>% 
+    select(geneId, taxid, genus, species) %>% distinct() %>% 
+    mutate(unique = T)
+  
+  
+  blastOut = blastOut %>% 
+    left_join(allBact2 %>% 
+                select(-genus, -species), by = c("geneId", "taxid")) 
+  
+  blastOut = blastOut %>% 
+    mutate(unique = ifelse(
+      geneId %in% (blastOut %>% select(geneId, unique) %>% 
+                     group_by(geneId) %>% filter(all(is.na(unique))) %>%
+                     distinct() %>% pull(geneId)), 
+      T, unique)) %>% 
+    filter(!is.na(unique)) %>% select(-unique)
+  
+  allBact2 = blastOut %>%
+    rowwise() %>%
+    mutate(
+      ident = identity / align_len,
+      coverage = min(align_len / query_len, 1),
+    ) %>%
+    filter(coverage == 1 , ident >= 0.95) %>%
+    select(segmentId, geneId, hitId, bit_score,
+           accession, taxid, genus, species, extra) %>%
+    group_by(segmentId, geneId, hitId, accession) %>%
+    filter(bit_score == max(bit_score)) %>% #Remove multiple hits (keep best)
+    slice(1) %>% ungroup() %>% 
+    select(taxid, genus, species) %>% distinct()
+  
+  # allBact2 = blastOut %>%
+  #   rowwise() %>%
+  #   mutate(
+  #     ident = identity / align_len,
+  #     coverage = min(align_len / query_len, 1),
+  #   ) %>%
+  #   filter(coverage == 1 , ident >= 0.95) %>%
+  #   select(segmentId, geneId, hitId, bit_score,
+  #          accession, taxid, genus, species, extra) %>%
+  #   group_by(segmentId, geneId, hitId, accession) %>%
+  #   filter(bit_score == max(bit_score)) %>% #Remove multiple hits (keep best)
+  #   slice(1) %>% ungroup() %>%
+  # 
+  #   left_join(segmentInfo, by = c("segmentId" = "blastId")) %>% #Add segment info
+  # 
+  #   group_by(segmentId) %>%
+  #   mutate(onlyOne = length(unique(genus)) < 2) %>%
+  #   filter(onlyOne) %>%
+  #   group_by(taxid, accession, genus, species, extra) %>%
+  #   summarise(
+  #     bit_score = sum(bit_score),
+  #     depth = sum(KC) / sum(LN),
+  #     .groups = "drop"
+  #   ) %>%
+  #   group_by(taxid, genus, species) %>%
+  #   filter(bit_score == max(bit_score)) %>%
+  #   slice(1) %>% ungroup()
+  # 
+  # blastOut = blastOut %>% 
+  #   filter(taxid %in% allBact2$taxid)
   
   
   result = blastOut %>% 
@@ -298,6 +365,7 @@ results = list()
   identicalARG = read_delim(sprintf("%s/ARGsimilarities.out", sample), "\t", col_names = F) %>% 
     filter(X1 != X2) %>% 
     mutate(X1 = str_remove(X1, "_RC$"), X2 = str_remove(X2, "_RC$")) %>% 
+    distinct() %>% 
     left_join(pathData %>% filter(order < 3) %>% 
                 select(segmentId, d1 = depth, o1 = order, LN1 = LN, KC1 = KC) %>% 
                 distinct(), by = c("X1" = "segmentId")) %>% 
@@ -383,8 +451,8 @@ results = list()
                 select(geneId, gene, subtype), by = "geneId") %>% 
     rowwise() %>% 
     mutate(pathScore = bit_score * coverage / (max(dist,0) * 0.01 + 1)) %>% 
-    group_by(geneId, genus, species) %>%
-    filter(n_distinct(startOrientation[order == 2]) == 2 | any(type == "fragment")) %>%
+    # group_by(geneId, genus, species) %>%
+    # filter(n_distinct(startOrientation[order == 2]) == 2 | any(type == "fragment")) %>%
     # group_by(segmentId) %>% filter(pathScore == max(pathScore)) %>%
     ungroup() 
 
@@ -414,34 +482,51 @@ results = list()
       data.frame(
         taxid = names(components(bactGroups)$membership),
         membership = components(bactGroups)$membership)
-    ) 
+    ) %>% 
+      left_join(
+        allBact2 %>% 
+          mutate(taxid = as.character(taxid)) %>%
+          select(taxid, genus) %>% distinct(), by  ="taxid")
     
     test = bactGroups %>% 
-      group_by(membership) %>% 
+      group_by(membership, genus) %>% 
       mutate(nCliques = n_distinct(bactGroup)) %>% 
       group_by(taxid, membership, nCliques) %>% 
       summarise(nPartOf = n()) %>% 
       filter(nCliques == nPartOf)
     
-    bactGroups$groupHead = F
-    for(member in unique(test$membership)){
-      bactGroups[bactGroups$membership == member, "bactGroup"] = 
-        min(bactGroups[bactGroups$membership == member, "bactGroup"])
-      bactGroups = bactGroups %>% mutate(
-        groupHead = ifelse(groupHead | taxid %in% 
-                             (test %>% filter(membership == member) %>% pull(taxid)),
-                           T, F)
-      )
-    }
+    # bactGroups$groupHead = F
+    # for(member in unique(test$membership)){
+    #   bactGroups[bactGroups$membership == member, "bactGroup"] = 
+    #     min(bactGroups[bactGroups$membership == member, "bactGroup"])
+    #   bactGroups = bactGroups %>% mutate(
+    #     groupHead = ifelse(groupHead | taxid %in% 
+    #                          (test %>% filter(membership == member) %>% pull(taxid)),
+    #                        T, F)
+    #   )
+    # }
     
-    bactGroups = bactGroups %>% distinct()
+    bactGroups = map_df(unique(test$membership), function(member){
+      bactGroups %>% 
+        filter(membership == member) %>% 
+        group_by(genus) %>% 
+        mutate(
+          bactGroup = min(bactGroup),
+          groupHead = ifelse(taxid %in% 
+                               (test %>% filter(membership == member) %>% pull(taxid)),
+                             T, F))
+    })
+    
+    bactGroups = bactGroups %>% select(-genus) %>%  distinct()
     
     for(i in unique(bactGroups$bactGroup)[n_distinct(bactGroups$bactGroup):2]){
       bactGroups = bactGroups %>% 
         filter(bactGroup == i | 
                  (bactGroup != i & !taxid %in% taxid[bactGroup == i]))
     }
-    bactGroups = bactGroups %>% mutate(bactGroup = as.integer(bactGroup))
+    bactGroups = bactGroups %>% 
+      mutate(bactGroup = as.integer(bactGroup)) %>% ungroup() %>% 
+      select(-genus)
     
     test = result %>% 
       left_join(bactGroups %>% mutate(taxid = as.integer(taxid)), by = "taxid")
