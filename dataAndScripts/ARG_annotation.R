@@ -48,6 +48,12 @@ cutOff = function(numbers, percent = 0.95){
   myData %>% filter(diff == max(diff)) %>% pull(number) %>% unique() %>% min()
 }
 
+softmax = function(vals, normalise = F, log = T){
+  if(normalise) vals = vals / max(vals)
+  if(log) vals = log(vals)
+  return(exp(vals) / sum(exp(vals)))
+}
+
 sample = "temp/E12Heidi011_SRR4017917_0.1_1615998709"
 sample = "temp/test1"
 sample = toProcess$tempFolder[1]
@@ -63,7 +69,7 @@ sample = toProcess$tempFolder[1]
 # 
 # dbDisconnect(myConn)
 options(readr.num_columns = 0)
-i = 19
+i = 29
 results = list()
 # results = map_df(1:nrow(toProcess), function(i){
 # for(i in 1:2){
@@ -416,14 +422,15 @@ results = list()
     mutate(pathSum = max(pathSum)) %>% 
     ungroup()
   
+  allBact = bactGroups
+  
   #Get the list of all bacteria and their associated genes
   result = bactGroups %>% select(genus, species, ARGgroup, gene, pathSum) %>% 
     group_by(genus, species, ARGgroup) %>% 
     filter(pathSum == max(pathSum)) %>% 
-    slice(1) %>% 
+    slice(1) %>% ungroup() %>% 
     mutate(
-      species = paste(genus, species),
-      ARGgroup = paste(ARGgroup, gene)) %>% 
+      species = paste(genus, species)) %>% 
     distinct()
 
 
@@ -461,29 +468,60 @@ results = list()
       group_by(membership) %>% 
       mutate(nCliques = n_distinct(bactGroup)) %>% 
       group_by(accession, membership, nCliques) %>% 
-      summarise(nPartOf = n()) %>% 
+      summarise(nPartOf = n(), names = paste(sort(bactGroup), collapse = ",")) %>% 
+      group_by(names) %>% mutate(newBactGroup = cur_group_id()) %>% 
       group_by(membership) %>%
-      filter(nPartOf == max(nCliques)) %>% ungroup()
+      mutate(prob = softmax(nPartOf)) %>% 
+      # filter(nPartOf == max(nCliques)) %>% 
+      ungroup() %>% select(accession, newBactGroup, prob)
     
-    #Only keep bacteria that are at the head of the clique or not in one
-    bactGroups = map_df(unique(myFilter$membership), function(member){
-      bactGroups %>% 
-        filter(membership == member) %>% 
-        mutate(
-          bactGroup = as.integer(min(bactGroup)),
-          groupHead = ifelse(accession %in% (
-            myFilter %>% filter(membership == member) %>% pull(accession)),
-            T, F))
-    }) %>% ungroup() %>%  distinct()
+    bactGroups = bactGroups %>% 
+      left_join(myFilter, "accession") 
+    # #Only keep bacteria that are at the head of the clique or not in one
+    # bactGroups = map_df(unique(myFilter$membership), function(member){
+    #   bactGroups %>% 
+    #     filter(membership == member) %>% 
+    #     mutate(
+    #       bactGroup = as.integer(min(bactGroup)),
+    #       groupHead = ifelse(accession %in% (
+    #         myFilter %>% filter(membership == member) %>% pull(accession)),
+    #         T, F))
+    # }) %>% ungroup() %>%  distinct()
     
     #Add the info to the results and filter out suprious bact
     result = result %>% 
       left_join(bactGroups , by = c("species" = "accession")) %>% 
-      filter(is.na(groupHead) | groupHead)
+      select(-bactGroup) %>% distinct()
+      # filter(is.na(groupHead) | groupHead)
   } 
   
+  genes = result %>% select(membership, ARGgroup) %>%
+    distinct() %>% left_join(
+      (myGenes %>% 
+         left_join(genesDetected %>% mutate(geneId = as.character(geneId)) %>% 
+                     select(geneId, startPerc, startDepth, 
+                            cover1, cover2, type), by = "geneId") %>% 
+         mutate(val = startPerc * startDepth * cover1) %>% 
+         group_by(ARGgroup) %>% 
+         filter(val == max(val)) %>% slice(1)), by = "ARGgroup"
+    ) %>% 
+    arrange(membership, gene)
+  
+  
+  bact = result %>% select(membership, ARGgroup) %>% 
+    distinct() %>% 
+    left_join(allBact %>% 
+                group_by(genus, species, ARGgroup) %>%
+                summarise(pathScore = max(pathScore), .groups = "drop"),
+              by = "ARGgroup") %>% 
+    group_by(membership, genus, species) %>% 
+    summarise(pathScore = sum(pathScore), .groups = "drop") %>% 
+    group_by(membership) %>% 
+    mutate(prob = softmax(pathScore, log = T)) %>% ungroup() %>% 
+    arrange(membership, desc(prob))
+  
   #PLOT
-  if(T){
+  if(F){
     test = result %>% 
       select(species, ARGgroup, bactGroup) %>% 
       distinct()
@@ -506,5 +544,7 @@ results = list()
     
   }
  
-
+  sampleName
 # })
+
+  
