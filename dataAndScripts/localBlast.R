@@ -23,9 +23,10 @@ pipelineId = unlist(strsplit(args[[6]], ","))
 #Set these general blast args
 blastArgs = list(
   db = "nt",
-  evalue = "1e-10",
+  evalue = "1e-75",
   word_size = 64,
-  max_target_seqs = 100,
+  max_target_seqs = 250,
+  max_hsps = 1,
   taxidlist = sprintf("%sdataAndScripts/%s", baseFolder, "bact.txids")
 )
 
@@ -87,9 +88,10 @@ tryCatch({
                                   i, nrow(toSubmit), toSubmit$pipelineId[i], toSubmit$submId[i]))}
       
       #Run local blastn
-      system(sprintf('%s -db "%s" -query "%s" -task megablast -evalue %s -word_size %i -max_target_seqs %i -taxidlist %s -outfmt 15 | gzip > "%s"',
+      system(sprintf('%s -db "%s" -query "%s" -task megablast -evalue %s -word_size %i -max_target_seqs %i -max_hsps %i -taxidlist %s -outfmt 15 | gzip > "%s"',
                      blastn, blastDB, paste0(toSubmit$folder[i], toSubmit$fastaFile[i]),
-                     blastArgs$evalue, blastArgs$word_size, blastArgs$max_target_seqs, blastArgs$taxidlist,
+                     blastArgs$evalue, blastArgs$word_size, blastArgs$max_target_seqs, 
+                     blastArgs$max_hsps, blastArgs$taxidlist,
                      paste0(toSubmit$folder[i], str_replace(toSubmit$fastaFile[i], ".fasta", ".json.gz"))))
       
       #Update the DB
