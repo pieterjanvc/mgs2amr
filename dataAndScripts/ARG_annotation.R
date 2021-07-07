@@ -69,7 +69,7 @@ sample = toProcess$tempFolder[1]
 # 
 # dbDisconnect(myConn)
 options(readr.num_columns = 0)
-i = 29
+i = 17
 results = list()
 # results = map_df(1:nrow(toProcess), function(i){
 # for(i in 1:2){
@@ -376,14 +376,14 @@ results = list()
     group_by(geneId, accession, taxid, genus, species, plasmid) %>% 
     summarise(n = n(), pathScore = sum(pathScore), 
               startOrientation = paste(unique(startOrientation), collapse = ","),
-              orders = paste(order, collapse = ",")) %>% 
+              orders = paste(order, collapse = ","), .groups = "drop") %>% 
     left_join(genesDetected %>%
                 mutate(geneId = as.character(geneId)) %>%
                 select(geneId, gene, subtype)) 
 
   #Filter bacteria based off the ARG groups
   bactGroups = allBact %>% 
-    left_join(identicalARG %>% select(geneId, ARGgroup)) %>% 
+    left_join(identicalARG %>% select(geneId, ARGgroup), by = "geneId") %>% 
     group_by(geneId) %>%
     mutate(ARGgroup = ifelse(is.na(ARGgroup), cur_group_id() + 
                                max(.$ARGgroup, na.rm = T), ARGgroup)) %>% 
@@ -391,134 +391,60 @@ results = list()
     filter(pathScore >= quantile(pathScore, 0.75)) %>% 
     ungroup()
   
-  #Get the list of genes and ARG groups
-  myGenes = bactGroups %>% select(geneId, gene, subtype, ARGgroup) %>% 
+  result = bactGroups %>% 
+    select(ARGgroup, pathScore, taxid, genus, species) %>% 
     distinct()
   
-  #Generate a graph connecting bact to ARg groups
-  myGraph = bactGroups %>% 
-    select(accession, genus, species, plasmid, ARGgroup) %>% distinct() 
+  myFilter = result %>% select(taxid, genus, species, ARGgroup) %>% distinct() %>% 
+    group_by(taxid) %>% mutate(n = n()) %>% 
+    group_by(genus, species, ARGgroup) %>% filter(n == max(n))
   
-  myGraph = graph_from_data_frame(
-    myGraph %>% select(
-      from = accession, to = ARGgroup
-    ))
   
-  #Use the components of the graph to find overlapping bacteria
-  bactGroups = bactGroups %>% left_join(
-    data.frame(
-      accession = names(components(myGraph)$membership),
-      membership = components(myGraph)$membership)
+  result = result %>% 
+    filter(taxid %in% myFilter$taxid) %>% 
+    group_by(ARGgroup, taxid) %>% 
+    filter(pathScore == max(pathScore)) %>% ungroup() %>% 
+    mutate(
+      name = paste(str_extract(genus, "^.."), str_extract(species, "^.."), taxid)
+    ) %>% 
+    group_by(ARGgroup) %>%
+    filter(pathScore >= quantile(pathScore, 0.9)) %>% 
+    ungroup() %>% 
+    select(from = name, to = ARGgroup, weight = pathScore)
+  
+  myGraph = graph_from_data_frame(result, directed = F)
+  
+  myGraph = data.frame(
+    from = names(components(myGraph)$membership),
+    membership = components(myGraph)$membership
   )
   
-  bactGroups = bactGroups %>% 
-    group_by(membership, accession) %>% 
-    mutate(pathSum = sum(pathScore)) %>% 
-    group_by(membership, ARGgroup) %>% 
-    filter(pathSum >= quantile(pathSum, 0.75)) %>% 
-    group_by(taxid, plasmid, ARGgroup) %>% 
-    filter(pathSum == max(pathSum)) %>% slice(1) %>% 
-    group_by(taxid, plasmid) %>% 
-    mutate(pathSum = max(pathSum)) %>% 
-    ungroup()
+  result = result %>% left_join(myGraph, by = "from") %>% 
+    group_by(membership, from) %>% 
+    mutate(val = sum(weight)) %>% ungroup()
   
-  allBact = bactGroups
-  
-  #Get the list of all bacteria and their associated genes
-  result = bactGroups %>% select(genus, species, ARGgroup, gene, pathSum) %>% 
-    group_by(genus, species, ARGgroup) %>% 
-    filter(pathSum == max(pathSum)) %>% 
-    slice(1) %>% ungroup() %>% 
-    mutate(
-      species = paste(genus, species)) %>% 
-    distinct()
-
-
-  #Generate all combinations of bacteria (species) per gene
-  bactGroups = map_df(unique(result$ARGgroup), function(x){
-    x = result %>% filter(ARGgroup == x) %>% 
-      pull(species) %>% unique()
-    if(length(x) > 1) {
-      combn(x, 2) %>% t() %>% as.data.frame()
-    } else {
-      data.frame()
-    }
-    
-  }) 
-  
-  #Similar to the ARG clustering, use graphs / cliques to detect overlap
-  if(nrow(bactGroups) > 0){
-    
-    #Creat the graph
-    bactGroups = graph_from_data_frame(
-      bactGroups  %>% distinct() %>% 
-        select(from = V1, to = V2), directed = F)
-    
-    #Get the cliques and the membership (subgraph) info
-    bactGroups = map_df(sapply(max_cliques(bactGroups), names), function(x){
-      data.frame(accession = x)
-    }, .id = "bactGroup") %>% left_join(
-      data.frame(
-        accession = names(components(bactGroups)$membership),
-        membership = components(bactGroups)$membership)
-    ) 
-    
-    #Filter bacteria that are in all the cliques in a subgraph
-    myFilter = bactGroups %>% 
-      group_by(membership) %>% 
-      mutate(nCliques = n_distinct(bactGroup)) %>% 
-      group_by(accession, membership, nCliques) %>% 
-      summarise(nPartOf = n(), names = paste(sort(bactGroup), collapse = ",")) %>% 
-      group_by(names) %>% mutate(newBactGroup = cur_group_id()) %>% 
-      group_by(membership) %>%
-      mutate(prob = softmax(nPartOf)) %>% 
-      # filter(nPartOf == max(nCliques)) %>% 
-      ungroup() %>% select(accession, newBactGroup, prob)
-    
-    bactGroups = bactGroups %>% 
-      left_join(myFilter, "accession") 
-    # #Only keep bacteria that are at the head of the clique or not in one
-    # bactGroups = map_df(unique(myFilter$membership), function(member){
-    #   bactGroups %>% 
-    #     filter(membership == member) %>% 
-    #     mutate(
-    #       bactGroup = as.integer(min(bactGroup)),
-    #       groupHead = ifelse(accession %in% (
-    #         myFilter %>% filter(membership == member) %>% pull(accession)),
-    #         T, F))
-    # }) %>% ungroup() %>%  distinct()
-    
-    #Add the info to the results and filter out suprious bact
-    result = result %>% 
-      left_join(bactGroups , by = c("species" = "accession")) %>% 
-      select(-bactGroup) %>% distinct()
-      # filter(is.na(groupHead) | groupHead)
-  } 
-  
-  genes = result %>% select(membership, ARGgroup) %>%
-    distinct() %>% left_join(
-      (myGenes %>% 
-         left_join(genesDetected %>% mutate(geneId = as.character(geneId)) %>% 
-                     select(geneId, startPerc, startDepth, 
-                            cover1, cover2, type), by = "geneId") %>% 
-         mutate(val = startPerc * startDepth * cover1) %>% 
-         group_by(ARGgroup) %>% 
-         filter(val == max(val)) %>% slice(1)), by = "ARGgroup"
-    ) %>% 
-    arrange(membership, gene)
-  
-  
-  bact = result %>% select(membership, ARGgroup) %>% 
-    distinct() %>% 
-    left_join(allBact %>% 
-                group_by(genus, species, ARGgroup) %>%
-                summarise(pathScore = max(pathScore), .groups = "drop"),
-              by = "ARGgroup") %>% 
-    group_by(membership, genus, species) %>% 
-    summarise(pathScore = sum(pathScore), .groups = "drop") %>% 
+  bact = result %>% group_by(from, membership) %>% 
+    summarise(val = max(val)) %>% 
     group_by(membership) %>% 
-    mutate(prob = softmax(pathScore, log = T)) %>% ungroup() %>% 
+    mutate(prob = softmax(val, T, T)) %>% 
     arrange(membership, desc(prob))
+  
+  myGenes = bactGroups %>% select(geneId, ARGgroup) %>% 
+    distinct() %>% left_join(
+      genesDetected %>% mutate(geneId = as.character(geneId)), by = "geneId")
+  
+  
+  genes = result %>% select(ARGgroup = to, membership) %>% 
+    distinct() %>% left_join(
+      myGenes %>% 
+        mutate(
+          val = startPerc * startDepth * cover1
+        ) %>% 
+        group_by(ARGgroup) %>% 
+        filter(val == max(val)) %>% 
+        select(ARGgroup, gene, subtype, cover1, type),
+      by = "ARGgroup"
+    ) %>% arrange(membership, gene)
   
   #PLOT
   if(F){
