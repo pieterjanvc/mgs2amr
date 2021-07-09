@@ -69,7 +69,7 @@ sample = toProcess$tempFolder[1]
 # 
 # dbDisconnect(myConn)
 options(readr.num_columns = 0)
-i = 17
+i = 8
 results = list()
 # results = map_df(1:nrow(toProcess), function(i){
 # for(i in 1:2){
@@ -379,14 +379,14 @@ results = list()
               orders = paste(order, collapse = ","), .groups = "drop") %>% 
     left_join(genesDetected %>%
                 mutate(geneId = as.character(geneId)) %>%
-                select(geneId, gene, subtype)) 
+                select(geneId, gene, subtype), by = "geneId") 
 
   #Filter bacteria based off the ARG groups
   bactGroups = allBact %>% 
     left_join(identicalARG %>% select(geneId, ARGgroup), by = "geneId") %>% 
     group_by(geneId) %>%
     mutate(ARGgroup = ifelse(is.na(ARGgroup), cur_group_id() + 
-                               max(.$ARGgroup, na.rm = T), ARGgroup)) %>% 
+                               max(.$ARGgroup, 0, na.rm = T), ARGgroup)) %>% 
     group_by(ARGgroup) %>% 
     filter(pathScore >= quantile(pathScore, 0.75)) %>% 
     ungroup()
@@ -408,7 +408,7 @@ results = list()
       name = paste(str_extract(genus, "^.."), str_extract(species, "^.."), taxid)
     ) %>% 
     group_by(ARGgroup) %>%
-    filter(pathScore >= quantile(pathScore, 0.9)) %>% 
+    filter(pathScore >= quantile(pathScore, 0.9)) %>%
     ungroup() %>% 
     select(from = name, to = ARGgroup, weight = pathScore)
   
@@ -424,7 +424,7 @@ results = list()
     mutate(val = sum(weight)) %>% ungroup()
   
   bact = result %>% group_by(from, membership) %>% 
-    summarise(val = max(val)) %>% 
+    summarise(val = max(val), .groups = "drop") %>% 
     group_by(membership) %>% 
     mutate(prob = softmax(val, T, T)) %>% 
     arrange(membership, desc(prob))
@@ -441,10 +441,11 @@ results = list()
           val = startPerc * startDepth * cover1
         ) %>% 
         group_by(ARGgroup) %>% 
-        filter(val == max(val)) %>% 
-        select(ARGgroup, gene, subtype, cover1, type),
+        filter(val == max(val)), 
       by = "ARGgroup"
     ) %>% arrange(membership, gene)
+  
+  #write_csv(genes, sprintf("%s/genes.csv", sample, sampleName))
   
   #PLOT
   if(F){
