@@ -69,12 +69,13 @@ sample = toProcess$tempFolder[1]
 # 
 # dbDisconnect(myConn)
 options(readr.num_columns = 0)
-i = 8
-results = list()
+sampleIndex = 23
+gene_results = data.frame()
+bact_results = data.frame()
 # results = map_df(1:nrow(toProcess), function(i){
-# for(i in 1:2){
+for(sampleIndex in c(1,5,8,9,12,16:19,23)){
   
-  sample = toProcess$tempFolder[i]
+  sample = toProcess$tempFolder[sampleIndex]
   sampleName = str_extract(sample, "[^\\/]+(?=_\\d+$)")
   genesDetected = read_csv(paste0(sample, "/genesDetected/genesDetected.csv")) %>% 
     mutate(subtype = as.character(subtype))
@@ -427,7 +428,12 @@ results = list()
     summarise(val = max(val), .groups = "drop") %>% 
     group_by(membership) %>% 
     mutate(prob = softmax(val, T, T)) %>% 
+    ungroup() %>% 
+    mutate(
+      pipelineId = toProcess$pipelineId[sampleIndex],
+      sampleName = sampleName) %>% 
     arrange(membership, desc(prob))
+    
   
   myGenes = bactGroups %>% select(geneId, ARGgroup) %>% 
     distinct() %>% left_join(
@@ -443,9 +449,13 @@ results = list()
         group_by(ARGgroup) %>% 
         filter(val == max(val)), 
       by = "ARGgroup"
-    ) %>% arrange(membership, gene)
+    ) %>% arrange(membership, gene) %>% 
+    mutate(sampleName = sampleName)
   
-  #write_csv(genes, sprintf("%s/genes.csv", sample, sampleName))
+  write_csv(genes, sprintf("%s/genes.csv", sample, sampleName))
+  write_csv(bact, sprintf("%s/bacteria.csv", sample, sampleName))
+  gene_results = bind_rows(gene_results, genes)
+  bact_results = bind_rows(bact_results, bact)
   
   #PLOT
   if(F){
@@ -472,6 +482,8 @@ results = list()
   }
  
   sampleName
-# })
+}
 
-  
+
+write_csv(gene_results, "testGenes.csv")
+write_csv(bact_results, "testBact.csv")
