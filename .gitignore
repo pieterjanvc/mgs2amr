@@ -2,6 +2,7 @@
 !*/
 !.gitignore
 !*.R
+!*.rmd
 !*.sh
 !*.sql
 !*.txt
