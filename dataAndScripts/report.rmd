@@ -1,0 +1,92 @@
+---
+pagetitle: Meta2AMR report
+title: "<h1 style='text-align: center;'>Meta2AMR report</h1>"
+output: html_document
+params:
+  pipelineId: 0
+  baseFolder: ""
+---
+
+```{r setup, include=FALSE}
+library(visNetwork)
+library(tidyverse)
+library(RSQLite)
+library(knitr)
+
+options(knitr.kable.NA = '')
+knitr::opts_chunk$set(echo = FALSE, warning=FALSE, message = FALSE)
+
+myPipelineId = params$pipelineId
+baseFolder = params$baseFolder
+# baseFolder = "/mnt/meta2amrData/meta2amr"
+
+
+myConn = dbConnect(SQLite(), sprintf("%s/dataAndScripts/meta2amr.db", baseFolder))
+
+info = tbl(myConn, "scriptUse") %>% 
+  filter(pipelineId == myPipelineId) %>% as.data.frame()
+arguments = tbl(myConn, "scriptArguments") %>% 
+  filter(runId %in% local(info$runId)) %>% 
+  group_by(argument) %>% filter(runId == max(runId)) %>% ungroup()
+sampleName = arguments %>% 
+  filter(argument == "outputName") %>% pull(value)
+tempFolder = arguments %>% 
+  filter(argument %in% c("tempFolder", "tempName")) %>% pull(value) %>% 
+  paste(collapse = "/")
+
+genes = read_csv(sprintf("%s/genes.csv", tempFolder))
+bact = read_csv(sprintf("%s/bacteria.csv", tempFolder))
+
+```
+
+<h2>Input info</h2>
+```{r}
+inputFile = arguments %>% 
+  filter(argument %in% c("inputFile1", "inputFile2")) %>% 
+  pull(value) %>% paste(collapse = " ") %>% str_trim()
+startTime = info %>% filter(runId == min(runId)) %>% pull(start)
+
+seqLength = grep("sequences length", 
+            readLines(sprintf("%s/metacherchant_logs/log", tempFolder)),
+            value = T, fixed = T) %>% 
+  str_extract("([\\d'])+(?=\\s\\()") %>% str_replace_all("'", ",")
+
+```
+* <b>Pipeline first started</b>: `r startTime`
+* <b>Input file</b>: `r inputFile`
+* <b>Sample name</b>: `r sampleName`
+* <b>File sequence length</b>: `r seqLength` bp
+
+<h2>Visual Summary</h2>
+```{r}
+nodes = data.frame(
+  id = c(unique(genes$membership), unique(genes$geneId)),
+  label = c(paste("Bacterium id", unique(genes$membership)), 
+         unique(ifelse(is.na(genes$subtype), genes$gene, genes$subtype)))
+)
+
+edges = genes %>% select(from = geneId, to = membership)
+
+visNetwork(nodes, edges)
+```
+
+<h2>Top 5 Bacteria Assignment per ID</h2>
+```{r}
+# genesDetected = read_csv(sprintf("%s/genesDetected/genesDetected.csv", tempFolder))
+kable(bact %>% distinct() %>% group_by(membership) %>% 
+        slice_max(prob, n = 5) %>% 
+        select(bacteriumId = membership, probablilty = prob, 
+               genus, species, taxid = from))
+```
+
+<h2>Genes Detected</h2>
+```{r}
+# genesDetected = read_csv(sprintf("%s/genesDetected/genesDetected.csv", tempFolder))
+kable(genes %>% 
+        mutate(
+          coverage = ifelse(type == "noFragments", cover1, cover2),
+          geneAssembly = ifelse(type == "noFragments", "Full", "Fragmented")) %>% 
+        select(gene, subtype, bacteriumId = membership, nBases, 
+               coverage, depth = startDepth, geneAssembly) %>% distinct())
+```
+
