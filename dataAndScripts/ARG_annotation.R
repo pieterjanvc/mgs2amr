@@ -7,6 +7,7 @@ library(tidyverse, warn.conflicts = FALSE)
 library(RSQLite)
 library(igraph)
 library(visNetwork)
+library(rmarkdown)
 
 #Get the arguments
 baseFolder = "/mnt/meta2amrData/meta2amr/"
@@ -406,12 +407,13 @@ for(sampleIndex in c(1,5,8,9,12,16:19,23)){
     group_by(ARGgroup, taxid) %>% 
     filter(pathScore == max(pathScore)) %>% ungroup() %>% 
     mutate(
-      name = paste(str_extract(genus, "^.."), str_extract(species, "^.."), taxid)
-    ) %>% 
+      # name = paste(str_extract(genus, "^.."), str_extract(species, "^.."), taxid)
+      taxid = as.character(taxid)
+    ) %>%
     group_by(ARGgroup) %>%
     filter(pathScore >= quantile(pathScore, 0.9)) %>%
     ungroup() %>% 
-    select(from = name, to = ARGgroup, weight = pathScore)
+    select(from = taxid, to = ARGgroup, weight = pathScore, genus, species)
   
   myGraph = graph_from_data_frame(result, directed = F)
   
@@ -424,7 +426,7 @@ for(sampleIndex in c(1,5,8,9,12,16:19,23)){
     group_by(membership, from) %>% 
     mutate(val = sum(weight)) %>% ungroup()
   
-  bact = result %>% group_by(from, membership) %>% 
+  bact = result %>% group_by(from, membership, genus, species) %>% 
     summarise(val = max(val), .groups = "drop") %>% 
     group_by(membership) %>% 
     mutate(prob = softmax(val, T, T)) %>% 
@@ -456,6 +458,10 @@ for(sampleIndex in c(1,5,8,9,12,16:19,23)){
   write_csv(bact, sprintf("%s/bacteria.csv", sample, sampleName))
   gene_results = bind_rows(gene_results, genes)
   bact_results = bind_rows(bact_results, bact)
+  
+  render(sprintf("%s/dataAndScripts/report.rmd", baseFolder),
+         params = list(pipelineId = pipelineId, baseFolder = baseFolder),
+         output_file = sprintf("%s/%s_report.html", tempFolder, sampleName))
   
   #PLOT
   if(F){
