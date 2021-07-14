@@ -3,6 +3,7 @@
 #*************************
 
 library(gfaTools)
+library(xgboost)
 library(tidyverse, warn.conflicts = FALSE)
 library(RSQLite)
 library(igraph)
@@ -34,6 +35,10 @@ settings = settings[str_detect(settings,"^\\s*[^=#]+=.*$")]
 settings = str_match(settings, "\\s*([^=\\s]+)\\s*=\\s*(.*)")
 settings = setNames(str_trim(settings[,3]), settings[,2])
 
+predictionModels = readRDS(
+  sprintf("dataAndScripts/predictionModels.rds",baseFolder))
+myAntibiotics = names(predictionModels)
+bactGenomeSize = read_csv(sprintf("dataAndScripts/bactGenomeSize.csv",baseFolder))
 
 # ---- FUNCTIONS ----
 #********************
@@ -70,11 +75,11 @@ sample = toProcess$tempFolder[1]
 # 
 # dbDisconnect(myConn)
 options(readr.num_columns = 0)
-sampleIndex = 23
+sampleIndex = 1
 gene_results = data.frame()
 bact_results = data.frame()
 # results = map_df(1:nrow(toProcess), function(i){
-for(sampleIndex in c(1,5,8,9,12,16:19,23)){
+for(sampleIndex in c(1:4)){
   
   sample = toProcess$tempFolder[sampleIndex]
   sampleName = str_extract(sample, "[^\\/]+(?=_\\d+$)")
@@ -426,16 +431,31 @@ for(sampleIndex in c(1,5,8,9,12,16:19,23)){
     group_by(membership, from) %>% 
     mutate(val = sum(weight)) %>% ungroup()
   
+  inputfileBP = grep("sequences length", 
+                     readLines(sprintf("%s/metacherchant_logs/log", sample)),
+                     value = T, fixed = T) %>% 
+    str_extract("([\\d'])+(?=\\s\\()") %>% 
+    str_replace_all("'", "") %>% as.numeric()
+  
+  
   bact = result %>% group_by(from, membership, genus, species) %>% 
     summarise(val = max(val), .groups = "drop") %>% 
     group_by(membership) %>% 
     mutate(prob = softmax(val, T, T)) %>% 
     ungroup() %>% 
     mutate(
-      pipelineId = toProcess$pipelineId[sampleIndex],
-      sampleName = sampleName) %>% 
-    arrange(membership, desc(prob))
-    
+      pipelineId = toProcess$pipelineId[sampleIndex]) %>% 
+    arrange(membership, desc(prob)) %>% mutate(
+      species = str_replace(species, "sp\\d+", "sp.")
+    ) %>% left_join(bactGenomeSize %>% select(genus, species, level, size),
+                    by = c("genus", "species")) %>% 
+    select(pipelineId, membership, genus, species, prob, val, size, level) %>% 
+    left_join(
+      genes %>% 
+        group_by(membership) %>% 
+        summarise(estimatedAbundance = mean(startDepth)),
+      by = "membership") %>% 
+    mutate(estimatedAbundance = estimatedAbundance * size * 1e6 / inputfileBP)
   
   myGenes = bactGroups %>% select(geneId, ARGgroup) %>% 
     distinct() %>% left_join(
@@ -454,14 +474,64 @@ for(sampleIndex in c(1,5,8,9,12,16:19,23)){
     ) %>% arrange(membership, gene) %>% 
     mutate(sampleName = sampleName)
   
+  genesDetected = genesDetected %>% 
+    left_join(genes %>% 
+                select(geneId, ARGgroup) %>% 
+                mutate(geneId = as.integer(geneId)), by = "geneId") %>% 
+    left_join(identicalARG %>% 
+                select(geneId, ARGgroup2 = ARGgroup) %>% 
+                mutate(geneId = as.integer(geneId)), by = "geneId") %>% 
+    mutate(ARGgroup = ifelse(is.na(ARGgroup), ARGgroup2, ARGgroup)) %>%
+    select(pipelineId, geneId, ARGgroup)
+  
+  # ---- MAKE PREDICTIONS ----
+  #***************************
+
+  myInputs = genes %>%
+    mutate(id = paste(pipelineId,  membership, sep = "_")) %>%
+    group_by(pipelineId, membership, gene) %>%
+    filter(val == max(val)) %>% dplyr::slice(1) %>%
+    ungroup() %>%
+    select(id, pipelineId, membership, ARGgroup, gene, cover1, startPerc,
+           startDepth, type)
+
+  myInputs = myInputs %>% select(id, gene, cover1) %>%
+    pivot_wider(gene, names_from = id, values_from = cover1)
+
+  myInputs = map_df(sapply(predictionModels, function(x) x$feature_names), function(y){
+    data.frame(
+      gene = y
+    )
+  }, .id = "antibiotic") %>%
+    left_join(myInputs, by = "gene")
+
+  myInputs[is.na(myInputs)] = 0
+
+  predictions = map_df(myAntibiotics, function(myAntibiotic){
+
+    testInput = myInputs %>% filter(antibiotic == myAntibiotic) %>%
+      select(-antibiotic, -gene) %>% as.matrix() %>% t()
+
+    data.frame(
+      id = rownames(testInput),
+      antibiotic = myAntibiotic,
+      value = predict(predictionModels[[myAntibiotic]], testInput)
+    ) %>% mutate(resistance = ifelse(value < 0.5, "S", 'R')) %>% 
+      separate(id, into = c("pipelineId", "membership"), "_")
+
+  })
+  
+  
+
   write_csv(genes, sprintf("%s/genes.csv", sample, sampleName))
   write_csv(bact, sprintf("%s/bacteria.csv", sample, sampleName))
   gene_results = bind_rows(gene_results, genes)
   bact_results = bind_rows(bact_results, bact)
   
   render(sprintf("%s/dataAndScripts/report.rmd", baseFolder),
-         params = list(pipelineId = pipelineId, baseFolder = baseFolder),
-         output_file = sprintf("%s/%s_report.html", tempFolder, sampleName))
+         params = list(pipelineId = genes$pipelineId[1], 
+                       baseFolder = baseFolder),
+         output_file = sprintf("%s/%s_report.html", sample, sampleName))
   
   #PLOT
   if(F){
