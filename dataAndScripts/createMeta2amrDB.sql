@@ -2,13 +2,14 @@ BEGIN TRANSACTION;
 -- Table that tracks each pipeline
 CREATE TABLE IF NOT EXISTS "pipeline" (
 	"pipelineId" integer primary key,
+	"name" text,
 	"statusCode" integer NOT NULL,
 	"statusMessage" text,
 	"startTimestamp" text,
-	"modifiedTimestamp" text,
+	"modifiedTimestamp" text,	
+	"inputfileBP" integer,
 	"tempFolder" text NOT NULL,
-	"outputFolder" text NOT NULL,
-	"inputfileBP" integer NOT NULL,
+	"outputFolder" text NOT NULL,	
 	"info" text
 );
 -- Table that tracks various scripts run
@@ -61,7 +62,7 @@ CREATE TABLE IF NOT EXISTS "blastSubmissions" (
 	"statusCode" integer,
 	"statusMessage" text,
 	"folder" text,
-	FOREIGN KEY("pipelineId") REFERENCES "pipeline"("pipelineId") ON UPDATE CASCADE ON DELETE CASCADE
+	FOREIGN KEY("pipelineId") REFERENCES "pipeline"("pipelineId") ON UPDATE CASCADE ON DELETE CASCADE,
 	FOREIGN KEY("runId") REFERENCES "scriptUse"("runId") ON UPDATE CASCADE ON DELETE CASCADE
 );
 -- Table that stores all antibiotics
@@ -87,6 +88,7 @@ CREATE TABLE IF NOT EXISTS "detectedARG" (
 	"runId" integer NOT NULL,
     "geneId" integer NOT NULL,
 	"ARGgroup" integer,
+	"membership" integer,
 	"fileDepth" real,
 	"nSeg" integer,
 	"LNsum" integer,
@@ -106,6 +108,7 @@ CREATE TABLE IF NOT EXISTS "detectedARG" (
 -- Table that stores all detected bacteria
 CREATE TABLE IF NOT EXISTS "detectedBact" (
 	"pipelineId" integer NOT NULL,
+	"runId" integer NOT NULL,
     "taxId" integer NOT NULL,
 	"membership" integer NOT NULL,
 	"genus" text,
@@ -114,18 +117,21 @@ CREATE TABLE IF NOT EXISTS "detectedBact" (
 	"relAbundance" numeric,
 	"value" numeric,
 	PRIMARY KEY("pipelineId", "taxId"),
-	FOREIGN KEY("pipelineId") REFERENCES "pipeline"("pipelineId") ON UPDATE CASCADE ON DELETE CASCADE
+	FOREIGN KEY("pipelineId") REFERENCES "pipeline"("pipelineId") ON UPDATE CASCADE ON DELETE CASCADE,
+	FOREIGN KEY("runId") REFERENCES "scriptUse"("runId") ON UPDATE CASCADE ON DELETE CASCADE
 );
 -- Table that stores all AMR predictions
 CREATE TABLE IF NOT EXISTS "AMRprediction" (
 	"predictionId" integer primary key,
 	"pipelineId" integer NOT NULL,
+	"runId" integer NOT NULL,
 	"membership" integer NOT NULL,
 	"antibioticId" integer NOT NULL,
 	"resistance" text,
 	"value" numeric,
 	FOREIGN KEY("pipelineId") REFERENCES "pipeline"("pipelineId") ON UPDATE CASCADE ON DELETE CASCADE,
-	FOREIGN KEY("antibioticId") REFERENCES "antibiotics"("antibioticId") ON UPDATE CASCADE ON DELETE CASCADE
+	FOREIGN KEY("antibioticId") REFERENCES "antibiotics"("antibioticId") ON UPDATE CASCADE ON DELETE CASCADE,
+	FOREIGN KEY("runId") REFERENCES "scriptUse"("runId") ON UPDATE CASCADE ON DELETE CASCADE
 );
 -- Add the antibiotics
 INSERT INTO antibiotics (name, class)
