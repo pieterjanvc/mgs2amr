@@ -541,7 +541,7 @@ tryCatch({
           group_by(group) %>% 
           filter(any(str_detect(name, "_start$")))
         
-        gfa = gfa_filterSegments(gfa, myGraph$name)
+        gfa = gfa_filterSegments(gfa, myGraph$name[myGraph$name %in% gfa$segments$name])
         
         #Get largest start segment
         segmentOfInterest = gfa$segments %>% filter(str_detect(name, "_start$")) %>%
