@@ -18,7 +18,7 @@ runId = as.integer(args[[2]])
 verbose = args[[3]]
 blastn = args[[4]]
 blastDB = args[[5]]
-pipelineId = unlist(strsplit(args[[6]], ","))
+pipelineId = str_trim(unlist(strsplit(args[[6]], ",")))
 
 #Set these general blast args
 blastArgs = list(
