@@ -167,10 +167,21 @@ $sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
 
 #Check if pigz is installed else use gzip (slower but same result)
 if [ -z `command -v pigz` ]; then 
-	echo -e " - pigz is not present. gzip will be used instead, but is slower"
 	message="pigz not installed. gzip used instead"
 else
 	message="pigz present"
+fi;
+$sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
+	"INSERT INTO logs (runId,tool,timeStamp,actionId,actionName)
+	VALUES($runId,'setup.sh',$(date '+%s'),7,'$message')"
+echo -e " - $message"
+
+
+#Check if pandoc version 1.12.3+ is present
+if [ -z `command -v pandoc` ]; then 
+	message="pandoc is NOT present. HTML reports cannot be generated"
+else
+	message="pandoc present"
 fi;
 $sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
 	"INSERT INTO logs (runId,tool,timeStamp,actionId,actionName)
