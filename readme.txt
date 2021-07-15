@@ -14,7 +14,8 @@ The following software needs to be installed:
   * Precompiled 32-bit version: https://www.sqlite.org/download.html
   * Precompiled 64-bit version: https://github.com/boramalper/sqlite3-x64/releases
 - R version 4.0+
-  * Packages: gfaTools, RSQLite, igraph, tidyverse (with dplyr 1.0+)
+  * Packages: gfaTools, RSQLite, igraph, tidyverse (with dplyr 1.0+), parallel,
+              visNetwork, rmarkdown
   * Precompiled versions: https://www.r-project.org/ 
 - usearch
   * https://www.drive5.com/usearch/download.html
@@ -26,6 +27,9 @@ The following software needs to be installed:
    https://blast.ncbi.nlm.nih.gov/Blast.cgi?PAGE_TYPE=BlastDocs&DOC_TYPE=Download    
   * Use a cloud instance of BLAST
     Example: https://blast.ncbi.nlm.nih.gov/Blast.cgi
+- Pandoc
+  * https://pandoc.org/
+  * Optional but needed if HTML reports required
 
 Optional software
 - pigz
@@ -112,3 +116,17 @@ Arguments [b|e|f|r|t|v]
     1: General progress is posted to stdout
 	
 -- END REMOTEBLAST.SH ---
+
+--- ANNOTATION.SH ---
+Bring everything together to assign ARG to bacteria and predict the AMR
+
+Arguments [b|d|h|r|v]
+ -h Read the help documentation
+ -p (optional) Annotate only for these pipelineIds (e.g. "1,5,20")
+     Default = all pipelineIds for which annoation has not been completed
+ -g (optional) Generate HTML report. Default = TRUE
+ -v (optional) Default can be changed in the settings file
+    0: Nothing is written to stdout (except errors)
+    1: General progress is posted to stdout
+	
+-- END ANNOTATION.SH ---
