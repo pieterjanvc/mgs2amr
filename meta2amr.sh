@@ -118,7 +118,9 @@ if [ -z ${pipelineId+x} ]; then
 		done
 		
 		outputName=$outputName\_$rand	
-    elif [ -d $outputFolder/$outputName ]; then
+    elif [ ! $(grep -E "^\\w+$" <<< $outputName) ]; then
+		echo -e "\n\e[91mThe (-n) outputName can only consist of alphanumeric and underscore characters\e[0m"; exit 1;
+	elif [ -d $outputFolder/$outputName ]; then
 		echo -e "\n\e[91mA folder with name $outputName already exists in the output folder." \
 		"Use -n to specifiy a unique name or read the help file (-h)\e[0m"; exit 1;
 	fi
@@ -184,8 +186,8 @@ if [ $verbose != "0" ]; then echo -e "\n\e[32m"`date "+%T"`" - Inputs correct, s
 if [ -z ${pipelineId+x} ]; then
 	#Generate the next pipelineId
 	pipelineId=$($sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
-	"INSERT INTO pipeline (tempFolder,outputFolder,statusCode,statusMessage,startTimestamp,modifiedTimestamp) \
-	values('$tempFolder/$tempName','$outputFolder/$outputName',1,'Pipeline started','$(date '+%F %T')','$(date '+%F %T')'); \
+	"INSERT INTO pipeline (name,tempFolder,outputFolder,statusCode,statusMessage,startTimestamp,modifiedTimestamp) \
+	values('$outputName','$tempFolder/$tempName','$outputFolder/$outputName',1,'Pipeline started','$(date '+%F %T')','$(date '+%F %T')'); \
 	SELECT pipelineId FROM pipeline WHERE pipelineId = last_insert_rowid()")
 	
     runId=$($sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
