@@ -37,7 +37,7 @@ updateDBwhenError() {
 }
 
 #Options when script is run
-while getopts ":hb:d:r:v:" opt; do
+while getopts ":hb:d:p:v:" opt; do
   case $opt in
 	h) echo -e "\n"
 	   awk '/--- LOCALBLAST.SH ---/,/-- END LOCALBLAST.SH ---/' $baseFolder/readme.txt
