@@ -27,3 +27,7 @@ remoteBlastBlastn=https://blast.ncbi.nlm.nih.gov/Blast.cgi
 remoteBlastEntrez=txid2 [ORGN]
 remoteBlastTimeout=7200
 remoteBlastCheckFreq=120
+
+--- ANNOTATION.SH
+annotationHTMLreport=true
+annotationVerbose=1
