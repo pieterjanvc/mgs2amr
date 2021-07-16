@@ -62,20 +62,20 @@ exec 2>$baseFolder/dataAndScripts/lastError
 if [ -z ${generateReport+x} ]; then 
 	generateReport=`grep -oP "annotationHTMLreport\s*=\s*\K(.*)" $baseFolder/settings.txt`
 elif [ ! $(grep -iE "^(true|false|t|f)$" <<< $generateReport) ]; then	
-	echo -e "\n\e[91mThe generateReport option (-g) needs to be either true or false\e[0m"; exit 1;
+	echo -e "\n\e[91mThe generateHTMLReport option (-g) needs to be either true or false\e[0m"; exit 1;
 fi
 
 if [ $(grep -iE "^(true|t)$" <<< $generateReport) ]; then
 	#Check if pandoc is present
 	if [ -z `command -v pandoc` ]; then 
-		echo -e "\n\e[91mPandoc is NOT present. set -g to false or install Pandoc\e[0m"; 
+		echo -e "\n\e[91mPandoc is NOT present.\n Set -g (generateHTMLReport) to false or install Pandoc\e[0m"; 
 		exit 1;
 	fi;
 fi
 
 if [ -z ${verbose+x} ]; then 
 	verbose=`grep -oP "annotationVerbose\s*=\s*\K(.*)" $baseFolder/settings.txt`
-elif ! grep -qE "^(0|1)$" <<< $verbose; then	
+elif ! grep -qE "^(0|1|-1)$" <<< $verbose; then	
 	echo -e "\n\e[91mThe verbose option (-v) needs to be either 0 or 1\e[0m"; exit 1;
 fi
 
@@ -95,13 +95,18 @@ $sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
 	VALUES $pipelineArg
 	($runId,'annotation.sh','generateReport', '$generateReport'),	
 	($runId,'annotation.sh','verbose', '$verbose')"
+	
+SECONDS=0
 
 #--- PART 3 ANNOTATION ---
 #-------------------------
-echo -e "\n"
-echo "***************************************"
-echo "--- STEP 3: ANNOTATION & PREDICTION ---"
-echo "***************************************"
+if [ "$verbose" -gt 0 ]; then 
+	echo -e "\n"
+	echo "*****************************************"
+	echo "--- META2AMR: ANNOTATION & PREDICTION ---"
+	echo "*****************************************"
+fi
+
 
 #Run annotation script
 $Rscript $baseFolder/dataAndScripts/ARG_annotation.R \
@@ -112,3 +117,10 @@ $sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
 	"UPDATE scriptUse
 	SET end = '$(date '+%F %T')', status = 'finished'
 	WHERE runId = $runId"
+
+duration=$SECONDS
+
+if [ "$verbose" -gt 0 ]; then 
+	echo -e "\n\e[32m--- Annotation & Prediction finished successfully ---\n"\
+								  "             Time elapsed: $(($duration / 60)) minutes \e[0m"
+fi				
