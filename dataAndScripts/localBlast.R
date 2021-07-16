@@ -15,7 +15,7 @@ suppressPackageStartupMessages(library(RSQLite))
 args = commandArgs(trailingOnly = TRUE) #arguments specified in the bash file
 baseFolder = formatPath(args[[1]], endWithSlash = T)
 runId = as.integer(args[[2]])
-verbose = args[[3]]
+verbose = abs(as.integer(args[[3]]))
 blastn = args[[4]]
 blastDB = args[[5]]
 pipelineId = str_trim(unlist(strsplit(args[[6]], ",")))
