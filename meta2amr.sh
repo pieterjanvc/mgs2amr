@@ -36,7 +36,7 @@ updateDBwhenError() {
 }
 
 #Options when script is run
-while getopts ":hi:s:o:n:t:fv:p:m:" opt; do
+while getopts ":hi:j:o:n:t:fv:p:m:s:" opt; do
   case $opt in
 	h) echo -e "\n"
 	   awk '/--- META2AMR.SH ---/,/-- END META2AMR.SH ---/' $baseFolder/readme.txt  
@@ -45,7 +45,7 @@ while getopts ":hi:s:o:n:t:fv:p:m:" opt; do
     ;;	
 	i) inputFile1="${OPTARG}"
     ;;
-	s) inputFile2="${OPTARG}"
+	j) inputFile2="${OPTARG}"
     ;;
 	o) outputFolder=`realpath "${OPTARG%/}"`
     ;;
@@ -54,6 +54,8 @@ while getopts ":hi:s:o:n:t:fv:p:m:" opt; do
 	t) tempFolder=`realpath "${OPTARG%/}"`
     ;;
 	f) forceOverwrite=TRUE
+    ;;
+	s) step="${OPTARG}"
     ;;
 	v) verbose="${OPTARG}"
     ;;
@@ -77,6 +79,14 @@ fi
 if [ -z ${memory+x} ]; then 
 	# memory=$(expr $(free -h | grep -oP "Mem:\s+[^\s]+\s+[^\s]+\s+\K([\d\.]+)") - 4)
 	memory="32G"
+fi
+
+if [ -z ${step+x} ]; then 
+	step=`grep -oP "meta2amrStep\s*=\s*\K(.*)" $baseFolder/settings.txt`
+fi
+
+if [ ! $(grep -E "^(1|2|3|4)$" <<< $step) ]; then 
+	echo -e "\n\e[91mThe step value (-s) must be between 1 - 4\e[0m"; exit 1;
 fi
 
 if [ -z ${pipelineId+x} ]; then 	
@@ -118,8 +128,11 @@ if [ -z ${pipelineId+x} ]; then
 		done
 		
 		outputName=$outputName\_$rand	
-    elif [ ! $(grep -E "^\\w+$" <<< $outputName) ]; then
-		echo -e "\n\e[91mThe (-n) outputName can only consist of alphanumeric and underscore characters\e[0m"; exit 1;
+    elif [ ! $(grep -iP "^[a-z][\w+\-]*\w$" <<< $outputName) ]; then
+		echo -e "\n\e[91mThe (-n) outputName must be as follows:\n"\
+				" - start with letter\n"\
+				" - zero or more alphanumeric, _ or - characters\n"\
+		        " - end with alphanumeric character\e[0m"; exit 1;
 	elif [ -d $outputFolder/$outputName ]; then
 		echo -e "\n\e[91mA folder with name $outputName already exists in the output folder." \
 		"Use -n to specifiy a unique name or read the help file (-h)\e[0m"; exit 1;
@@ -174,13 +187,12 @@ fi
 
 if [ -z ${verbose+x} ]; then 
 	verbose=`grep -oP "meta2amrVerbose\s*=\s*\K(.*)" $baseFolder/settings.txt`
-elif ! grep -qE "^(0|1|2)$" <<< $verbose ; then
-echo verbose = ${verbose[@]}
+elif [ ! $(grep -qE "^(0|1|2)$" <<< $verbose) ] ; then
 	echo -e "\n\e[91mThe verbose option (-v) needs to be 0, 1 or 2\n Read the help file (-h) for more info\e[0m"; exit 1; 
 fi
 
-if [ $verbose != "0" ]; then echo -e "\n\e[32m"`date "+%T"`" - Inputs correct, starting pipeline ...\e[0m"; fi;
-
+#Set verbose to negative to let other scripts know the main echo is coming from here
+verbose=-$verbose
 
 #Register the start of the script in the DB
 if [ -z ${pipelineId+x} ]; then
@@ -223,20 +235,30 @@ $sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
 	($runId,'meta2amr.sh','forceOverwrite', '$forceOverwrite'),
 	($runId,'meta2amr.sh','verbose', '$verbose')"
 
+SECONDS=0
+
+if [ "$verbose" -ne 0 ]; then
+	echo -e "\n\e[32m##################################"
+	echo -e "\e[32m--- META2AMR PIPELINE - ID $pipelineId ---"
+	echo -e "\e[32m##################################\e[0m\n"
+fi
 
 #--- PART 1 METACHERCHANT (MC) ---
 #---------------------------------
 	
 #Only run if MetaCherchant has not been run before for this sample (i.e. the temp folder has MC data)
-echo "*****************************"
-echo "--- STEP 1: MetaCherchant ---"
-echo "*****************************"
+if [ "$verbose" -ne 0 ]; then
+	echo "*****************************"
+	echo "--- STEP 1: MetaCherchant ---"
+	echo "*****************************"
+fi
+
 if [ -z "$MCsuccess" ]; then 
 	
-	if [ $verbose != "0" ]; then echo -e `date "+%T"`" - Start MetaCherchant ..."; fi;
+	if [ "$verbose" -ne 0 ]; then echo -e `date "+%T"`" - Start MetaCherchant ..."; fi;
 	
 	#Generate temp folders
-  mkdir -p $tempFolder/$tempName
+    mkdir -p $tempFolder/$tempName
 	mkdir -p $tempFolder/$tempName/metacherchant_logs
 	rm -rf $tempFolder/$tempName/metacherchant_logs/*
 	echo $pipelineId > $tempFolder/$tempName/pipelineId
@@ -279,12 +301,12 @@ if [ -z "$MCsuccess" ]; then
 		
 	exec 2>$baseFolder/dataAndScripts/lastError #Restore output redirection
 	
-	if [ $verbose != "0" ]; then echo -e `date "+%T"`" - Finished MetaCherchant"; fi;
+	if [ "$verbose" -ne 0 ]; then echo -e `date "+%T"`" - Finished MetaCherchant"; fi;
 	
 
 else
 
-	if [ $verbose != "0" ]; then echo -e `date "+%T"`" - Skip MetaCherchant, already done"; fi;
+	if [ "$verbose" -ne 0 ]; then echo -e `date "+%T"`" - Skip MetaCherchant, already done"; fi;
 	$sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
 	"INSERT INTO logs (runId,tool,timeStamp,actionId,actionName)
 	VALUES($runId,'metacherchant.sh',$(date '+%s'),3,'Skip MetaCherchant, already done')"
@@ -296,50 +318,98 @@ fi
 
 #--- PART 2 BLAST PREP ---
 #-------------------------
-echo -e "\n"
-echo "***********************************"
-echo "--- STEP 2: BLASTn Preparations ---"
-echo "***********************************"
+if [ $step -gt 1 ]; then
+	
+	if [ "$verbose" -ne 0 ]; then 
+		echo -e "\n"
+		echo "***********************************"
+		echo "--- STEP 2: BLASTn Preparations ---"
+		echo "***********************************"
+	fi
+	
+	# if [ "$verbose" -ne 0 ]; then echo -e `date "+%T"`" - Start BLAST preparations  ..."; fi;
 
-if [ $verbose != "0" ]; then echo -e `date "+%T"`" - Start BLAST preparations  ..."; fi;
+	#Get paths from the settings
+	Rscript=`grep -oP "rscript\s*=\s*\K(.*)" $baseFolder/settings.txt`
 
-#Get paths from the settings
-Rscript=`grep -oP "rscript\s*=\s*\K(.*)" $baseFolder/settings.txt`
+	#Set any option to modify the script
+	scriptOptions=(keepAllMetacherchantData maxPathDist minBlastLength trimLength clusterIdentidy forceRedo, maxStep)
+	scriptValues=(FALSE 1500 250 250 0.99 "$forceOverwrite" 0)
 
-#Set any option to modify the script
-scriptOptions=(keepAllMetacherchantData maxPathDist minBlastLength trimLength clusterIdentidy forceRedo, maxStep)
-scriptValues=(FALSE 1500 250 250 0.99 "$forceOverwrite" 0)
+	if [ "${scriptValues[6]}" != 0 ]; then 
+		echo "  WARNING: the blast prep is limited to step ${scriptValues[6]}" 
+	fi
 
-if [ "${scriptValues[6]}" != 0 ]; then 
-	echo "  WARNING: the blast prep is limited to step ${scriptValues[6]}" 
+	# declare -A scriptOptions
+	# scriptOptions[keepAllMetacherchantData]=FALSE #keepAllMetacherchantData, if FALSE, only the GFA data is kept after merging (folders are removed)
+	# scriptOptions[maxPathDist]=5000 #maxPathDist: Distance from ARG to crop the GFA file (reduces blast search)
+	# scriptOptions[minBlastLength]=250 #minBlastLength: Min segment length to submit to blast
+	# scriptOptions[trimLength]=100 #trimLength: Loose segments smaller than this will be cut from thr GFA
+	# scriptOptions[clusterIdentidy]=0.95 #clusterIdentidy: The cluster identity percent used in usearch
+	# scriptOptions[forceRedo]=FALSE #forceRedo: if TRUE, all code is run again, even is intermediate files are available
+
+	for i in "${!scriptOptions[@]}"; 
+	do 
+		# values=$values",('$runId','$i','${scriptOptions[$i]}')" 
+		values=$values",('$runId','${scriptOptions[$i]}','${scriptValues[$i]}')"
+	done
+	values=`echo $values | sed -e 's/^,//g'`
+
+	$sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
+		"INSERT INTO blastPrepOptions (runId,option,value) VALUES $values"
+
+	$Rscript $baseFolder/dataAndScripts/blastPrep.R \
+		"$baseFolder" "$tempFolder"	"$tempName" "$verbose" "$runId" "$pipelineId" \
+		${scriptValues[@]}
+
+	if [ "$verbose" -ne 0 ]; then echo -e `date "+%T"`" - Finished BLAST preparations"; fi;
 fi
 
-# declare -A scriptOptions
-# scriptOptions[keepAllMetacherchantData]=FALSE #keepAllMetacherchantData, if FALSE, only the GFA data is kept after merging (folders are removed)
-# scriptOptions[maxPathDist]=5000 #maxPathDist: Distance from ARG to crop the GFA file (reduces blast search)
-# scriptOptions[minBlastLength]=250 #minBlastLength: Min segment length to submit to blast
-# scriptOptions[trimLength]=100 #trimLength: Loose segments smaller than this will be cut from thr GFA
-# scriptOptions[clusterIdentidy]=0.95 #clusterIdentidy: The cluster identity percent used in usearch
-# scriptOptions[forceRedo]=FALSE #forceRedo: if TRUE, all code is run again, even is intermediate files are available
 
-for i in "${!scriptOptions[@]}"; 
-do 
-	# values=$values",('$runId','$i','${scriptOptions[$i]}')" 
-	values=$values",('$runId','${scriptOptions[$i]}','${scriptValues[$i]}')"
-done
-values=`echo $values | sed -e 's/^,//g'`
+if [ $step -gt 2 ]; then
 
-$sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
-	"INSERT INTO blastPrepOptions (runId,option,value) VALUES $values"
+	if [ "$verbose" -ne 0 ]; then 
+		echo -e "\n"
+		echo "**********************"
+		echo "--- STEP 3: BLASTn ---"
+		echo "**********************"
+	fi
 
-$Rscript $baseFolder/dataAndScripts/blastPrep.R \
-	"$baseFolder" "$tempFolder"	"$tempName" "$verbose" "$runId" "$pipelineId" \
-	${scriptValues[@]}
+	blastPath=`grep -oP "localBlastBlastn\s*=\s*\K(.*)" $baseFolder/settings.txt`
+	if [ `command -v $blastPath` ]; then 
+		$baseFolder/localBlast.sh -v $verbose -p "$pipelineId"
+	else
+		# $baseFolder/remoteBlast.sh -v $verbose -p "$pipelineId"
+		echo -e "\e[91mRemote BLASTn has not been implemented yet.\n Please use local version for now...\e[0m"
+		step=2
+	fi
+	
+fi
 
-if [ $verbose != "0" ]; then echo -e `date "+%T"`" - Finished BLAST preparations"; fi;
+
+if [ $step -gt 3 ]; then
+
+	if [ "$verbose" -ne 0 ]; then 
+		echo -e "\n"
+		echo "***************************************"
+		echo "--- STEP 4: ANNOTATION & PREDICTION ---"
+		echo "***************************************"
+	fi
+	
+	$baseFolder/annotation.sh -v "$verbose" -p "$pipelineId"
+fi
+
 
 #Update the DB
 $sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
 	"UPDATE scriptUse
 	SET end = '$(date '+%F %T')', status = 'finished'
 	WHERE runId = $runId"
+	
+duration=$SECONDS
+
+if [ $step != 4 ]; then step="at step $step"; else step=""; fi
+if [ "$verbose" -ne 0 ]; then 
+	echo -e "\n\e[32m--- The META2AMR pipeline finished successfully $step ---\n"\
+						"                Time elapsed: $(($duration / 60)) minutes \e[0m"
+fi
