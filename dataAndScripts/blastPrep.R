@@ -30,7 +30,7 @@ args = commandArgs(trailingOnly = TRUE) #arguments specified in the shell file
 baseFolder = formatPath(args[[1]], endWithSlash = T)
 tempFolder = formatPath(args[[2]], endWithSlash = T)
 tempName = args[[3]]
-verbose = args[[4]]
+verbose = abs(as.integer(args[[4]]))
 runId = as.integer(args[[5]])
 pipelineId = as.integer(args[[6]])
 keepAllMetacherchantData = as.logical(args[[7]])
@@ -626,7 +626,6 @@ tryCatch({
       write.csv(blastSegments, sprintf("%sblastSegments.csv", tempFolder), row.names = F)
       
       #Feedback and Logs
-      if(verbose > 0){cat(" finished\n")}
       newLogs = rbind(newLogs, list(as.integer(Sys.time()), 14, 
                                     "Finished simplifying GFA files"))
       
