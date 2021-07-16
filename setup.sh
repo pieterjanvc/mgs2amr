@@ -145,7 +145,7 @@ if [ -z `command -v $blastPath` ]; then
 		exit 1;
 	fi
 	message="local BLASTn present - "
-	echo -e " - Local BLASTn instance not found: localBlast.sh can NOT be used"
+	echo -e " - (!) Local BLASTn instance not found: localBlast.sh can NOT be used"
 else
 	message="local BLASTn NOT present - "
 	echo -e " - Local BLASTn instance present: localBlast.sh can be used"
@@ -158,7 +158,7 @@ if [ "$?" != 0 ]; then
 	echo -e " - Remote BLASTn service present: remoteBlast.sh can be used"
 else
 	message=$message"remote BLASTn NOT present"
-	echo -e " - Remote BLASTn service present: remoteBlast.sh can be used"
+	echo -e " - (!) Remote BLASTn service present: remoteBlast.sh can be used"
 fi
 
 $sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
@@ -179,7 +179,7 @@ echo -e " - $message"
 
 #Check if pandoc version 1.12.3+ is present
 if [ -z `command -v pandoc` ]; then 
-	message="pandoc is NOT present. HTML reports cannot be generated"
+	message="(!) pandoc is NOT present. HTML reports cannot be generated"
 else
 	message="pandoc present"
 fi;
