@@ -13,7 +13,7 @@ suppressPackageStartupMessages(library(rmarkdown))
 args = commandArgs(trailingOnly = TRUE) 
 baseFolder = formatPath(args[[1]], endWithSlash = T)
 runId = as.integer(args[[2]])
-verbose = args[[3]]
+verbose = abs(as.integer(args[[3]]))
 pipelineIds = str_trim(unlist(strsplit(args[[4]], ",")))
 generateReport = as.logical(args[[5]])
 
@@ -123,8 +123,8 @@ if(nrow(toProcess) == 0) {
         actionId = 1, actionName = "Start Annotation & Prediction")
       
       if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S -"), 
-                          "Start Annotation & Prediction for pipelineId", 
-                          myPipelineId, "\n")}
+                          sprintf("Start Annotation & Prediction for pipelineId %i (%i/%i)\n", 
+                          myPipelineId, sampleIndex, nrow(toProcess)))}
       
       # ---- FILTERING DATA ----
       #*************************
@@ -217,7 +217,8 @@ if(nrow(toProcess) == 0) {
             slice(1) %>% pull(name)
           
           #Get all semenents in path to start
-          x = gfa_pathsToSegment(gfa, segmentOfInterest, returnList = T, pathSegmentsOnly = T) %>% 
+          x = gfa_pathsToSegment(gfa, segmentOfInterest, returnList = T, 
+                                 pathSegmentsOnly = T, verbose = F) %>% 
             map_df(function(path){
               data.frame(
                 pathId = path$id,
@@ -534,7 +535,8 @@ if(nrow(toProcess) == 0) {
           by = "membership") %>% 
         mutate(estimatedAbundance = estimatedAbundance * size * 1e6 / inputfileBP,
                across(c(prob, estimatedAbundance, val), round, digits = 4),
-               runId = runId)
+               runId = runId) %>% group_by(pipelineId, taxId) %>% 
+        filter(val == max(val)) %>% slice(1) %>% ungroup() 
       
       if(verbose > 0){cat("done\n")}
       newLogs = rbind(newLogs, list(as.integer(Sys.time()), 9, 
@@ -651,7 +653,7 @@ if(nrow(toProcess) == 0) {
                                     "Annotation finished"))
       
       if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S -"), 
-                          sprintf("The pipeline (id %s) finished successfully",
+                          sprintf("The pipeline (id %s) finished successfully\n\n",
                                   myPipelineId))}
       
       newLogs = rbind(newLogs, list(as.integer(Sys.time()), 14, 
