@@ -75,7 +75,7 @@ fi
 
 if [ -z ${verbose+x} ]; then 
 	verbose=`grep -oP "localBlastVerbose\s*=\s*\K(.*)" $baseFolder/settings.txt`
-elif ! grep -qE "^(0|1)$" <<< $verbose; then	
+elif ! grep -qP "^-?(0|1|2)$" <<< $verbose; then	
 	echo -e "\n\e[91mThe verbose option (-v) needs to be either 0 or 1\e[0m"; exit 1;
 fi
 
@@ -84,6 +84,15 @@ runId=$($sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
 	"INSERT INTO scriptUse (pipelineId,scriptName,start,status) \
 	values(0,'localBlast.sh','$(date '+%F %T')','running'); \
 	SELECT runId FROM scriptUse WHERE runId = last_insert_rowid()")
+	
+SECONDS=0
+
+if [ $verbose -gt 0 ]; then
+	echo -e "\n"
+	echo "********************************"
+	echo "--- META2AMR: BLASTn (local) ---"
+	echo "********************************"
+fi
 
 #Run BLASTn for all in the queue (unless runId specified)
 $Rscript $baseFolder/dataAndScripts/localBlast.R \
@@ -95,3 +104,11 @@ $sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
 	"UPDATE scriptUse
 	SET end = '$(date '+%F %T')', status = 'finished'
 	WHERE runId = $runId"
+	
+duration=$SECONDS
+
+if [ "$verbose" -gt 0 ]; then 
+	echo -e "\n\e[32m--- Local BLASTn finished successfully ---\n"\
+						"         Time elapsed: $(($duration / 60)) minutes \e[0m"
+fi
+
