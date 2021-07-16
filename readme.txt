@@ -46,14 +46,19 @@ Evaluate a metagenome for pathogenic bacterial species and their AMR
 The ARG tested obtained from https://www.ncbi.nlm.nih.gov/bioproject/PRJNA313047
  Last update of this list: 2021-06-04
 
-Arguments [h|i|s|o|n|t|m|v]
+Arguments [h|i|j|o|n|t|s|m|v]
  -h Read the help documentation
  -i The input file in fastq or fastq.gz format
- -s (optional) The secondary input file in case of pair-end reads
+ -j (optional) The secondary input file in case of pair-end reads
  -o The folder to save the results. A sub-folder will be created
- -n The name of the output sub-folder and prefix for other filenames
+ -n (optional) The name of the output sub-folder and prefix for other filenames
  -t (optional) The location of the temp folder (files removed once completed). 
      Default = meta2amr/temp unless 'meta2amrTemp' is set in the settings file
+ -s (optional) Set the step to which the pipeline must be run
+    * 1: Step 1 - MetaCherchant
+	* 2: previous + Step 2 - BlastPreparations
+	* 3: previous + Step 3 - Blastn
+	* 4: previous + Step 4 - Annotation
  -m (optional) Default = 16G; Memory available (important for MetaCherchant)
     Input files of > 2Gb easily need 32+Gb of RAM
  -v (optional) Default can be changed in the settings file
@@ -64,7 +69,7 @@ Arguments [h|i|s|o|n|t|m|v]
 Special case when resuming an existing pipeline
  -p Provide only a pipelineId (found in file called pipelineId in temp/output folder). 
      Use if an error occurred and you like to resume from a specific temp file
-	 All other parameters but verbose will be ignored
+	 All other parameters but step (-s) and verbose (-v) will be ignored
 	
 -- END META2AMR.SH ---
 
