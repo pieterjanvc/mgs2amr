@@ -27,13 +27,15 @@ info = tbl(myConn, "scriptUse") %>%
   filter(pipelineId == myPipelineId) %>% as.data.frame()
 arguments = tbl(myConn, "scriptArguments") %>% 
   filter(runId %in% local(info$runId)) %>% 
-  group_by(argument) %>% filter(runId == max(runId)) %>% ungroup()
+  group_by(argument) %>% filter(runId == max(runId)) %>% ungroup() %>% 
+  as.data.frame()
 sampleName = arguments %>% 
   filter(argument == "outputName") %>% pull(value)
 tempFolder = arguments %>% 
   filter(argument %in% c("tempFolder", "tempName")) %>% pull(value) %>% 
   paste(collapse = "/")
 
+dbDisconnect(myConn)
 genes = read_csv(sprintf("%s/genes.csv", tempFolder))
 bact = read_csv(sprintf("%s/bacteria.csv", tempFolder))
 
@@ -62,8 +64,13 @@ seqLength = grep("sequences length",
 nodes = data.frame(
   id = c(unique(genes$membership), unique(genes$geneId)),
   label = c(paste("Bacterium id", unique(genes$membership)), 
-         unique(ifelse(is.na(genes$subtype), genes$gene, genes$subtype)))
-)
+         (ifelse(is.na(genes$subtype), genes$gene, genes$subtype))),
+  shape = "image") %>% 
+  mutate(image = ifelse(str_detect(label, "Bacterium id"),
+                   "http://www.pngall.com/wp-content/uploads/2017/11/Bacteria-PNG-Clipart.png",
+                   "https://www.pikpng.com/pngl/b/101-1014762_dna-png-dna-clipart.png"
+      ))
+
 
 edges = genes %>% select(from = geneId, to = membership)
 
