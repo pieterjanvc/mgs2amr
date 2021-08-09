@@ -144,10 +144,10 @@ if [ -z `command -v $blastPath` ]; then
 		updateDBwhenError "$runId" "No valid path to either a local or remote BLASTn"
 		exit 1;
 	fi
-	message="local BLASTn present - "
+	message="local BLASTn NOT present - "
 	echo -e " - (!) Local BLASTn instance not found: localBlast.sh can NOT be used"
 else
-	message="local BLASTn NOT present - "
+	message="local BLASTn present - "
 	echo -e " - Local BLASTn instance present: localBlast.sh can be used"
 fi
 
