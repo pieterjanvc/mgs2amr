@@ -25,7 +25,7 @@ generateReport = as.logical(args[[5]])
 # generateReport = T
 
 #Load the ARG and the sample list to process
-myConn = dbConnect(SQLite(), sprintf("dataAndScripts/meta2amr.db", baseFolder))
+myConn = dbConnect(SQLite(), sprintf("%sdataAndScripts/meta2amr.db", baseFolder))
 
 ARG = dbReadTable(myConn, "ARG") 
 
@@ -45,12 +45,12 @@ settings = setNames(str_trim(settings[,3]), settings[,2])
 
 #Get the AMR prediction models
 predictionModels = readRDS(
-  sprintf("dataAndScripts/predictionModels.rds",baseFolder))
+  sprintf("%sdataAndScripts/predictionModels.rds",baseFolder))
 myAntibiotics = tbl(myConn, "antibiotics") %>% 
   filter(name %in% local(names(predictionModels))) %>% 
   as.data.frame()
 
-bactGenomeSize = read_csv(sprintf("dataAndScripts/bactGenomeSize.csv",baseFolder))
+bactGenomeSize = read_csv(sprintf("%sdataAndScripts/bactGenomeSize.csv",baseFolder))
 
 dbDisconnect(myConn)
 
@@ -78,7 +78,6 @@ softmax = function(vals, normalise = F, log = T){
 #***************************************
 
 options(readr.num_columns = 0)
-sampleIndex = 1
 
 #Check if there are any samples to process
 if(nrow(toProcess) == 0) {
@@ -91,7 +90,7 @@ if(nrow(toProcess) == 0) {
     tool = "ARG_annotation.R"
     ) %>% select(runId,tool,timeStamp,actionId,actionName)
   
-  myConn = dbConnect(SQLite(), sprintf("dataAndScripts/meta2amr.db", baseFolder))
+  myConn = dbConnect(SQLite(), sprintf("%sdataAndScripts/meta2amr.db", baseFolder))
   q = dbExecute(
     myConn, 
     "INSERT INTO logs (runId,tool,timeStamp,actionId,actionName) VALUES(?,?,?,?,?)", 
@@ -113,7 +112,7 @@ if(nrow(toProcess) == 0) {
       sampleName = str_extract(sample, "[^\\/]+(?=_\\d+$)")
       
       #Grab the detected ARG from the previous step
-      myConn = dbConnect(SQLite(), sprintf("dataAndScripts/meta2amr.db", baseFolder))
+      myConn = dbConnect(SQLite(), sprintf("%sdataAndScripts/meta2amr.db", baseFolder))
       genesDetected = tbl(myConn, "detectedARG") %>% 
         filter(pipelineId == myPipelineId) %>% as.data.frame()
       dbDisconnect(myConn)
@@ -596,7 +595,7 @@ if(nrow(toProcess) == 0) {
       newLogs = rbind(newLogs, list(as.integer(Sys.time()), 12, 
                                     "Save results"))
       
-      myConn = dbConnect(SQLite(), sprintf("dataAndScripts/meta2amr.db", baseFolder))
+      myConn = dbConnect(SQLite(), sprintf("%sdataAndScripts/meta2amr.db", baseFolder))
       
       #Add the ARGgroup to the detectedARG table
       q = dbExecute(myConn, 
@@ -668,7 +667,7 @@ if(nrow(toProcess) == 0) {
       newLogs$tool = "ARG_annotation.R"
       newLogs = newLogs %>% select(runId,tool,timeStamp,actionId,actionName)
       
-      myConn = dbConnect(SQLite(), sprintf("dataAndScripts/meta2amr.db", baseFolder))
+      myConn = dbConnect(SQLite(), sprintf("%sdataAndScripts/meta2amr.db", baseFolder))
       q = dbExecute(
         myConn, 
         "INSERT INTO logs (runId,tool,timeStamp,actionId,actionName) VALUES(?,?,?,?,?)", 
