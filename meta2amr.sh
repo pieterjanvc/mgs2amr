@@ -83,6 +83,8 @@ fi
 
 if [ -z ${step+x} ]; then 
 	step=`grep -oP "meta2amrStep\s*=\s*\K(.*)" $baseFolder/settings.txt`
+elif [ ! $(grep -E "^(1|2|3|4)$" <<< $step) ] ; then
+	echo -e "\n\e[91mThe step option (-s) needs to be between 1-4\n Read the help file (-h) for more info\e[0m"; exit 1;
 fi
 
 if [ ! $(grep -E "^(1|2|3|4)$" <<< $step) ]; then 
@@ -128,10 +130,10 @@ if [ -z ${pipelineId+x} ]; then
 		done
 		
 		outputName=$outputName\_$rand	
-    elif [ ! $(grep -iP "^[a-z][\w+\-]*\w$" <<< $outputName) ]; then
+    elif [ ! $(grep -iP "^[a-z][\w+\-\.]*\w$" <<< $outputName) ]; then
 		echo -e "\n\e[91mThe (-n) outputName must be as follows:\n"\
 				" - start with letter\n"\
-				" - zero or more alphanumeric, _ or - characters\n"\
+				" - zero or more alphanumeric, '.', '_' or '-' characters\n"\
 		        " - end with alphanumeric character\e[0m"; exit 1;
 	elif [ -d $outputFolder/$outputName ]; then
 		echo -e "\n\e[91mA folder with name $outputName already exists in the output folder." \
@@ -187,7 +189,7 @@ fi
 
 if [ -z ${verbose+x} ]; then 
 	verbose=`grep -oP "meta2amrVerbose\s*=\s*\K(.*)" $baseFolder/settings.txt`
-elif [ ! $(grep -qE "^(0|1|2)$" <<< $verbose) ] ; then
+elif [ ! $(grep -E "^(0|1|2)$" <<< $verbose) ] ; then
 	echo -e "\n\e[91mThe verbose option (-v) needs to be 0, 1 or 2\n Read the help file (-h) for more info\e[0m"; exit 1; 
 fi
 
@@ -241,6 +243,10 @@ if [ "$verbose" -ne 0 ]; then
 	echo -e "\n\e[32m##################################"
 	echo -e "\e[32m--- META2AMR PIPELINE - ID $pipelineId ---"
 	echo -e "\e[32m##################################\e[0m\n"
+fi
+
+if [ $step -lt 4 ]; then
+	echo -e "NOTE: The pipeline is limited to step $step\n"
 fi
 
 #--- PART 1 METACHERCHANT (MC) ---
