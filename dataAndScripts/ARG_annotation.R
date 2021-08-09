@@ -111,6 +111,12 @@ if(nrow(toProcess) == 0) {
       myPipelineId = toProcess$pipelineId[sampleIndex]
       sampleName = str_extract(sample, "[^\\/]+(?=_\\d+$)")
       
+      inputfileBP = grep("sequences length",
+                         readLines(sprintf("%s/metacherchant_logs/log", sample)),
+                         value = T, fixed = T) %>%
+        str_extract("([\\d'])+(?=\\s\\()") %>%
+        str_replace_all("'", "") %>% as.numeric()
+      
       #Grab the detected ARG from the previous step
       myConn = dbConnect(SQLite(), sprintf("%sdataAndScripts/meta2amr.db", baseFolder))
       genesDetected = tbl(myConn, "detectedARG") %>% 
@@ -148,8 +154,8 @@ if(nrow(toProcess) == 0) {
                 regex = "(\\w+)\\s+(\\w+)($|\\s+.*)") %>% 
         #Sp. will be pasted with taxid to make it unique
         mutate(species = ifelse(species == "sp", paste0(species, taxid), species)) %>% 
-        filter(!genus %in% c("uncultured", "mixed"),
-               !species %in% c("bacterium") & 
+        filter(!genus %in% c("uncultured", "Uncultured", "mixed", "Bacterium"),
+               !species %in% c("bacterium", "Bacterium") & 
                  !is.na(species)) %>% 
         #Extract subspecies, strain and plasmid info
         mutate(
@@ -456,86 +462,231 @@ if(nrow(toProcess) == 0) {
                   startOrientation = paste(unique(startOrientation), collapse = ","),
                   orders = paste(order, collapse = ","), .groups = "drop")
       
-      #Filter bacteria based off the ARG groups
-      bactGroups = allBact %>% 
-        left_join(identicalARG %>% select(geneId, ARGgroup), by = "geneId") %>% 
-        group_by(geneId) %>%
-        mutate(ARGgroup = ifelse(is.na(ARGgroup), cur_group_id() + 
-                                   max(.$ARGgroup, 0, na.rm = T), ARGgroup)) %>% 
-        group_by(ARGgroup) %>% 
-        filter(pathScore >= quantile(pathScore, 0.75)) %>% 
+      # #Filter bacteria based off the ARG groups
+      # bactGroups = allBact %>% 
+      #   left_join(identicalARG %>% select(geneId, ARGgroup), by = "geneId") %>% 
+      #   group_by(geneId) %>%
+      #   mutate(ARGgroup = ifelse(is.na(ARGgroup), cur_group_id() + 
+      #                              max(.$ARGgroup, 0, na.rm = T), ARGgroup)) %>% 
+      #   group_by(ARGgroup) %>% 
+      #   filter(pathScore >= quantile(pathScore, 0.75)) %>% 
+      #   ungroup()
+      # 
+      # result = bactGroups %>% 
+      #   select(ARGgroup, pathScore, taxid, genus, species) %>% 
+      #   distinct()
+      # 
+      # myFilter = result %>% select(taxid, genus, species, ARGgroup) %>% distinct() %>% 
+      #   group_by(taxid) %>% mutate(n = n()) %>% 
+      #   group_by(genus, species, ARGgroup) %>% filter(n == max(n))
+      # 
+      # 
+      # result = result %>% 
+      #   filter(taxid %in% myFilter$taxid) %>% 
+      #   group_by(ARGgroup, taxid) %>% 
+      #   filter(pathScore == max(pathScore)) %>% ungroup() %>% 
+      #   mutate(
+      #     taxid = as.character(taxid)
+      #   ) %>%
+      #   group_by(ARGgroup) %>%
+      #   filter(pathScore >= quantile(pathScore, 0.9)) %>%
+      #   ungroup() %>% 
+      #   select(from = taxid, to = ARGgroup, weight = pathScore, genus, species)
+      # 
+      # myGraph = graph_from_data_frame(result, directed = F)
+      # 
+      # myGraph = data.frame(
+      #   from = names(components(myGraph)$membership),
+      #   bactGroup = components(myGraph)$membership
+      # )
+      # 
+      # result = result %>% left_join(myGraph, by = "from") %>% 
+      #   group_by(bactGroup, from) %>% 
+      #   mutate(val = sum(weight)) %>% ungroup()
+      # 
+      # inputfileBP = grep("sequences length", 
+      #                    readLines(sprintf("%s/metacherchant_logs/log", sample)),
+      #                    value = T, fixed = T) %>% 
+      #   str_extract("([\\d'])+(?=\\s\\()") %>% 
+      #   str_replace_all("'", "") %>% as.numeric()
+      # 
+      # #Add the ARGgroup to the detected genes
+      # genesDetected = genesDetected %>% select(-ARGgroup, -bactGroup) %>% 
+      #   left_join(bactGroups %>% 
+      #               select(geneId, ARGgroup) %>% 
+      #               mutate(geneId = as.integer(geneId)) %>% 
+      #               distinct(), by = "geneId") %>% 
+      #   left_join(result %>% select(ARGgroup = to, bactGroup) %>% 
+      #               distinct(), by = "ARGgroup") %>% 
+      #   left_join(ARG %>% select(geneId, gene), by = "geneId")
+      # 
+      # #Generate the table with detected bacteria
+      # bact = result %>% group_by(from, bactGroup, genus, species) %>% 
+      #   summarise(val = max(val), .groups = "drop") %>% 
+      #   group_by(bactGroup) %>% 
+      #   mutate(prob = softmax(val, T, T)) %>% 
+      #   ungroup() %>% 
+      #   mutate(
+      #     pipelineId = toProcess$pipelineId[sampleIndex]) %>% 
+      #   arrange(bactGroup, desc(prob)) %>% mutate(
+      #     species = str_replace(species, "sp\\d+", "sp.")
+      #   ) %>% left_join(bactGenomeSize %>% select(genus, species, level, size),
+      #                   by = c("genus", "species")) %>% 
+      #   select(pipelineId, taxId = from, bactGroup, genus, species, prob, val, size, level) %>% 
+      #   left_join(
+      #     genesDetected %>% select(bactGroup, startDepth) %>% 
+      #       group_by(bactGroup) %>% 
+      #       summarise(estimatedAbundance = mean(startDepth)),
+      #     by = "bactGroup") %>% 
+      #   mutate(estimatedAbundance = estimatedAbundance * size * 1e6 / inputfileBP,
+      #          across(c(prob, estimatedAbundance, val), round, digits = 4),
+      #          runId = runId) %>% group_by(pipelineId, taxId) %>% 
+      #   filter(val == max(val)) %>% slice(1) %>% ungroup() 
+      
+      
+      #Add the grouping info to detected genes
+      genesDetected = genesDetected %>% 
+        left_join(ARG %>% select(geneId, gene, subtype), by = "geneId") %>% 
+        select(pipelineId, geneId, gene, subtype, everything())
+      
+      genesDetected = genesDetected %>% 
+        select(-matches("ARGgroup")) %>% 
+        left_join(identicalARG %>% 
+                    select(geneId, ARGgroup, keep) %>% 
+                    mutate(geneId = as.integer(geneId)), by = "geneId") %>% 
+        mutate(keep = ifelse(is.na(keep), T, keep))
+      
+      genesDetected[is.na(genesDetected$ARGgroup),] = 
+        genesDetected[is.na(genesDetected$ARGgroup),] %>% 
+        group_by(geneId) %>% 
+        mutate(ARGgroup = cur_group_id() + 
+                 max(genesDetected$ARGgroup, na.rm = T)) %>% 
         ungroup()
       
-      result = bactGroups %>% 
-        select(ARGgroup, pathScore, taxid, genus, species) %>% 
-        distinct()
+      #Create a matrix from with rows bact and columns genes
+      allBact = allBact %>% 
+        # mutate(bact = paste(genus, species)) %>% 
+        group_by(taxid, genus, species) %>% 
+        mutate(myCount = n()) %>% 
+        group_by(taxid) %>% 
+        mutate(genus = genus[myCount == max(myCount)][1],
+               species = species[myCount == max(myCount)][1]) %>% 
+        group_by(taxid, genus, species) %>% 
+        mutate(myCount = n()) %>% 
+        group_by(genus, species) %>% 
+        mutate(taxid = taxid[myCount == max(myCount)][1]) 
       
-      myFilter = result %>% select(taxid, genus, species, ARGgroup) %>% distinct() %>% 
-        group_by(taxid) %>% mutate(n = n()) %>% 
-        group_by(genus, species, ARGgroup) %>% filter(n == max(n))
+      geneMatrix = allBact %>%
+        group_by(geneId, bact = taxid) %>%
+        summarise(pathScore = round(max(pathScore),2), .groups = "drop") %>%
+        left_join(genesDetected %>%
+                    select(geneId, ARGgroup, keep) %>%
+                    mutate(geneId = as.character(geneId)), by = "geneId") %>%
+        filter(keep)
       
+      # geneMatrix = allBact %>%
+      #   mutate(bact = paste(genus, species)) %>%
+      #   group_by(geneId, bact) %>%
+      #   summarise(pathScore = round(max(pathScore),2), .groups = "drop") %>%
+      #   left_join(genesDetected %>%
+      #               select(geneId, ARGgroup, keep) %>%
+      #               mutate(geneId = as.character(geneId)), by = "geneId") %>%
+      #   filter(keep)
       
-      result = result %>% 
-        filter(taxid %in% myFilter$taxid) %>% 
-        group_by(ARGgroup, taxid) %>% 
-        filter(pathScore == max(pathScore)) %>% ungroup() %>% 
-        mutate(
-          taxid = as.character(taxid)
-        ) %>%
-        group_by(ARGgroup) %>%
-        filter(pathScore >= quantile(pathScore, 0.9)) %>%
-        ungroup() %>% 
-        select(from = taxid, to = ARGgroup, weight = pathScore, genus, species)
+      geneMatrix = geneMatrix %>%
+        select(bact, geneId, pathScore) %>%
+        pivot_wider(bact,
+                    names_from = "geneId", values_from = "pathScore",
+                    values_fill = 0) %>%
+        column_to_rownames("bact") %>% as.matrix()
       
-      myGraph = graph_from_data_frame(result, directed = F)
+      #Normalise the matrix per column
+      geneMatrix = apply(geneMatrix, 2, function(x){
+        (x - min(x)) / (max(x) - min(x))
+      })
       
-      myGraph = data.frame(
-        from = names(components(myGraph)$membership),
-        membership = components(myGraph)$membership
-      )
+      #Calulcate the adjustment for each cell based on other scored in the row
+      # the higher the ther scores (e.g. other gened detected), the more scaled up
+      myAdjustment = (matrix(rowSums(geneMatrix), nrow = nrow(geneMatrix), 
+                             ncol = ncol(geneMatrix)) - geneMatrix) 
+      myAdjustment = myAdjustment / 
+        matrix(apply(geneMatrix, 2, function(x) min(x[x > 0])), 
+               nrow = nrow(geneMatrix), ncol = ncol(geneMatrix), byrow = T)
+      myAdjustment[myAdjustment == 0] = 1
       
-      result = result %>% left_join(myGraph, by = "from") %>% 
-        group_by(membership, from) %>% 
-        mutate(val = sum(weight)) %>% ungroup()
+      geneMatrix = geneMatrix * myAdjustment
       
-      inputfileBP = grep("sequences length", 
-                         readLines(sprintf("%s/metacherchant_logs/log", sample)),
-                         value = T, fixed = T) %>% 
-        str_extract("([\\d'])+(?=\\s\\()") %>% 
-        str_replace_all("'", "") %>% as.numeric()
+      #Filter to call for each gene one bacterial cluster
+      myClusters = apply(geneMatrix, 2, function(x) {x == max(x)})
+      myClusters = apply(myClusters, 1, function(x) {colnames(myClusters)[x]})
+      myClusters = myClusters[sapply(myClusters, length) > 0]
+      names(myClusters) = 1:length(myClusters)
       
-      #Add the ARGgroup to the detected genes
-      genesDetected = genesDetected %>% select(-ARGgroup, -membership) %>% 
-        left_join(bactGroups %>% 
-                    select(geneId, ARGgroup) %>% 
-                    mutate(geneId = as.integer(geneId)) %>% 
-                    distinct(), by = "geneId") %>% 
-        left_join(result %>% select(ARGgroup = to, membership) %>% 
-                    distinct(), by = "ARGgroup") %>% 
-        left_join(ARG %>% select(geneId, gene), by = "geneId")
-      
-      #Generate the table with detected bacteria
-      bact = result %>% group_by(from, membership, genus, species) %>% 
-        summarise(val = max(val), .groups = "drop") %>% 
-        group_by(membership) %>% 
-        mutate(prob = softmax(val, T, T)) %>% 
-        ungroup() %>% 
-        mutate(
-          pipelineId = toProcess$pipelineId[sampleIndex]) %>% 
-        arrange(membership, desc(prob)) %>% mutate(
-          species = str_replace(species, "sp\\d+", "sp.")
-        ) %>% left_join(bactGenomeSize %>% select(genus, species, level, size),
-                        by = c("genus", "species")) %>% 
-        select(pipelineId, taxId = from, membership, genus, species, prob, val, size, level) %>% 
+      #Get the list of bact that belong to a cluster and their probability
+      bactList = map_df(myClusters, function(group){
+        group = geneMatrix[,group] %>% as.data.frame()
+        group$prob = rowSums(group)
+        group %>% filter(prob > 0) %>% mutate(prob = softmax(prob)) %>% 
+          rownames_to_column("bact") %>% select(bact, prob) 
+      }, .id = "bactGroup") %>% 
+        mutate(bact = as.integer(bact)) %>% 
+        left_join(allBact %>% select(bact = taxid, genus, species) %>% 
+                    distinct(), by = "bact") %>% 
+        group_by(bactGroup) %>% 
+        filter(prob > min(
+          sort(unique(prob), decreasing = T)[1:(min(10, n_distinct(prob)))])
+        ) %>% 
+        arrange(bactGroup, desc(prob)) %>% ungroup() %>% 
+        mutate(taxId = bact, 
+               species = str_replace(species, "sp\\d+", "sp.")) %>% 
+        left_join(bactGenomeSize %>% select(genus, species, size),
+                  by = c("genus", 'species')) %>% 
+        mutate(val = NA, runId = {{runId}},
+               pipelineId = toProcess$pipelineId[sampleIndex]) %>% 
         left_join(
-          genesDetected %>% select(membership, startDepth) %>% 
-            group_by(membership) %>% 
-            summarise(estimatedAbundance = mean(startDepth)),
-          by = "membership") %>% 
+              genesDetected %>% select(bactGroup, startDepth) %>%
+                group_by(bactGroup) %>%
+                summarise(estimatedAbundance = mean(startDepth), 
+                          .groups = "drop"),
+              by = "bactGroup") %>%
         mutate(estimatedAbundance = estimatedAbundance * size * 1e6 / inputfileBP,
-               across(c(prob, estimatedAbundance, val), round, digits = 4),
-               runId = runId) %>% group_by(pipelineId, taxId) %>% 
-        filter(val == max(val)) %>% slice(1) %>% ungroup() 
+               across(c(prob, estimatedAbundance), round, digits = 4),
+               runId = {{runId}}) %>% select(-bact)
+      
+      
+      # bact = result %>% group_by(from, bactGroup, genus, species) %>%
+      #   summarise(val = max(val), .groups = "drop") %>%
+      #   group_by(bactGroup) %>%
+      #   mutate(prob = softmax(val, T, T)) %>%
+      #   ungroup() %>%
+      #   mutate(
+      #     pipelineId = toProcess$pipelineId[sampleIndex]) %>%
+      #   arrange(bactGroup, desc(prob)) %>% mutate(
+      #     species = str_replace(species, "sp\\d+", "sp.")
+      #   ) %>% left_join(bactGenomeSize %>% select(genus, species, level, size),
+      #                   by = c("genus", "species")) %>%
+      #   select(pipelineId, taxId = from, bactGroup, genus, species, prob, val, size, level) %>%
+      #   left_join(
+      #     genesDetected %>% select(bactGroup, startDepth) %>%
+      #       group_by(bactGroup) %>%
+      #       summarise(estimatedAbundance = mean(startDepth)),
+      #     by = "bactGroup") %>%
+      #   mutate(estimatedAbundance = estimatedAbundance * size * 1e6 / inputfileBP,
+      #          across(c(prob, estimatedAbundance, val), round, digits = 4),
+      #          runId = runId) %>% group_by(pipelineId, taxId) %>%
+      #   filter(val == max(val)) %>% slice(1) %>% ungroup()
+      
+      #Convert the clusters list to a dataframe format
+      myClusters = map_df(myClusters, function(bact){
+        data.frame(geneId = bact)
+      }, .id = "bactGroup")
+      
+      genesDetected = genesDetected %>% 
+        select(-matches("bactGroup")) %>% 
+        left_join(myClusters %>% 
+                    mutate(geneId = as.integer(geneId)), by = "geneId") %>% 
+        group_by(ARGgroup) %>% 
+        mutate(bactGroup = min(bactGroup, na.rm = T))
       
       if(verbose > 0){cat("done\n")}
       newLogs = rbind(newLogs, list(as.integer(Sys.time()), 9, 
@@ -550,8 +701,8 @@ if(nrow(toProcess) == 0) {
                                     "Start AMR prediction"))
       
       myInputs = genesDetected %>%
-        mutate(id = paste(pipelineId,  membership, sep = "_")) %>%
-        group_by(pipelineId, membership, gene) %>%
+        mutate(id = paste(pipelineId,  bactGroup, sep = "_")) %>%
+        group_by(pipelineId, bactGroup, gene) %>%
         mutate(val = startPerc * startDepth * cover1) %>% 
         filter(val == max(val)) %>% dplyr::slice(1) %>%
         ungroup() %>% 
@@ -577,7 +728,7 @@ if(nrow(toProcess) == 0) {
           antibiotic = myAntibiotic,
           value = round(predict(predictionModels[[myAntibiotic]], testInput),4)
         ) %>% mutate(resistance = ifelse(value < 0.5, "S", 'R')) %>% 
-          separate(id, into = c("pipelineId", "membership"), "_")
+          separate(id, into = c("pipelineId", "bactGroup"), "_")
         
       }) %>% left_join(myAntibiotics %>% select(name, antibioticId), 
                        by = c("antibiotic" = "name")) %>% 
@@ -600,23 +751,23 @@ if(nrow(toProcess) == 0) {
       #Add the ARGgroup to the detectedARG table
       q = dbExecute(myConn, 
                     "UPDATE detectedARG 
-            SET runId = ?, ARGgroup = ?, membership = ?
+            SET runId = ?, ARGgroup = ?, bactGroup = ?
             WHERE pipelineId = ? AND geneId = ?", 
                     params = list(genesDetected$runId, genesDetected$ARGgroup, 
-                                  genesDetected$membership,
+                                  genesDetected$bactGroup,
                                   genesDetected$pipelineId, genesDetected$geneId))
       
       #Add the detected bacteria to the detectedBact table
       q = dbExecute(
         myConn, 
-        sprintf("DELETE FROM detectedBact WHERE pipelineId = %i", bact$pipelineId[1]))
+        sprintf("DELETE FROM detectedBact WHERE pipelineId = %i", bactList$pipelineId[1]))
       
       q = dbExecute(myConn, 
-                    "INSERT INTO detectedBact (pipelineId, runId, taxId, membership, 
+                    "INSERT INTO detectedBact (pipelineId, runId, taxId, bactGroup, 
             genus, species, prob, relAbundance, value) 
             VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)", 
-                    params = bact %>% 
-                      select(pipelineId, runId, taxId, membership, genus, species, 
+                    params = bactList %>% 
+                      select(pipelineId, runId, taxId, bactGroup, genus, species, 
                              prob, estimatedAbundance, val) %>% 
                       as.list() %>% unname())
       
@@ -626,10 +777,10 @@ if(nrow(toProcess) == 0) {
         sprintf("DELETE FROM AMRprediction WHERE pipelineId = %i", bact$pipelineId[1]))
       q = dbExecute(myConn, 
                     "INSERT INTO AMRprediction (pipelineId, runId, 
-            membership, antibioticId, resistance, value) 
+            bactGroup, antibioticId, resistance, value) 
             VALUES(?, ?, ?, ?, ?, ?)", 
                     params = predictions %>% 
-                      select(pipelineId, runId, membership, antibioticId,
+                      select(pipelineId, runId, bactGroup, antibioticId,
                              resistance, value) %>% 
                       as.list() %>% unname())
       
