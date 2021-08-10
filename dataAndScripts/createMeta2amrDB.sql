@@ -88,7 +88,7 @@ CREATE TABLE IF NOT EXISTS "detectedARG" (
 	"runId" integer NOT NULL,
     "geneId" integer NOT NULL,
 	"ARGgroup" integer,
-	"membership" integer,
+	"bactGroup" integer,
 	"fileDepth" real,
 	"nSeg" integer,
 	"LNsum" integer,
@@ -100,7 +100,7 @@ CREATE TABLE IF NOT EXISTS "detectedARG" (
 	"cover1" real,
 	"cover2" real,
 	"type" text,
-	PRIMARY KEY("runId", "geneId"),
+	PRIMARY KEY("pipelineId", "geneId"),
 	FOREIGN KEY("pipelineId") REFERENCES "pipeline"("pipelineId") ON UPDATE CASCADE ON DELETE CASCADE,
 	FOREIGN KEY("geneId") REFERENCES "ARG"("geneId") ON UPDATE CASCADE ON DELETE CASCADE,
 	FOREIGN KEY("runId") REFERENCES "scriptUse"("runId") ON UPDATE CASCADE ON DELETE CASCADE
@@ -109,14 +109,14 @@ CREATE TABLE IF NOT EXISTS "detectedARG" (
 CREATE TABLE IF NOT EXISTS "detectedBact" (
 	"pipelineId" integer NOT NULL,
 	"runId" integer NOT NULL,
-    "taxId" integer NOT NULL,
-	"membership" integer NOT NULL,
+	"bactGroup" integer NOT NULL,
+    "taxId" integer NOT NULL,	
 	"genus" text,
 	"species" text,
 	"prob" numeric,
 	"relAbundance" numeric,
 	"value" numeric,
-	PRIMARY KEY("pipelineId", "taxId"),
+	PRIMARY KEY("pipelineId", "bactGroup", "taxId"),
 	FOREIGN KEY("pipelineId") REFERENCES "pipeline"("pipelineId") ON UPDATE CASCADE ON DELETE CASCADE,
 	FOREIGN KEY("runId") REFERENCES "scriptUse"("runId") ON UPDATE CASCADE ON DELETE CASCADE
 );
@@ -125,12 +125,13 @@ CREATE TABLE IF NOT EXISTS "AMRprediction" (
 	"predictionId" integer primary key,
 	"pipelineId" integer NOT NULL,
 	"runId" integer NOT NULL,
-	"membership" integer NOT NULL,
+	"bactGroup" integer NOT NULL,
 	"antibioticId" integer NOT NULL,
 	"resistance" text,
 	"value" numeric,
 	FOREIGN KEY("pipelineId") REFERENCES "pipeline"("pipelineId") ON UPDATE CASCADE ON DELETE CASCADE,
 	FOREIGN KEY("antibioticId") REFERENCES "antibiotics"("antibioticId") ON UPDATE CASCADE ON DELETE CASCADE,
+	FOREIGN KEY("bactGroup") REFERENCES "detectedBact"("bactGroup") ON UPDATE CASCADE ON DELETE CASCADE,
 	FOREIGN KEY("runId") REFERENCES "scriptUse"("runId") ON UPDATE CASCADE ON DELETE CASCADE
 );
 -- Add the antibiotics
