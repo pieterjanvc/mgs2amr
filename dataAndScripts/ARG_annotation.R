@@ -10,6 +10,8 @@ suppressPackageStartupMessages(library(igraph))
 suppressPackageStartupMessages(library(visNetwork))
 suppressPackageStartupMessages(library(rmarkdown))
 
+library(parallel)
+
 args = commandArgs(trailingOnly = TRUE) 
 baseFolder = formatPath(args[[1]], endWithSlash = T)
 runId = as.integer(args[[2]])
@@ -101,6 +103,25 @@ if(nrow(toProcess) == 0) {
                       "No new pipelines found to annotate. Exit script\n\n")}
   
 } else {
+  
+  # UNCOMMENT if running in parallel
+  
+  # cl <- parallel::makeCluster(detectCores(), outfile = "")
+  # x = clusterEvalQ(cl, {
+  #   library(tidyverse)
+  #   library(RSQLite)
+  #   library(xgboost)
+  #   library(igraph)
+  #   library(gfaTools)
+  # })
+  # clusterExport(
+  #   cl, 
+  #   varlist = c("baseFolder", "toProcess", "softmax", "settings", "ARG", 
+  #               "predictionModels", "myAntibiotics", "bactGenomeSize", "runId",
+  #               "generateReport", "verbose"))
+  # 
+  # 
+  # result = parLapply(cl, 1:nrow(toProcess), function(sampleIndex){
   
   for(sampleIndex in 1:nrow(toProcess)){
     
@@ -219,7 +240,7 @@ if(nrow(toProcess) == 0) {
           segmentOfInterest = gfa$segments %>% 
             filter(str_detect(name, "_start$")) %>%
             filter(LN == max(LN)) %>% filter(KC == max(KC)) %>% 
-            slice(1) %>% pull(name)
+            dplyr::slice(1) %>% pull(name)
           
           #Get all semenents in path to start
           x = gfa_pathsToSegment(gfa, segmentOfInterest, returnList = T, 
@@ -441,7 +462,7 @@ if(nrow(toProcess) == 0) {
                accession, taxid, genus, species, extra, plasmid) %>%
         group_by(segmentId, geneId, hitId, accession) %>%
         filter(bit_score == max(bit_score)) %>% 
-        slice(1) %>% ungroup() %>%
+        dplyr::slice(1) %>% ungroup() %>%
         #Add the path data
         left_join(pathData %>% 
                     select(segmentId, order, startOrientation, dist) %>% 
@@ -454,7 +475,7 @@ if(nrow(toProcess) == 0) {
         # filter(order < 4) %>%
         group_by(geneId, accession, taxid, order, startOrientation) %>% 
         #Get the best paths per accession
-        filter(pathScore == max(pathScore)) %>% slice(1) %>% 
+        filter(pathScore == max(pathScore)) %>% dplyr::slice(1) %>% 
         group_by(geneId, accession, startOrientation) %>% 
         filter(all(2:max(order) %in% order) | all(order == 1)) %>%
         group_by(geneId, accession, taxid, genus, species, plasmid) %>% 
@@ -574,7 +595,8 @@ if(nrow(toProcess) == 0) {
         group_by(taxid, genus, species) %>% 
         mutate(myCount = n()) %>% 
         group_by(genus, species) %>% 
-        mutate(taxid = taxid[myCount == max(myCount)][1]) 
+        mutate(taxid = taxid[myCount == max(myCount)][1]) %>% 
+        ungroup()
       
       geneMatrix = allBact %>%
         group_by(geneId, bact = taxid) %>%
@@ -601,11 +623,22 @@ if(nrow(toProcess) == 0) {
         column_to_rownames("bact") %>% as.matrix()
       
       #Normalise the matrix per column
-      geneMatrix = apply(geneMatrix, 2, function(x){
+      normalise = function(x){
         (x - min(x)) / (max(x) - min(x))
-      })
+      }
+      geneMatrix = apply(geneMatrix, 2, normalise)
       
-      #Calulcate the adjustment for each cell based on other scored in the row
+      # --- test 1
+      myAdjustment = data.frame(
+        geneId = colnames(geneMatrix)
+      ) %>% left_join(
+        genesDetected %>% select(geneId, cover1) %>%
+          mutate(geneId = as.character(geneId)), by = "geneId")
+
+      geneMatrix = t(t(geneMatrix) * myAdjustment$cover1)
+      # --- end test 1
+      
+      #Calulcate the adjustment for each cell based on other scores in the row
       # the higher the ther scores (e.g. other gened detected), the more scaled up
       myAdjustment = (matrix(rowSums(geneMatrix), nrow = nrow(geneMatrix), 
                              ncol = ncol(geneMatrix)) - geneMatrix) 
@@ -614,7 +647,15 @@ if(nrow(toProcess) == 0) {
                nrow = nrow(geneMatrix), ncol = ncol(geneMatrix), byrow = T)
       myAdjustment[myAdjustment == 0] = 1
       
+      # geneMatrix = geneMatrix + (myAdjustment / max(myAdjustment)) * 0.5
+      # geneMatrix = (geneMatrix)^2 * myAdjustment
       geneMatrix = geneMatrix * myAdjustment
+      
+      # --- test 2
+      # myScale = rowSums(geneMatrix)
+      # myScale = myScale / min(myScale)
+      # geneMatrix = geneMatrix * myScale
+      # --- end test 2
       
       #Filter to call for each gene one bacterial cluster
       myClusters = apply(geneMatrix, 2, function(x) {x == max(x)})
@@ -629,20 +670,36 @@ if(nrow(toProcess) == 0) {
         group %>% filter(prob > 0) %>% mutate(prob = softmax(prob)) %>% 
           rownames_to_column("bact") %>% select(bact, prob) 
       }, .id = "bactGroup") %>% 
-        mutate(bact = as.integer(bact)) %>% 
+        mutate(bact = as.integer(bact), bactGroup = as.integer(bactGroup)) %>% 
         left_join(allBact %>% select(bact = taxid, genus, species) %>% 
                     distinct(), by = "bact") %>% 
         group_by(bactGroup) %>% 
         filter(prob > min(
-          sort(unique(prob), decreasing = T)[1:(min(10, n_distinct(prob)))])
-        ) %>% 
+          sort(unique(prob), decreasing = T)[1:(min(11, n_distinct(prob)))])
+        ) %>% ungroup() %>% 
         arrange(bactGroup, desc(prob)) %>% ungroup() %>% 
         mutate(taxId = bact, 
                species = str_replace(species, "sp\\d+", "sp.")) %>% 
-        left_join(bactGenomeSize %>% select(genus, species, size),
+        left_join(bactGenomeSize %>% select(genus, species, size) %>% distinct(),
                   by = c("genus", 'species')) %>% 
         mutate(val = NA, runId = {{runId}},
-               pipelineId = toProcess$pipelineId[sampleIndex]) %>% 
+               pipelineId = toProcess$pipelineId[sampleIndex])
+      
+      #Convert the clusters list to a dataframe format
+      myClusters = map_df(myClusters, function(bact){
+        data.frame(geneId = bact)
+      }, .id = "bactGroup")
+      
+      genesDetected = genesDetected %>% 
+        select(-matches("bactGroup")) %>% 
+        left_join(myClusters %>% 
+                    mutate(geneId = as.integer(geneId)), by = "geneId") %>% 
+        group_by(ARGgroup) %>% 
+        mutate(bactGroup = as.integer(min(bactGroup, na.rm = T))) %>% 
+        ungroup()
+      
+      #Calculate the RA
+      bactList = bactList %>% 
         left_join(
               genesDetected %>% select(bactGroup, startDepth) %>%
                 group_by(bactGroup) %>%
@@ -676,17 +733,7 @@ if(nrow(toProcess) == 0) {
       #          runId = runId) %>% group_by(pipelineId, taxId) %>%
       #   filter(val == max(val)) %>% slice(1) %>% ungroup()
       
-      #Convert the clusters list to a dataframe format
-      myClusters = map_df(myClusters, function(bact){
-        data.frame(geneId = bact)
-      }, .id = "bactGroup")
-      
-      genesDetected = genesDetected %>% 
-        select(-matches("bactGroup")) %>% 
-        left_join(myClusters %>% 
-                    mutate(geneId = as.integer(geneId)), by = "geneId") %>% 
-        group_by(ARGgroup) %>% 
-        mutate(bactGroup = min(bactGroup, na.rm = T))
+     
       
       if(verbose > 0){cat("done\n")}
       newLogs = rbind(newLogs, list(as.integer(Sys.time()), 9, 
@@ -747,6 +794,7 @@ if(nrow(toProcess) == 0) {
                                     "Save results"))
       
       myConn = dbConnect(SQLite(), sprintf("%sdataAndScripts/meta2amr.db", baseFolder))
+      sqliteSetBusyHandler(myConn, 5000)
       
       #Add the ARGgroup to the detectedARG table
       q = dbExecute(myConn, 
@@ -774,7 +822,7 @@ if(nrow(toProcess) == 0) {
       #Add the AMT predictions bacteria to the AMRprediction table
       q = dbExecute(
         myConn, 
-        sprintf("DELETE FROM AMRprediction WHERE pipelineId = %i", bact$pipelineId[1]))
+        sprintf("DELETE FROM AMRprediction WHERE pipelineId = %i", bactList$pipelineId[1]))
       q = dbExecute(myConn, 
                     "INSERT INTO AMRprediction (pipelineId, runId, 
             bactGroup, antibioticId, resistance, value) 
@@ -819,6 +867,8 @@ if(nrow(toProcess) == 0) {
       newLogs = newLogs %>% select(runId,tool,timeStamp,actionId,actionName)
       
       myConn = dbConnect(SQLite(), sprintf("%sdataAndScripts/meta2amr.db", baseFolder))
+      sqliteSetBusyHandler(myConn, 5000)
+      
       q = dbExecute(
         myConn, 
         "INSERT INTO logs (runId,tool,timeStamp,actionId,actionName) VALUES(?,?,?,?,?)", 
@@ -839,5 +889,7 @@ if(nrow(toProcess) == 0) {
     })
     
   }
+  # )
+  # rm(cl)
 }
 
