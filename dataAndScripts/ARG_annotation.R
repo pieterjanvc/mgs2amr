@@ -115,8 +115,8 @@ if(nrow(toProcess) == 0) {
   #   library(gfaTools)
   # })
   # clusterExport(
-  #   cl, 
-  #   varlist = c("baseFolder", "toProcess", "softmax", "settings", "ARG", 
+  #   cl,
+  #   varlist = c("baseFolder", "toProcess", "softmax", "settings", "ARG",
   #               "predictionModels", "myAntibiotics", "bactGenomeSize", "runId",
   #               "generateReport", "verbose"))
   # 
@@ -368,7 +368,8 @@ if(nrow(toProcess) == 0) {
       
       #Group identical ARG and remove the duplicate (weak) ones
       #Usearch outputs the pairs that are above identity threshold
-      identicalARG = read_delim(sprintf("%s/ARGsimilarities.out", sample), "\t", col_names = F) %>% 
+      identicalARG = read_delim(sprintf("%s/ARGsimilarities.out", sample), "\t", 
+                                col_names = F, show_col_types = F) %>% 
         filter(X1 != X2) %>% 
         mutate(X1 = str_remove(X1, "_RC$"), X2 = str_remove(X2, "_RC$")) %>% 
         distinct() %>% rowwise() %>% 
@@ -457,31 +458,46 @@ if(nrow(toProcess) == 0) {
       newLogs = rbind(newLogs, list(as.integer(Sys.time()), 8, 
                                     "Start grouping bacteria"))
       
+      blastSegments = 
+        read_csv(paste0(sample, "/blastSegments.csv"), 
+                 show_col_types = FALSE) %>% 
+        select(name, LN, KC)
+      blastOut = blastOut %>% left_join(blastSegments, 
+                                        by = c("segmentId" = "name")) %>% 
+        mutate(KC = KC * coverage * ident)
+      
+      #IN cases where there is perfect matches for all top, group per taxId instead of accession!
       allBact = blastOut %>%
+        filter(geneId == "5713") %>%
         select(segmentId, geneId, hitId, bit_score, coverage,
-               accession, taxid, genus, species, extra, plasmid) %>%
+               accession, taxid, genus, species, extra, plasmid, KC, LN) %>%
         group_by(segmentId, geneId, hitId, accession) %>%
         filter(bit_score == max(bit_score)) %>% 
         dplyr::slice(1) %>% ungroup() %>%
         #Add the path data
         left_join(pathData %>% 
-                    select(segmentId, order, startOrientation, dist) %>% 
+                    select(pathId, segmentId, order, startOrientation, dist) %>% 
                     mutate(startOrientation = ifelse(str_detect(segmentId, "_start$"),
                                                      -1, startOrientation)) %>% 
                     distinct(), by = "segmentId") %>% 
         #Remove those not in a path
         filter(!is.na(order)) %>% rowwise() %>% 
-        mutate(pathScore = bit_score * coverage / (max(dist,0) * 0.01 + 1)) %>% 
+        # mutate(pathScore = bit_score * coverage / (max(dist,0) * 0.001 + 1)) %>%
+        mutate(pathScore = bit_score * coverage) %>%
+        group_by(pathId, geneId, accession, startOrientation) %>% 
+        filter(all(2:max(order) %in% order) | all(order == 1)) %>%
+        
         # filter(order < 4) %>%
         group_by(geneId, accession, taxid, order, startOrientation) %>% 
         #Get the best paths per accession
         filter(pathScore == max(pathScore)) %>% dplyr::slice(1) %>% 
-        group_by(geneId, accession, startOrientation) %>% 
-        filter(all(2:max(order) %in% order) | all(order == 1)) %>%
+        
         group_by(geneId, accession, taxid, genus, species, plasmid) %>% 
-        summarise(n = n(), pathScore = sum(pathScore), 
+        filter(any(order == 1)) %>%
+        summarise(n = n(), pathScore = sum(pathScore), KC = sum(KC), LN = sum(LN),
                   startOrientation = paste(unique(startOrientation), collapse = ","),
-                  orders = paste(order, collapse = ","), .groups = "drop")
+                  orders = paste(order, collapse = ","),
+                  x = paste(segmentId, collapse = ","), .groups = "drop")
       
       # #Filter bacteria based off the ARG groups
       # bactGroups = allBact %>% 
@@ -652,9 +668,11 @@ if(nrow(toProcess) == 0) {
       geneMatrix = geneMatrix * myAdjustment
       
       # --- test 2
-      # myScale = rowSums(geneMatrix)
-      # myScale = myScale / min(myScale)
-      # geneMatrix = geneMatrix * myScale
+      myScale = rowSums(geneMatrix)
+      myScale = myScale / min(myScale)
+      geneMatrix = geneMatrix * myScale
+      
+      # geneMatrix = geneMatrix - ((geneMatrix * 100) %% 1) / 100
       # --- end test 2
       
       #Filter to call for each gene one bacterial cluster
@@ -690,13 +708,15 @@ if(nrow(toProcess) == 0) {
         data.frame(geneId = bact)
       }, .id = "bactGroup")
       
-      genesDetected = genesDetected %>% 
+      #In some cases there is no data from blast about a gene, 
+      # the bacgroup will become NA (warning suppressed)
+      genesDetected = suppressWarnings(genesDetected %>% 
         select(-matches("bactGroup")) %>% 
         left_join(myClusters %>% 
                     mutate(geneId = as.integer(geneId)), by = "geneId") %>% 
         group_by(ARGgroup) %>% 
         mutate(bactGroup = as.integer(min(bactGroup, na.rm = T))) %>% 
-        ungroup()
+        ungroup())
       
       #Calculate the RA
       bactList = bactList %>% 
@@ -804,7 +824,7 @@ if(nrow(toProcess) == 0) {
                     params = list(genesDetected$runId, genesDetected$ARGgroup, 
                                   genesDetected$bactGroup,
                                   genesDetected$pipelineId, genesDetected$geneId))
-      
+      x = q
       #Add the detected bacteria to the detectedBact table
       q = dbExecute(
         myConn, 
@@ -818,7 +838,7 @@ if(nrow(toProcess) == 0) {
                       select(pipelineId, runId, taxId, bactGroup, genus, species, 
                              prob, estimatedAbundance, val) %>% 
                       as.list() %>% unname())
-      
+      x = c(x, q)
       #Add the AMT predictions bacteria to the AMRprediction table
       q = dbExecute(
         myConn, 
@@ -831,9 +851,9 @@ if(nrow(toProcess) == 0) {
                       select(pipelineId, runId, bactGroup, antibioticId,
                              resistance, value) %>% 
                       as.list() %>% unname())
-      
+      x = c(x, q)
       dbDisconnect(myConn)
-      
+      cat(myPipelineId, x, "\n")
       # write_csv(genes, sprintf("%s/genes.csv", sample, sampleName))
       # write_csv(bact, sprintf("%s/bacteria.csv", sample, sampleName))
       
