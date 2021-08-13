@@ -468,12 +468,24 @@ if(nrow(toProcess) == 0) {
       
       #IN cases where there is perfect matches for all top, group per taxId instead of accession!
       allBact = blastOut %>%
-        filter(geneId == "5713") %>%
+        # filter(geneId == "3083") %>%
         select(segmentId, geneId, hitId, bit_score, coverage,
                accession, taxid, genus, species, extra, plasmid, KC, LN) %>%
         group_by(segmentId, geneId, hitId, accession) %>%
         filter(bit_score == max(bit_score)) %>% 
         dplyr::slice(1) %>% ungroup() %>%
+        #If a blast result has identical scored for the top bact,
+         #then add this score to each accession of that species because
+         #the results are likely cropped by too many idential values
+        group_by(segmentId) %>% 
+        mutate(
+          x = n_distinct(bit_score),
+          accession = if_else(x == 1, as.character(taxid), accession)) %>% 
+        ungroup() %>% 
+        group_by(geneId, taxid) %>% 
+        mutate(x = sum(unique(bit_score[x ==1]))) %>% 
+        ungroup() %>% 
+        mutate(bit_score = bit_score + ifelse(accession == taxid, 0, x)) %>% 
         #Add the path data
         left_join(pathData %>% 
                     select(pathId, segmentId, order, startOrientation, dist) %>% 
