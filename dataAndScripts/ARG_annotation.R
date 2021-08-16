@@ -468,12 +468,13 @@ if(nrow(toProcess) == 0) {
       
       #IN cases where there is perfect matches for all top, group per taxId instead of accession!
       allBact = blastOut %>%
-        # filter(geneId == "3083") %>%
+        # filter(geneId == "148") %>%
         select(segmentId, geneId, hitId, bit_score, coverage,
                accession, taxid, genus, species, extra, plasmid, KC, LN) %>%
         group_by(segmentId, geneId, hitId, accession) %>%
         filter(bit_score == max(bit_score)) %>% 
         dplyr::slice(1) %>% ungroup() %>%
+        mutate(start = str_detect(segmentId, '_start$')) %>% 
         #If a blast result has identical scored for the top bact,
          #then add this score to each accession of that species because
          #the results are likely cropped by too many idential values
@@ -506,10 +507,14 @@ if(nrow(toProcess) == 0) {
         
         group_by(geneId, accession, taxid, genus, species, plasmid) %>% 
         filter(any(order == 1)) %>%
-        summarise(n = n(), pathScore = sum(pathScore), KC = sum(KC), LN = sum(LN),
-                  startOrientation = paste(unique(startOrientation), collapse = ","),
-                  orders = paste(order, collapse = ","),
-                  x = paste(segmentId, collapse = ","), .groups = "drop")
+        summarise(n = n(), 
+                  extension = sum(pathScore[!start]),
+                  pathScore = sum(pathScore), 
+                  KC = sum(KC), LN = sum(LN),
+                  # startOrientation = paste(unique(startOrientation), collapse = ","),
+                  # orders = paste(order, collapse = ","),
+                  # x = paste(segmentId, collapse = ","), 
+                  .groups = "drop")
       
       # #Filter bacteria based off the ARG groups
       # bactGroups = allBact %>% 
@@ -628,7 +633,9 @@ if(nrow(toProcess) == 0) {
       
       geneMatrix = allBact %>%
         group_by(geneId, bact = taxid) %>%
-        summarise(pathScore = round(max(pathScore),2), .groups = "drop") %>%
+        summarise(pathScore = round(max(pathScore),2), 
+                  extension = round(max(extension),2), 
+                  .groups = "drop") %>%
         left_join(genesDetected %>%
                     select(geneId, ARGgroup, keep) %>%
                     mutate(geneId = as.character(geneId)), by = "geneId") %>%
