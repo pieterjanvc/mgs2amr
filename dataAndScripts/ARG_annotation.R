@@ -450,154 +450,6 @@ if(nrow(toProcess) == 0) {
                                     "Finished detecting duplicate genes"))
       
       
-      # ---- Filter / group bacteria ----
-      #**********************************
-      
-      if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S -"), 
-                          "Group overlapping bacterial species ... ")}
-      newLogs = rbind(newLogs, list(as.integer(Sys.time()), 8, 
-                                    "Start grouping bacteria"))
-      
-      blastSegments = 
-        read_csv(paste0(sample, "/blastSegments.csv"), 
-                 show_col_types = FALSE) %>% 
-        select(name, LN, KC)
-      blastOut = blastOut %>% left_join(blastSegments, 
-                                        by = c("segmentId" = "name")) %>% 
-        mutate(KC = KC * coverage * ident)
-      
-      #IN cases where there is perfect matches for all top, group per taxId instead of accession!
-      allBact = blastOut %>%
-        # filter(geneId == "148") %>%
-        select(segmentId, geneId, hitId, bit_score, coverage,
-               accession, taxid, genus, species, extra, plasmid, KC, LN) %>%
-        group_by(segmentId, geneId, hitId, accession) %>%
-        filter(bit_score == max(bit_score)) %>% 
-        dplyr::slice(1) %>% ungroup() %>%
-        mutate(start = str_detect(segmentId, '_start$')) %>% 
-        #If a blast result has identical scored for the top bact,
-         #then add this score to each accession of that species because
-         #the results are likely cropped by too many idential values
-        group_by(segmentId) %>% 
-        mutate(
-          x = n_distinct(bit_score),
-          accession = if_else(x == 1, as.character(taxid), accession)) %>% 
-        ungroup() %>% 
-        group_by(geneId, taxid) %>% 
-        mutate(x = sum(unique(bit_score[x ==1]))) %>% 
-        ungroup() %>% 
-        mutate(bit_score = bit_score + ifelse(accession == taxid, 0, x)) %>% 
-        #Add the path data
-        left_join(pathData %>% 
-                    select(pathId, segmentId, order, startOrientation, dist) %>% 
-                    mutate(startOrientation = ifelse(str_detect(segmentId, "_start$"),
-                                                     -1, startOrientation)) %>% 
-                    distinct(), by = "segmentId") %>% 
-        #Remove those not in a path
-        filter(!is.na(order)) %>% rowwise() %>% 
-        # mutate(pathScore = bit_score * coverage / (max(dist,0) * 0.001 + 1)) %>%
-        mutate(pathScore = bit_score * coverage) %>%
-        group_by(pathId, geneId, accession, startOrientation) %>% 
-        filter(all(2:max(order) %in% order) | all(order == 1)) %>%
-        
-        # filter(order < 4) %>%
-        group_by(geneId, accession, taxid, order, startOrientation) %>% 
-        #Get the best paths per accession
-        filter(pathScore == max(pathScore)) %>% dplyr::slice(1) %>% 
-        
-        group_by(geneId, accession, taxid, genus, species, plasmid) %>% 
-        filter(any(order == 1)) %>%
-        summarise(n = n(), 
-                  extension = sum(pathScore[!start]),
-                  pathScore = sum(pathScore), 
-                  KC = sum(KC), LN = sum(LN),
-                  # startOrientation = paste(unique(startOrientation), collapse = ","),
-                  # orders = paste(order, collapse = ","),
-                  # x = paste(segmentId, collapse = ","), 
-                  .groups = "drop")
-      
-      # #Filter bacteria based off the ARG groups
-      # bactGroups = allBact %>% 
-      #   left_join(identicalARG %>% select(geneId, ARGgroup), by = "geneId") %>% 
-      #   group_by(geneId) %>%
-      #   mutate(ARGgroup = ifelse(is.na(ARGgroup), cur_group_id() + 
-      #                              max(.$ARGgroup, 0, na.rm = T), ARGgroup)) %>% 
-      #   group_by(ARGgroup) %>% 
-      #   filter(pathScore >= quantile(pathScore, 0.75)) %>% 
-      #   ungroup()
-      # 
-      # result = bactGroups %>% 
-      #   select(ARGgroup, pathScore, taxid, genus, species) %>% 
-      #   distinct()
-      # 
-      # myFilter = result %>% select(taxid, genus, species, ARGgroup) %>% distinct() %>% 
-      #   group_by(taxid) %>% mutate(n = n()) %>% 
-      #   group_by(genus, species, ARGgroup) %>% filter(n == max(n))
-      # 
-      # 
-      # result = result %>% 
-      #   filter(taxid %in% myFilter$taxid) %>% 
-      #   group_by(ARGgroup, taxid) %>% 
-      #   filter(pathScore == max(pathScore)) %>% ungroup() %>% 
-      #   mutate(
-      #     taxid = as.character(taxid)
-      #   ) %>%
-      #   group_by(ARGgroup) %>%
-      #   filter(pathScore >= quantile(pathScore, 0.9)) %>%
-      #   ungroup() %>% 
-      #   select(from = taxid, to = ARGgroup, weight = pathScore, genus, species)
-      # 
-      # myGraph = graph_from_data_frame(result, directed = F)
-      # 
-      # myGraph = data.frame(
-      #   from = names(components(myGraph)$membership),
-      #   bactGroup = components(myGraph)$membership
-      # )
-      # 
-      # result = result %>% left_join(myGraph, by = "from") %>% 
-      #   group_by(bactGroup, from) %>% 
-      #   mutate(val = sum(weight)) %>% ungroup()
-      # 
-      # inputfileBP = grep("sequences length", 
-      #                    readLines(sprintf("%s/metacherchant_logs/log", sample)),
-      #                    value = T, fixed = T) %>% 
-      #   str_extract("([\\d'])+(?=\\s\\()") %>% 
-      #   str_replace_all("'", "") %>% as.numeric()
-      # 
-      # #Add the ARGgroup to the detected genes
-      # genesDetected = genesDetected %>% select(-ARGgroup, -bactGroup) %>% 
-      #   left_join(bactGroups %>% 
-      #               select(geneId, ARGgroup) %>% 
-      #               mutate(geneId = as.integer(geneId)) %>% 
-      #               distinct(), by = "geneId") %>% 
-      #   left_join(result %>% select(ARGgroup = to, bactGroup) %>% 
-      #               distinct(), by = "ARGgroup") %>% 
-      #   left_join(ARG %>% select(geneId, gene), by = "geneId")
-      # 
-      # #Generate the table with detected bacteria
-      # bact = result %>% group_by(from, bactGroup, genus, species) %>% 
-      #   summarise(val = max(val), .groups = "drop") %>% 
-      #   group_by(bactGroup) %>% 
-      #   mutate(prob = softmax(val, T, T)) %>% 
-      #   ungroup() %>% 
-      #   mutate(
-      #     pipelineId = toProcess$pipelineId[sampleIndex]) %>% 
-      #   arrange(bactGroup, desc(prob)) %>% mutate(
-      #     species = str_replace(species, "sp\\d+", "sp.")
-      #   ) %>% left_join(bactGenomeSize %>% select(genus, species, level, size),
-      #                   by = c("genus", "species")) %>% 
-      #   select(pipelineId, taxId = from, bactGroup, genus, species, prob, val, size, level) %>% 
-      #   left_join(
-      #     genesDetected %>% select(bactGroup, startDepth) %>% 
-      #       group_by(bactGroup) %>% 
-      #       summarise(estimatedAbundance = mean(startDepth)),
-      #     by = "bactGroup") %>% 
-      #   mutate(estimatedAbundance = estimatedAbundance * size * 1e6 / inputfileBP,
-      #          across(c(prob, estimatedAbundance, val), round, digits = 4),
-      #          runId = runId) %>% group_by(pipelineId, taxId) %>% 
-      #   filter(val == max(val)) %>% slice(1) %>% ungroup() 
-      
-      
       #Add the grouping info to detected genes
       genesDetected = genesDetected %>% 
         left_join(ARG %>% select(geneId, gene, subtype), by = "geneId") %>% 
@@ -617,7 +469,80 @@ if(nrow(toProcess) == 0) {
                  max(genesDetected$ARGgroup, na.rm = T)) %>% 
         ungroup()
       
-      #Create a matrix from with rows bact and columns genes
+      
+      # ---- Filter / group bacteria ----
+      #**********************************
+      
+      if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S -"), 
+                          "Group overlapping bacterial species ... ")}
+      newLogs = rbind(newLogs, list(as.integer(Sys.time()), 8, 
+                                    "Start grouping bacteria"))
+      
+      blastSegments = 
+        read_csv(paste0(sample, "/blastSegments.csv"), 
+                 show_col_types = FALSE) %>% 
+        select(name, LN, KC)
+      blastOut = blastOut %>% left_join(blastSegments, 
+                                        by = c("segmentId" = "name")) %>% 
+        mutate(KC = KC * coverage * ident)
+      
+      # blastOut = blastOut %>% group_by(clusterId) %>% 
+      #   filter(bit_score >= 0.90 * max(bit_score)) %>% ungroup()
+      
+      
+      allBact = blastOut %>%
+        # filter(geneId == "253") %>%
+        select(segmentId, geneId, bit_score, coverage,
+               accession, taxid, genus, species, extra, plasmid, KC, LN) %>%
+        group_by(segmentId, geneId, accession) %>%
+        filter(bit_score == max(bit_score)) %>% 
+        dplyr::slice(1) %>% ungroup() %>%
+        mutate(start = str_detect(segmentId, '_start$')) %>% 
+        #If a blast result has identical scored for the top bact,
+        #then add this score to each accession of that species because
+        #the results are likely cropped by too many idential values
+        group_by(segmentId) %>% 
+        mutate(
+          x = n_distinct(bit_score),
+          accession = if_else(x == 1, as.character(taxid), accession)
+        ) %>% 
+        ungroup() 
+      
+      
+      allBact = bind_rows(
+        allBact %>% filter(x > 1),
+        allBact %>% filter(x == 1) %>% 
+          select(-extra, -accession) %>% distinct() %>% 
+          left_join(allBact  %>% filter(x > 1) %>% 
+                      select(geneId, accession, taxid) %>% distinct(), 
+                    by = c("geneId", "taxid")) %>% 
+          filter(!is.na(accession))
+      ) %>% select(-x) %>% 
+        #Add the path data
+        left_join(pathData %>% 
+                    select(pathId, segmentId, order, startOrientation, dist) %>% 
+                    mutate(startOrientation = ifelse(str_detect(segmentId, "_start$"),
+                                                     -1, startOrientation)) %>% 
+                    distinct(), by = "segmentId") %>% 
+        #Remove those not in a path
+        filter(!is.na(order)) %>% rowwise() %>% 
+        # mutate(pathScore = bit_score * coverage / (max(dist,0) * 0.001 + 1)) %>%
+        mutate(pathScore = bit_score * coverage) %>%
+        group_by(pathId, geneId, accession, startOrientation) %>% 
+        filter(all(2:max(order) %in% order) | all(order == 1)) %>%
+        group_by(geneId, accession, taxid, order, startOrientation) %>% 
+        #Get the best paths per accession
+        filter(pathScore == max(pathScore)) %>% dplyr::slice(1) %>% 
+        ungroup() %>% 
+        group_by(geneId, accession, taxid, genus, species, plasmid) %>% 
+        filter(any(order == 1)) %>%
+        summarise(n = n(), 
+                  extension = sum(pathScore[!start]),
+                  pathScore = sum(pathScore), 
+                  KC = sum(KC), LN = sum(LN),
+                  .groups = "drop") 
+      
+      #Make sure that taxid always has the same genus / species name and vice versa
       allBact = allBact %>% 
         # mutate(bact = paste(genus, species)) %>% 
         group_by(taxid, genus, species) %>% 
