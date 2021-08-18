@@ -76,6 +76,10 @@ softmax = function(vals, normalise = F, log = T){
   return(exp(vals) / sum(exp(vals)))
 }
 
+normalise = function(x){
+  (x - min(x)) / (max(x) - min(x))
+}
+
 # ---- Annotate for all pipelineIds ----
 #***************************************
 
@@ -533,14 +537,9 @@ if(nrow(toProcess) == 0) {
         group_by(geneId, accession, taxid, order, startOrientation) %>% 
         #Get the best paths per accession
         filter(pathScore == max(pathScore)) %>% dplyr::slice(1) %>% 
-        ungroup() %>% 
         group_by(geneId, accession, taxid, genus, species, plasmid) %>% 
         filter(any(order == 1)) %>%
-        summarise(n = n(), 
-                  extension = sum(pathScore[!start]),
-                  pathScore = sum(pathScore), 
-                  KC = sum(KC), LN = sum(LN),
-                  .groups = "drop") 
+        ungroup()
       
       #Make sure that taxid always has the same genus / species name and vice versa
       allBact = allBact %>% 
@@ -555,6 +554,75 @@ if(nrow(toProcess) == 0) {
         group_by(genus, species) %>% 
         mutate(taxid = taxid[myCount == max(myCount)][1]) %>% 
         ungroup()
+      
+      allBact = map_df(genesDetected %>% filter(keep, !is.na(bactGroup)) %>% 
+                         pull(geneId), function(geneId){
+        
+        myGene = allBact %>% filter(geneId %in% {{geneId}})
+        
+        bactSegments = myGene %>% group_by(segmentId, taxid) %>% 
+          summarise(.groups = "drop") %>% 
+          group_by(taxid) %>% summarise(x = list(segmentId)) 
+        
+        gfaMatrix = sapply(bactSegments$x, function(x){
+          len = length(x)
+          sapply(bactSegments$x, function(y){
+            sum(x %in% y) / len
+          })
+        })
+        
+        rownames(gfaMatrix) = bactSegments$taxid
+        colnames(gfaMatrix) = bactSegments$taxid
+        
+        myGene = myGene %>% 
+          group_by(geneId, accession, taxid, genus, species, plasmid) %>% 
+          summarise(n = n(), 
+                    extension = sum(pathScore[!start]),
+                    pathScore = sum(pathScore), 
+                    KC = sum(KC), LN = sum(LN),
+                    .groups = "drop") %>%
+          group_by(taxid) %>% filter(pathScore == max(pathScore)) %>% 
+          arrange(desc(pathScore))
+
+        myTaxid = myGene$taxid %>% unique()
+        i = 1
+        
+        while(i < length(myTaxid)){
+          myIndex = which(colnames(gfaMatrix) == myTaxid[i])
+          duplicates = data.frame(
+            name = colnames(gfaMatrix),
+            row = gfaMatrix[myIndex,],
+            col = gfaMatrix[,myIndex]
+          ) %>% filter(row == 1, col != 1) %>% pull(name)
+          
+          myTaxid = setdiff(myTaxid, duplicates)
+          i = i + 1
+        }
+        
+        myGene %>% filter(taxid %in% myTaxid) %>% 
+          group_by(taxid) %>% filter(pathScore == max(pathScore)) %>% 
+          slice(1)
+        
+      }) %>% mutate(depth = KC / LN) %>% 
+        left_join(
+          genesDetected %>% mutate(geneId = as.character(geneId)) %>% 
+            select(geneId, gene, subtype, cover1), 
+          by = "geneId"
+        )
+      
+      
+      #If extension is 0, it's not likely connected to a bact with genes
+      # that have great extensions, even is the bact is present in both
+      
+      test = allBact %>% group_by(geneId) %>% 
+        mutate(val = pathScore / max(pathScore),
+               depth = KC / LN)  %>% 
+        left_join(
+          genesDetected %>% mutate(geneId = as.character(geneId)) %>% 
+            select(geneId, gene, subtype, cover1)
+        )
+      
+
       
       geneMatrix = allBact %>%
         group_by(geneId, bact = taxid) %>%
@@ -612,9 +680,9 @@ if(nrow(toProcess) == 0) {
       geneMatrix = geneMatrix * myAdjustment
       
       # --- test 2
-      myScale = rowSums(geneMatrix)
-      myScale = myScale / min(myScale)
-      geneMatrix = geneMatrix * myScale
+      # myScale = rowSums(geneMatrix)
+      # myScale = myScale / min(myScale)
+      # geneMatrix = geneMatrix * myScale
       
       # geneMatrix = geneMatrix - ((geneMatrix * 100) %% 1) / 100
       # --- end test 2
