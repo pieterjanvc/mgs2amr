@@ -27,7 +27,10 @@ generateReport = as.logical(args[[5]])
 # generateReport = T
 
 #Load the ARG and the sample list to process
-myConn = dbConnect(SQLite(), sprintf("%sdataAndScripts/meta2amr.db", baseFolder))
+myConn = myConn = dbConnect(
+  SQLite(), 
+  sprintf("%sdataAndScripts/meta2amr.db", baseFolder),
+  synchronous = NULL)
 
 ARG = dbReadTable(myConn, "ARG") 
 
@@ -50,7 +53,8 @@ myAntibiotics = tbl(myConn, "antibiotics") %>%
   filter(name %in% local(names(predictionModels))) %>% 
   as.data.frame()
 
-bactGenomeSize = read_csv(sprintf("%sdataAndScripts/bactGenomeSize.csv",baseFolder))
+bactGenomeSize = 
+  read.csv(sprintf("%sdataAndScripts/bactGenomeSize.csv",baseFolder))
 
 dbDisconnect(myConn)
 
@@ -94,7 +98,11 @@ if(nrow(toProcess) == 0) {
     tool = "ARG_annotation.R"
     ) %>% select(runId,tool,timeStamp,actionId,actionName)
   
-  myConn = dbConnect(SQLite(), sprintf("%sdataAndScripts/meta2amr.db", baseFolder))
+  myConn = myConn = dbConnect(
+    SQLite(), 
+    sprintf("%sdataAndScripts/meta2amr.db", baseFolder),
+    synchronous = NULL)
+  
   q = dbExecute(
     myConn, 
     "INSERT INTO logs (runId,tool,timeStamp,actionId,actionName) VALUES(?,?,?,?,?)", 
@@ -142,8 +150,13 @@ if(nrow(toProcess) == 0) {
         str_replace_all("'", "") %>% as.numeric()
       
       #Grab the detected ARG from the previous step
-      myConn = dbConnect(SQLite(), sprintf("%sdataAndScripts/meta2amr.db", baseFolder))
+      myConn = dbConnect(
+        SQLite(), 
+        sprintf("%sdataAndScripts/meta2amr.db", baseFolder),
+        synchronous = NULL)
+      
       sqliteSetBusyHandler(myConn, 30000)
+      
       genesDetected = tbl(myConn, "detectedARG") %>% 
         filter(pipelineId == myPipelineId) %>% as.data.frame()
       dbDisconnect(myConn)
@@ -464,14 +477,14 @@ if(nrow(toProcess) == 0) {
         left_join(identicalARG %>% 
                     select(geneId, ARGgroup, keep) %>% 
                     mutate(geneId = as.integer(geneId)), by = "geneId") %>% 
-        mutate(keep = ifelse(is.na(keep), T, keep))
+        mutate(keep = ifelse(is.na(keep), T, keep)) 
       
       genesDetected[is.na(genesDetected$ARGgroup),] = 
         genesDetected[is.na(genesDetected$ARGgroup),] %>% 
         group_by(geneId) %>% 
         mutate(ARGgroup = cur_group_id() + 
                  max(genesDetected$ARGgroup, na.rm = T)) %>% 
-        ungroup()
+        ungroup() 
       
       
       # ---- Filter / group bacteria ----
@@ -492,8 +505,22 @@ if(nrow(toProcess) == 0) {
       # blastOut = blastOut %>% group_by(clusterId) %>% 
       #   filter(bit_score >= 0.90 * max(bit_score)) %>% ungroup()
       
+      #Make sure that taxid always has the same genus / species name and vice versa
+      blastOut = blastOut %>% 
+        # mutate(bact = paste(genus, species)) %>% 
+        group_by(taxid, genus, species) %>% 
+        mutate(myCount = n()) %>% 
+        group_by(taxid) %>% 
+        mutate(genus = genus[myCount == max(myCount)][1],
+               species = species[myCount == max(myCount)][1]) %>% 
+        group_by(taxid, genus, species) %>% 
+        mutate(myCount = n()) %>% 
+        group_by(genus, species) %>% 
+        mutate(taxid = taxid[myCount == max(myCount)][1]) %>% 
+        ungroup()
+      
       allBact = blastOut %>%
-        # filter(geneId == "5788", taxid == "195") %>%
+        # filter(geneId == "2124") %>%
         select(segmentId, geneId, bit_score, coverage,
                accession, taxid, genus, species, extra, plasmid, KC, LN) %>%
         group_by(segmentId, geneId, accession) %>%
@@ -522,9 +549,9 @@ if(nrow(toProcess) == 0) {
         allBact %>% filter(x > 0),
         allBact %>% filter(x == 0) %>% 
           select(-extra, -accession, -plasmid) %>% distinct() %>% 
-          left_join(allBact  %>% filter(x > 0) %>% 
-                      select(geneId, accession, taxid, plasmid) %>% distinct(), 
-                    by = c("geneId", "taxid")) %>% 
+          left_join(allBact %>% filter(x > 0) %>% 
+                      select(accession, taxid, plasmid) %>% distinct(), 
+                    by = c("taxid")) %>% 
           filter(!is.na(accession)),
         allBact %>% filter(taxid %in% myFilter)
       ) %>% select(-x, -y) %>% 
@@ -545,20 +572,6 @@ if(nrow(toProcess) == 0) {
         filter(pathScore == max(pathScore)) %>% dplyr::slice(1) %>% 
         group_by(geneId, accession, taxid, genus, species) %>% 
         filter(any(order == 1)) %>%
-        ungroup()
-      
-      #Make sure that taxid always has the same genus / species name and vice versa
-      allBact = allBact %>% 
-        # mutate(bact = paste(genus, species)) %>% 
-        group_by(taxid, genus, species) %>% 
-        mutate(myCount = n()) %>% 
-        group_by(taxid) %>% 
-        mutate(genus = genus[myCount == max(myCount)][1],
-               species = species[myCount == max(myCount)][1]) %>% 
-        group_by(taxid, genus, species) %>% 
-        mutate(myCount = n()) %>% 
-        group_by(genus, species) %>% 
-        mutate(taxid = taxid[myCount == max(myCount)][1]) %>% 
         ungroup()
       
       #Remove genes with no blast data
@@ -723,8 +736,19 @@ if(nrow(toProcess) == 0) {
           myClusters = apply(geneMatrix, 2, function(x) {x == max(x)})
           myClusters = apply(myClusters, 1, function(x) {colnames(myClusters)[x]})
           myClusters = myClusters[sapply(myClusters, length) > 0]
-          names(myClusters) = 1:length(myClusters)
           
+          #Remove duplicates
+          i = 1
+          while(i < length(myClusters)){
+            if(all(myClusters[[i]] %in%  myClusters[[i + 1]])){
+              myClusters = myClusters[-(i+1)]
+            } else {
+              i = i + 1
+            }
+            
+          }
+          
+          names(myClusters) = 1:length(myClusters)
         }
         
        
@@ -787,15 +811,16 @@ if(nrow(toProcess) == 0) {
           left_join(
             genomeARG$bactList %>% 
               select(taxid, bactGroup, prob, genomeDepth = depth,
-                     genomePathscore = pathScore) %>% 
-              mutate(genomePathscore = genomePathscore / max(genomePathscore)),
+                     genomePathscore = pathScore) %>%  
+              mutate(genomePathscore = genomePathscore),
             by = "taxid"
           ) %>% 
-          mutate(val = ifelse(is.na(genomePathscore), 0,  
-                              genomePathscore * genomeDepth)) %>% 
+          #FIND WAY TO FILTER !!!
+          rowwise() %>% 
+          mutate(val = min(pathScore, genomePathscore) / max(pathScore, genomePathscore) +
+                   min(depth, genomeDepth) / max(depth, genomeDepth),
+                 val = ifelse(is.na(val), 0, val)) %>% 
           group_by(geneId) %>% 
-          #The plasmid's depth must be at least ~ the genome's if any connection
-          filter(is.na(bactGroup) | genomeDepth * 0.75 <= depth) %>% 
           filter(val == max(val)) %>% #For now, assign plasmid to top hit, if none, all
           ungroup()
         
@@ -908,7 +933,11 @@ if(nrow(toProcess) == 0) {
       newLogs = rbind(newLogs, list(as.integer(Sys.time()), 12, 
                                     "Save results"))
       
-      myConn = dbConnect(SQLite(), sprintf("%sdataAndScripts/meta2amr.db", baseFolder))
+      myConn = myConn = dbConnect(
+        SQLite(), 
+        sprintf("%sdataAndScripts/meta2amr.db", baseFolder),
+        synchronous = NULL)
+      
       sqliteSetBusyHandler(myConn, 30000)
       
       #Add the ARGgroup to the detectedARG table
@@ -923,7 +952,8 @@ if(nrow(toProcess) == 0) {
       #Add the detected bacteria to the detectedBact table
       q = dbExecute(
         myConn, 
-        sprintf("DELETE FROM detectedBact WHERE pipelineId = %i", bactList$pipelineId[1]))
+        sprintf("DELETE FROM detectedBact WHERE pipelineId = %i", 
+                bactList$pipelineId[1]))
       
       q = dbExecute(myConn, 
                     "INSERT INTO detectedBact (pipelineId, runId, taxId, bactGroup, 
@@ -973,9 +1003,6 @@ if(nrow(toProcess) == 0) {
       
       success = T
     },
-    error = function(e) {
-      cat(e)
-    },
     finally = {
       
       #Write the logs to the database, irrespective of success
@@ -983,7 +1010,11 @@ if(nrow(toProcess) == 0) {
       newLogs$tool = "ARG_annotation.R"
       newLogs = newLogs %>% select(runId,tool,timeStamp,actionId,actionName)
       
-      myConn = dbConnect(SQLite(), sprintf("%sdataAndScripts/meta2amr.db", baseFolder))
+      myConn = dbConnect(
+        SQLite(), 
+        sprintf("%sdataAndScripts/meta2amr.db", baseFolder),
+        synchronous = NULL)
+      
       sqliteSetBusyHandler(myConn, 30000)
       
       q = dbExecute(
