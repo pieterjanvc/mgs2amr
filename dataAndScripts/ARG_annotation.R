@@ -771,13 +771,15 @@ if(nrow(toProcess) == 0) {
           group_by(bactGroup) %>% 
           filter(prob >= min(
             sort(unique(prob), decreasing = T)[1:(min(11, n_distinct(prob)))])
-          ) %>% ungroup() %>% 
+          ) %>% 
+          mutate(val = prob / max(prob)) %>% 
+          ungroup() %>% 
           arrange(bactGroup, desc(prob)) %>% ungroup() %>% 
           mutate(taxid = bact, 
                  species = str_replace(species, "sp\\d+", "sp.")) %>% 
           left_join(bactGenomeSize %>% select(genus, species, size) %>% distinct(),
                     by = c("genus", 'species')) %>% 
-          mutate(val = NA, runId = {{runId}},
+          mutate(runId = {{runId}},
                  pipelineId = toProcess$pipelineId[sampleIndex]) %>% 
           left_join(
             myData %>% group_by(taxid) %>% 
@@ -811,17 +813,21 @@ if(nrow(toProcess) == 0) {
           left_join(
             genomeARG$bactList %>% 
               select(taxid, bactGroup, prob, genomeDepth = depth,
-                     genomePathscore = pathScore) %>%  
+                     genomePathscore = pathScore, val) %>%  
               mutate(genomePathscore = genomePathscore),
             by = "taxid"
           ) %>% 
           #FIND WAY TO FILTER !!!
-          rowwise() %>% 
-          mutate(val = min(pathScore, genomePathscore) / max(pathScore, genomePathscore) +
-                   min(depth, genomeDepth) / max(depth, genomeDepth),
-                 val = ifelse(is.na(val), 0, val)) %>% 
+          # rowwise() %>% 
+          # mutate(val = min(pathScore, genomePathscore) / max(pathScore, genomePathscore) +
+          #          min(depth, genomeDepth) / max(depth, genomeDepth),
+          #        val = ifelse(is.na(val), 0, val)) %>% 
           group_by(geneId) %>% 
-          filter(val == max(val)) %>% #For now, assign plasmid to top hit, if none, all
+          mutate(multiple = sum(0, genomeDepth[val == max(0, val, na.rm = T)], na.rm = T) <=
+                   mean(0, depth[val == max(0, val, na.rm = T)], na.rm = T)) %>% 
+          filter((val == max(0, val, na.rm = T) & pathScore == max(0, pathScore)) |
+                   (val == max(0, val, na.rm = T) & multiple)) %>% 
+          # filter(val == max(val)) %>% #For now, assign plasmid to top hit, if none, all
           ungroup()
         
         plasmidARG = allBact %>% 
@@ -863,7 +869,9 @@ if(nrow(toProcess) == 0) {
           mutate(bactGroup = as.integer(min(bactGroup, na.rm = T))) %>% 
           ungroup()) %>% 
         arrange(ARGgroup,bactGroup, plasmid) %>% 
-        fill(plasmid) %>% mutate(plasmid = ifelse(is.na(bactGroup), NA, plasmid))
+        fill(plasmid) %>% 
+        mutate(plasmid = ifelse(is.na(bactGroup), NA, plasmid)) %>% 
+        distinct()
       
       bactList = bind_rows(
         genomeARG$bactList %>% mutate(plasmidOnly = F),
