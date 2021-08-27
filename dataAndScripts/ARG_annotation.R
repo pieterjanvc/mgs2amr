@@ -116,7 +116,8 @@ if(nrow(toProcess) == 0) {
   
   # UNCOMMENT if running in parallel
   
-  cl <- parallel::makeCluster(detectCores(), outfile = "")
+  nCores = min(detectCores(), nrow(toProcess))
+  cl <- parallel::makeCluster(nCores, outfile = "")
   x = clusterEvalQ(cl, {
     library(tidyverse)
     library(RSQLite)
@@ -723,11 +724,20 @@ if(nrow(toProcess) == 0) {
           #Calulcate the adjustment for each cell based on other scores in the row
           # the higher the scores (e.g. other gened detected), the more scaled up
           myAdjustment = (matrix(rowSums(geneMatrix), nrow = nrow(geneMatrix), 
-                                 ncol = ncol(geneMatrix)) - geneMatrix) 
-          myAdjustment = myAdjustment / 
-            matrix(apply(geneMatrix, 2, function(x) min(x[x > 0])), 
-                   nrow = nrow(geneMatrix), ncol = ncol(geneMatrix), byrow = T)
-          myAdjustment[myAdjustment == 0] = 1
+                                 ncol = ncol(geneMatrix)) - geneMatrix) /
+            (ncol(geneMatrix) - 1) + 1
+          # myAdjustment = myAdjustment / 
+          #   matrix(apply(geneMatrix, 2, function(x) min(x[x > 0])), 
+          #          nrow = nrow(geneMatrix), ncol = ncol(geneMatrix), byrow = T)
+          # myAdjustment[myAdjustment == 0] = 1
+          
+          #OLD
+          # myAdjustment = (matrix(rowSums(geneMatrix), nrow = nrow(geneMatrix), 
+          #                        ncol = ncol(geneMatrix)) - geneMatrix) 
+          # myAdjustment = myAdjustment / 
+          #   matrix(apply(geneMatrix, 2, function(x) min(x[x > 0])), 
+          #          nrow = nrow(geneMatrix), ncol = ncol(geneMatrix), byrow = T)
+          # myAdjustment[myAdjustment == 0] = 1
           
           geneMatrix = geneMatrix * myAdjustment
           geneMatrix = apply(geneMatrix, 2, function(x) x / max(x))
@@ -816,18 +826,30 @@ if(nrow(toProcess) == 0) {
                      genomePathscore = pathScore, val) %>%  
               mutate(genomePathscore = genomePathscore),
             by = "taxid"
-          ) %>% 
+          ) 
           #FIND WAY TO FILTER !!!
           # rowwise() %>% 
           # mutate(val = min(pathScore, genomePathscore) / max(pathScore, genomePathscore) +
           #          min(depth, genomeDepth) / max(depth, genomeDepth),
           #        val = ifelse(is.na(val), 0, val)) %>% 
+        genomeWithPlasmid = bind_rows(
+          genomeWithPlasmid %>% filter(is.na(bactGroup)),
+          genomeWithPlasmid %>% 
+            filter(!is.na(bactGroup)) %>% 
+            group_by(geneId, bactGroup) %>%
+            filter(prob == max(prob)) %>% dplyr::slice(1) %>% 
+            ungroup()
+        )
+          
+        genomeWithPlasmid = genomeWithPlasmid %>% 
           group_by(geneId) %>% 
-          mutate(multiple = sum(0, genomeDepth[val == max(0, val, na.rm = T)], na.rm = T) <=
-                   mean(0, depth[val == max(0, val, na.rm = T)], na.rm = T)) %>% 
-          filter((val == max(0, val, na.rm = T) & pathScore == max(0, pathScore)) |
-                   (val == max(0, val, na.rm = T) & multiple)) %>% 
-          # filter(val == max(val)) %>% #For now, assign plasmid to top hit, if none, all
+          filter(pathScore >= 0.9 * max(c(0, pathScore)) | !is.na(val)) %>% 
+          mutate(
+            multiple = sum(c(0, genomeDepth[val == max(c(0, val), na.rm = T)]), na.rm = T) <=
+                       mean(c(0, depth[val == max(0, val, na.rm = T)]), na.rm = T)) %>% 
+          filter((val == max(c(0, val), na.rm = T) & pathScore == max(c(0, pathScore[val == max(c(0, val), na.rm = T)]))) |
+                   (val == max(c(0, val), na.rm = T) & multiple) | all(is.na(bactGroup))) %>% 
+          # filter(val == max(val))
           ungroup()
         
         plasmidARG = allBact %>% 
