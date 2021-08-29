@@ -521,7 +521,7 @@ if(nrow(toProcess) == 0) {
         ungroup()
       
       allBact = blastOut %>%
-        # filter(geneId == "2124") %>%
+        # filter(geneId == "3323") %>%
         select(segmentId, geneId, bit_score, coverage,
                accession, taxid, genus, species, extra, plasmid, KC, LN) %>%
         group_by(segmentId, geneId, accession) %>%
@@ -583,9 +583,12 @@ if(nrow(toProcess) == 0) {
       # if one is completely contained within another (and smaller), it's a duplicate
       allBact = map_df(geneIds, function(geneId){
 
-        myGene = allBact %>% filter(geneId %in% {{geneId}})
+        myGene = allBact %>% filter(geneId %in% {{geneId}}, pathId == 7)
         
         bactSegments = myGene %>% 
+          group_by(taxid, pathId, order) %>% 
+          summarise(pathScore = max(pathScore))
+
           group_by(taxid, startOrientation, order) %>% #only keep one segment per order
           filter(pathScore == max(pathScore)) %>%
           group_by(segmentId, taxid) %>% 
@@ -839,18 +842,32 @@ if(nrow(toProcess) == 0) {
             group_by(geneId, bactGroup) %>%
             filter(prob == max(prob)) %>% dplyr::slice(1) %>% 
             ungroup()
-        )
+        ) %>% 
+          mutate(across(c(genomeDepth, genomePathscore, val), function(x) ifelse(is.na(x), 0, x)))
           
         genomeWithPlasmid = genomeWithPlasmid %>% 
           group_by(geneId) %>% 
           filter(pathScore >= 0.9 * max(c(0, pathScore)) | !is.na(val)) %>% 
           mutate(
-            multiple = sum(c(0, genomeDepth[val == max(c(0, val), na.rm = T)]), na.rm = T) <=
-                       mean(c(0, depth[val == max(0, val, na.rm = T)]), na.rm = T)) %>% 
-          filter((val == max(c(0, val), na.rm = T) & pathScore == max(c(0, pathScore[val == max(c(0, val), na.rm = T)]))) |
-                   (val == max(c(0, val), na.rm = T) & multiple) | all(is.na(bactGroup))) %>% 
-          # filter(val == max(val))
-          ungroup()
+            multiple = sum(genomeDepth[val == max(val)]) <=
+              mean(depth[val == max(val)])
+          ) %>% 
+          filter(
+            ((val == max(val)) & (pathScore == max(pathScore[val == max(val)]))) |
+              (val == max(val) & multiple)
+            ) %>% ungroup()
+        
+        # genomeWithPlasmid = genomeWithPlasmid %>% 
+        #   group_by(geneId) %>% 
+        #   filter(pathScore >= 0.9 * max(c(0, pathScore)) | !is.na(val)) %>% 
+        #   mutate(
+        #     multiple = sum(c(0, genomeDepth[val == max(c(0, val), na.rm = T)]), na.rm = T) <=
+        #                mean(c(0, depth[val == max(0, val, na.rm = T)]), na.rm = T),
+        #     x = val == max(c(0, val), na.rm = T) & pathScore == max(c(0, pathScore[val == max(c(0, val), na.rm = T)]))) %>% 
+        #   filter((val == max(c(0, val), na.rm = T) & pathScore == max(c(0, pathScore[val == max(c(0, val), na.rm = T)]))) |
+        #            (val == max(c(0, val), na.rm = T) & multiple) | all(is.na(bactGroup))) %>% 
+        #   # filter(val == max(val))
+        #   ungroup()
         
         plasmidARG = allBact %>% 
           filter(geneId %in% genomeWithPlasmid$geneId[is.na(genomeWithPlasmid$bactGroup)])
