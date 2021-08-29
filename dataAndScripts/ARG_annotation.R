@@ -338,6 +338,14 @@ if(nrow(toProcess) == 0) {
           depth = KC / LN,
           totalLN = sum(LN[dist >= 0])) %>% ungroup()
       
+      #Only keeps paths that have results from blast
+      pathData = pathData %>% left_join(data.frame(
+        segmentId = unique(blastOut$segmentId),
+        result = T
+      ),by = "segmentId") %>% 
+        group_by(geneId, pathId) %>% 
+        filter(!any(is.na(result))) %>% ungroup() %>% select(-result)
+      
       
       if(verbose > 0){cat("done\n")}
       newLogs = rbind(newLogs, list(as.integer(Sys.time()), 5, 
@@ -521,59 +529,34 @@ if(nrow(toProcess) == 0) {
         ungroup()
       
       allBact = blastOut %>%
-        filter(geneId == "3323") %>%
+        # filter(geneId == "3323") %>%
         select(segmentId, geneId, bit_score, coverage,
                accession, taxid, genus, species, extra, plasmid, KC, LN) %>%
         group_by(segmentId, geneId, accession) %>%
         filter(bit_score == max(bit_score)) %>% 
         dplyr::slice(1) %>% ungroup() %>%
-        mutate(start = str_detect(segmentId, '_start$')) %>% 
-        #If a blast result has identical scores for the top bact,
-        #then add this score to each accession of that species because
-        #the results are likely cropped by too many idential values
-        group_by(segmentId) %>% 
-        mutate(
-          y = n_distinct(bit_score),
-          x = n() - sum(bit_score >= 0.975 * max(bit_score)),
-          accession = if_else(x == 0, as.character(taxid), accession)
-        ) %>% 
-        ungroup() 
-      
-      #Also keep results with only taxid granularity
-      # myFilter = allBact %>% select(geneId, taxid, x) %>% 
-      #   filter(x == 0) %>% distinct() %>% 
-      #   filter(!taxid %in% unique(allBact$taxid[allBact$x > 0]))
-      myFilter = unique(allBact$taxid[allBact$x == 0])
-      myFilter = myFilter[!myFilter %in% unique(allBact$taxid[allBact$x > 0])]
-
-      allBact = bind_rows(
-        allBact %>% filter(x > 0),
-        allBact %>% filter(x == 0) %>% 
-          select(-extra, -accession, -plasmid) %>% distinct() %>% 
-          left_join(allBact %>% filter(x > 0) %>% 
-                      select(accession, taxid, plasmid) %>% distinct(), 
-                    by = c("taxid")) %>% 
-          filter(!is.na(accession)),
-        allBact %>% filter(taxid %in% myFilter)
-      ) %>% select(-x, -y) %>% 
-        #Add the path data
+        mutate(start = str_detect(segmentId, '_start$')) %>%
+        
+        mutate(pathScore = bit_score * coverage) %>% 
+        group_by(segmentId, taxid, plasmid) %>% 
+        filter(pathScore == max(pathScore)) %>% dplyr::slice(1) %>% ungroup() %>% 
         left_join(pathData %>% 
-                    select(pathId, segmentId, order, startOrientation, dist) %>% 
+                    select(pathId, segmentId, order, startOrientation) %>% 
                     mutate(startOrientation = ifelse(str_detect(segmentId, "_start$"),
                                                      -1, startOrientation)) %>% 
                     distinct(), by = "segmentId") %>% 
-        #Remove those not in a path
-        filter(!is.na(order)) %>% rowwise() %>% 
-        # mutate(pathScore = bit_score * coverage / (max(dist,0) * 0.001 + 1)) %>%
-        mutate(pathScore = bit_score * coverage) %>%
-        group_by(pathId, geneId, accession, startOrientation) %>% 
-        filter(all(2:max(order) %in% order) | all(order == 1)) %>%
-        group_by(geneId, accession, taxid, order, startOrientation) %>% 
-        #Get the best paths per accession
-        filter(pathScore == max(pathScore)) %>% dplyr::slice(1) %>% 
-        group_by(geneId, accession, taxid, genus, species) %>% 
-        filter(any(order == 1)) %>%
-        ungroup()
+        filter(!is.na(order))  %>% 
+        group_by(geneId, pathId, taxid, plasmid, startOrientation) %>% 
+        filter(all(2:max(order) %in% order) | all(order == 1)) %>% 
+        group_by(geneId, taxid, plasmid, startOrientation, pathId) %>% 
+        mutate(fullPath = sum(pathScore)) %>% 
+        group_by(geneId, taxid, plasmid, startOrientation) %>% 
+        filter(pathId == pathId[fullPath == max(fullPath)][1]) %>% 
+        group_by(geneId, taxid, plasmid) %>% 
+        mutate(fullPath = sum(pathScore)) %>% 
+        group_by(geneId, taxid) %>% 
+        filter(plasmid == plasmid[fullPath == max(fullPath)][1])
+      
       
       #Remove genes with no blast data
       geneIds = genesDetected %>% filter(keep) %>% pull(geneId)
@@ -583,14 +566,9 @@ if(nrow(toProcess) == 0) {
       # if one is completely contained within another (and smaller), it's a duplicate
       allBact = map_df(geneIds, function(geneId){
 
-        myGene = allBact %>% filter(geneId %in% {{geneId}}) %>% 
-          group_by(taxid, pathId, order) %>% 
-          summarise(pathScore = max(pathScore)) %>% 
-          group_by(taxid) %>% filter(pathScore == max(pathScore))
-
+        myGene = allBact %>% filter(geneId %in% {{geneId}})
+        
         bactSegments = myGene %>% 
-          group_by(taxid, startOrientation, order) %>% #only keep one segment per order
-          filter(pathScore == max(pathScore)) %>%
           group_by(segmentId, taxid) %>% 
           summarise(.groups = "drop") %>% 
           group_by(taxid) %>% summarise(x = list(segmentId)) 
@@ -602,7 +580,7 @@ if(nrow(toProcess) == 0) {
         else if(length(bactSegments$taxid) == 1){
           #There is only one taxid for the gene
           myGene = myGene %>% 
-            group_by(geneId, accession, taxid, genus, species, plasmid) %>% 
+            group_by(geneId, taxid, genus, species, plasmid) %>% 
             summarise(n = n(), 
                       extension = sum(pathScore[!start]),
                       pathScore = sum(pathScore), 
@@ -626,7 +604,7 @@ if(nrow(toProcess) == 0) {
           colnames(gfaMatrix) = bactSegments$taxid
           
           myGene = myGene %>% 
-            group_by(geneId, accession, taxid, genus, species, plasmid) %>% 
+            group_by(geneId, taxid, genus, species, plasmid) %>% 
             summarise(n = n(), 
                       extension = sum(pathScore[!start]),
                       pathScore = sum(pathScore), 
@@ -830,11 +808,7 @@ if(nrow(toProcess) == 0) {
               mutate(genomePathscore = genomePathscore),
             by = "taxid"
           ) 
-          #FIND WAY TO FILTER !!!
-          # rowwise() %>% 
-          # mutate(val = min(pathScore, genomePathscore) / max(pathScore, genomePathscore) +
-          #          min(depth, genomeDepth) / max(depth, genomeDepth),
-          #        val = ifelse(is.na(val), 0, val)) %>% 
+        #FIND WAY TO FILTER !!!
         genomeWithPlasmid = bind_rows(
           genomeWithPlasmid %>% filter(is.na(bactGroup)),
           genomeWithPlasmid %>% 
@@ -844,7 +818,7 @@ if(nrow(toProcess) == 0) {
             ungroup()
         ) %>% 
           mutate(across(c(genomeDepth, genomePathscore, val), function(x) ifelse(is.na(x), 0, x)))
-          
+        
         genomeWithPlasmid = genomeWithPlasmid %>% 
           group_by(geneId) %>% 
           filter(pathScore >= 0.9 * max(c(0, pathScore)) | !is.na(val)) %>% 
@@ -854,20 +828,8 @@ if(nrow(toProcess) == 0) {
           ) %>% 
           filter(
             ((val == max(val)) & (pathScore == max(pathScore[val == max(val)]))) |
-              (val == max(val) & multiple)
-            ) %>% ungroup()
-        
-        # genomeWithPlasmid = genomeWithPlasmid %>% 
-        #   group_by(geneId) %>% 
-        #   filter(pathScore >= 0.9 * max(c(0, pathScore)) | !is.na(val)) %>% 
-        #   mutate(
-        #     multiple = sum(c(0, genomeDepth[val == max(c(0, val), na.rm = T)]), na.rm = T) <=
-        #                mean(c(0, depth[val == max(0, val, na.rm = T)]), na.rm = T),
-        #     x = val == max(c(0, val), na.rm = T) & pathScore == max(c(0, pathScore[val == max(c(0, val), na.rm = T)]))) %>% 
-        #   filter((val == max(c(0, val), na.rm = T) & pathScore == max(c(0, pathScore[val == max(c(0, val), na.rm = T)]))) |
-        #            (val == max(c(0, val), na.rm = T) & multiple) | all(is.na(bactGroup))) %>% 
-        #   # filter(val == max(val))
-        #   ungroup()
+              (val == max(val) & multiple & FALSE)
+          ) %>% ungroup()
         
         plasmidARG = allBact %>% 
           filter(geneId %in% genomeWithPlasmid$geneId[is.na(genomeWithPlasmid$bactGroup)])
@@ -919,8 +881,6 @@ if(nrow(toProcess) == 0) {
         mutate(estimatedAbundance = depth * size * 1e6 / inputfileBP,
                across(c(prob, estimatedAbundance), round, digits = 4),
                runId = {{runId}}) %>% select(-bact)
-      
-     
       
       if(verbose > 0){cat("done\n")}
       newLogs = rbind(newLogs, list(as.integer(Sys.time()), 9, 
