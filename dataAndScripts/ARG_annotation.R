@@ -521,7 +521,7 @@ if(nrow(toProcess) == 0) {
         ungroup()
       
       allBact = blastOut %>%
-        # filter(geneId == "3323") %>%
+        filter(geneId == "3323") %>%
         select(segmentId, geneId, bit_score, coverage,
                accession, taxid, genus, species, extra, plasmid, KC, LN) %>%
         group_by(segmentId, geneId, accession) %>%
@@ -583,12 +583,12 @@ if(nrow(toProcess) == 0) {
       # if one is completely contained within another (and smaller), it's a duplicate
       allBact = map_df(geneIds, function(geneId){
 
-        myGene = allBact %>% filter(geneId %in% {{geneId}}, pathId == 7)
-        
-        bactSegments = myGene %>% 
+        myGene = allBact %>% filter(geneId %in% {{geneId}}) %>% 
           group_by(taxid, pathId, order) %>% 
-          summarise(pathScore = max(pathScore))
+          summarise(pathScore = max(pathScore)) %>% 
+          group_by(taxid) %>% filter(pathScore == max(pathScore))
 
+        bactSegments = myGene %>% 
           group_by(taxid, startOrientation, order) %>% #only keep one segment per order
           filter(pathScore == max(pathScore)) %>%
           group_by(segmentId, taxid) %>% 
