@@ -43,7 +43,7 @@ maxStep= as.integer(args[[13]]) #Which parts of the script to run? If NA all is 
 
 maxStep = ifelse(maxStep == 0, 5, maxStep)
 
-maxPathSteps = 1500
+maxPathSteps = 2500 #max number of iterations of path finding algorithm
 
 #Generate a list out of the settings file
 settings = readLines(paste0(baseFolder, "settings.txt"))
@@ -85,7 +85,7 @@ tryCatch({
                                     "Skip MetaCherchant cleanup, already done"))
       
       #Takes long time to load, only do if next step is not completed (not needed afterwards)
-      if(nrow(logs %>% filter(actionId %in% c(9,11))) == 0 | forceRedo){
+      # if(nrow(logs %>% filter(actionId %in% c(9,11))) == 0 | forceRedo){
         if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S -"), 
                             "Load master GFA file for processing ... ")}
         # gfa = gfa_read(gzfile(paste0(tempFolder, "/masterGFA.gfa.gz")))
@@ -98,7 +98,7 @@ tryCatch({
         dbDisconnect(myConn)
 
         if(verbose > 0){cat("done\n")}
-      }
+      # }
       
     } else { #Not processed yet ...
       
@@ -169,9 +169,11 @@ tryCatch({
       
       #Remove Metacherchant Data if set
       if(keepAllMetacherchantData == F & (nrow(logs %>% filter(actionId == 4)) == 0)){
-        allDirs = list.dirs(tempFolder,recursive = F)
-        allDirs = allDirs[!str_detect(allDirs,"metacherchant_logs")]
-        system(sprintf("rm -R %s", paste(allDirs, collapse = " ")))
+        # allDirs = list.dirs(tempFolder,recursive = F)
+        # allDirs = allDirs[!str_detect(allDirs,"metacherchant_logs")]
+        # system(sprintf("rm -R '%s'", paste(allDirs, collapse = " ")))
+        system(sprintf("ls -d %s/* | grep -P \"/\\d+$\" | xargs rm -R", tempFolder))
+        # system(sprintf('find %s -name "lcl*" -exec rm -r {} \\; > /dev/null 2>&1', tempFolder))
       }
       
       if(verbose > 0){cat("done\n")}
@@ -268,7 +270,7 @@ tryCatch({
           ))
         
         }))
-      
+      stopCluster(cl)
       rm(cl)
       
       #Merge the results
@@ -326,9 +328,10 @@ tryCatch({
         mutate(simToBest = between(fileDepth, 
                                    fileDepth[val == max(val)][1] * 0.9,
                                    fileDepth[val == max(val)][1] * 1.1)) %>% 
-        group_by(gene, simToBest) %>% arrange(desc(val)) %>% slice(1) %>% 
+        group_by(gene, simToBest) %>% arrange(desc(val)) %>% dplyr::slice(1) %>% 
         ungroup() %>% 
-        filter(cover1 >= 0.25, startDepth / fileDepth >= 0.25) %>% 
+        #Weed out the very low quality ones (MAYBE ADJUST)
+        filter(cover1 >= 0.75 | (cover1 >= 0.25 & startDepth / fileDepth >= 0.25)) %>% 
         select(-val, -simToBest)
 
       
@@ -524,70 +527,75 @@ tryCatch({
         genesDetected$geneId[! genesDetected$type %in% 
                                c("fragmentsOnly", "longestFragment")], function(myGene){
 
-        gfa = gfa_read(sprintf("%sgenesDetected/%s.gfa", tempFolder, myGene))
+            gfa = gfa_read(sprintf("%sgenesDetected/%s.gfa", tempFolder, myGene))
+            
+            #Check if filter yields any results
+            if(nrow(gfa$links) == 0){
+              return(data.frame())
+            }
+            
+            #Remove disconnected pieces that do not contain a start segment
+            myGraph = graph_from_data_frame(data.frame(
+              from = gfa$links$from,
+              to = gfa$links$to
+            ), directed = F)
+            
+            myGraph = components(myGraph)$membership
+            myGraph = data.frame(
+              name = names(myGraph),
+              group = myGraph
+            ) %>%
+              group_by(group) %>%
+              filter(any(str_detect(name, "_start$"))) %>% 
+              ungroup() %>% distinct()
+            
+            gfa = gfa_filterSegments(gfa, myGraph$name[myGraph$name %in% gfa$segments$name])
+            
+            #Get largest start segment
+            segmentOfInterest = gfa$segments %>% filter(str_detect(name, "_start$")) %>%
+              filter(LN == max(LN)) %>% filter(KC == max(KC)) %>% slice(1) %>% pull(name)
+            
+            #Stay within maxPathDist / maxPathSteps around this segment
+            gfa = gfa_neighbourhood(gfa, segmentOfInterest, maxPathDist, 
+                                    maxSteps = maxPathSteps)
+            
+            #Check if filter yields any results
+            if(nrow(gfa$links) == 0){
+              if(verbose > 0){cat("done\n")}
+              return(data.frame())
+            }
+            
+            #Get all other start segments too
+            allStart = gfa$segments %>% filter(str_detect(name, "_start$")) %>%
+              pull(name)
+            
+            #Remove parallel sequences by picking the shortest
+            gfa = gfa_removeRedundant(gfa, segmentOfInterest)
+            gfa = gfa_mergeSegments(
+              gfa, exclude = segmentOfInterest,
+              extraSummaries = list(
+                name = function(x) paste0(str_extract(x$name[1], "^\\d+"), "_unitig")
+              ))
+            
+            #Keep pruning the graph to get rid of small appendages
+            gfa = gfa_trimLooseEnds(
+              gfa, trimLength - 1, keepRemoving = T, exclude = segmentOfInterest,
+              extraSummaries = list(
+                name = function(x) paste0(str_extract(x$name[1], "^\\d+"), "_unitig")
+              ))
+            
+            #Colour the ARG segments green for easier display in Bandage and save results
+            gfa = gfa_annotation(gfa, gfa$segments$name[
+              str_detect(gfa$segments$name, "_start$")], color = "green")
+            gfa_write(gfa, sprintf("%s/genesDetected/simplifiedGFA/%s_simplified.gfa",
+                                   tempFolder, myGene))
         
-        #Check if filter yields any results
-        if(nrow(gfa$links) == 0){
-          return(data.frame())
-        }
-        
-        #Remove disconnected pieces that do not contain a start segment
-        myGraph = graph_from_data_frame(gfa$links %>% select(from, to), directed = F)
-        myGraph = components(myGraph)$membership
-        myGraph = data.frame(
-          name = names(myGraph),
-          group = myGraph
-        ) %>% 
-          group_by(group) %>% 
-          filter(any(str_detect(name, "_start$")))
-        
-        gfa = gfa_filterSegments(gfa, myGraph$name[myGraph$name %in% gfa$segments$name])
-        
-        #Get largest start segment
-        segmentOfInterest = gfa$segments %>% filter(str_detect(name, "_start$")) %>%
-          filter(LN == max(LN)) %>% filter(KC == max(KC)) %>% slice(1) %>% pull(name)
-        
-        #Stay within maxPathDist / maxPathSteps around this segment
-        gfa = gfa_neighbourhood(gfa, segmentOfInterest, maxPathDist, 
-                                maxPathSteps, noLoops = T)
-        
-        #Check if filter yields any results
-        if(nrow(gfa$links) == 0){
-          if(verbose > 0){cat("done\n")}
-          return(data.frame())
-        }
-        
-        #Get all other start segments too
-        allStart = gfa$segments %>% filter(str_detect(name, "_start$")) %>%
-          pull(name)
-        
-        #Remove parallel sequences by picking the shortest
-        gfa = gfa_trimLooseEnds(gfa, trimLength, keepRemoving = F, exclude = segmentOfInterest)
-        gfa = gfa_removeRedundant(gfa, segmentOfInterest, maxLN = trimLength)
-        gfa = gfa_mergeSegments(
-          gfa, exclude = segmentOfInterest,
-          extraSummaries = list(
-            name = function(x) paste0(str_extract(x$name[1], "^\\d+"), "_unitig")
-          ))
-        
-        #Keep pruning the graph to get rid of small appendages
-        gfa = gfa_trimLooseEnds(
-          gfa, trimLength - 1, keepRemoving = T, exclude = segmentOfInterest,
-          extraSummaries = list(
-            name = function(x) paste0(str_extract(x$name[1], "^\\d+"), "_unitig")
-          ))
-        
-        #Colour the ARG segments green for easier display in Bandage and save results
-        gfa = gfa_annotation(gfa, gfa$segments$name[
-          str_detect(gfa$segments$name, "_start$")], color = "green")
-        gfa_write(gfa, sprintf("%s/genesDetected/simplifiedGFA/%s_simplified.gfa",
-                               tempFolder, myGene))
-        
-        return(gfa$segments %>% filter(LN > minBlastLength) %>% 
+        return(gfa$segments %>% filter((LN > minBlastLength) | 
+                                         (start == "1" & LN >= 75)) %>% 
           mutate(geneId = myGene))
         
       })) 
-      
+      stopCluster(cl)
       rm(cl)
       blastSegments = bind_rows(blastSegments)
       if(verbose > 0){cat("done\n")}
@@ -609,10 +617,12 @@ tryCatch({
       if(nrow(blastSegments) > 0){
 
         blastSegments = bind_rows(
-          blastSegments %>% select(-start, -CL), 
-          fragmentsOnly$segments %>% select(-start) %>% 
-            filter(LN >= 100)) %>% distinct() %>% 
-          mutate(blastId = name) 
+          blastSegments %>% select(-start, -CL) %>% 
+            mutate(geneId = as.character(geneId)), 
+          fragmentsOnly$segments %>% 
+            filter(LN >= 100 | (str_detect(name, "_start$") & LN > 74)) %>% 
+          distinct()) %>% 
+          mutate(blastId = name)
         
       } else {
         
@@ -787,6 +797,9 @@ tryCatch({
 }, 
 finally = {
   
+  if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S -"), 
+                      "Cleaning up and saving logs ... ")}
+  
   myConn = dbConnect(SQLite(), sprintf("%sdataAndScripts/meta2amr.db", baseFolder))
   
   #Submit the logs, even in case of error so we know where to resume
@@ -804,4 +817,8 @@ finally = {
     system(sprintf("%s -f %s", zipMethod, sprintf("%smasterGFA.db", tempFolder)))
   }
   
+  #Garbage collection
+  x = gc(verbose = FALSE, full = T)
+  
+  if(verbose > 0){cat("done\n")}
 })
