@@ -88,10 +88,10 @@ tryCatch({
                                   i, nrow(toSubmit), toSubmit$pipelineId[i], toSubmit$submId[i]))}
       
       #Run local blastn
-      system(sprintf('%s -db "%s" -query "%s" -task megablast -evalue %s -word_size %i -max_target_seqs %i -max_hsps %i -taxidlist %s -outfmt 15 | gzip > "%s"',
+      system(sprintf('%s -db "%s" -query "%s" -task megablast -evalue %s -word_size %i -max_target_seqs %i -max_hsps %i -taxidlist %s -num_threads %i -outfmt 15 | gzip > "%s"',
                      blastn, blastDB, paste0(toSubmit$folder[i], toSubmit$fastaFile[i]),
                      blastArgs$evalue, blastArgs$word_size, blastArgs$max_target_seqs, 
-                     blastArgs$max_hsps, blastArgs$taxidlist,
+                     blastArgs$max_hsps, blastArgs$taxidlist, parallel::detectCores(),
                      paste0(toSubmit$folder[i], str_replace(toSubmit$fastaFile[i], ".fasta", ".json.gz"))))
       
       #Update the DB
