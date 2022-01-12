@@ -23,7 +23,7 @@ pipelineId = str_trim(unlist(strsplit(args[[6]], ",")))
 #Set these general blast args
 blastArgs = list(
   db = "nt",
-  evalue = "1e-75",
+  evalue = "1e-20",
   word_size = 64,
   max_target_seqs = 250,
   max_hsps = 1,
