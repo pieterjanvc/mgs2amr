@@ -9,19 +9,6 @@ suppressPackageStartupMessages(library(gfaTools))
 suppressPackageStartupMessages(library(RSQLite))
 suppressPackageStartupMessages(library(parallel))
 
-# ---- FUNCTIONS ----
-#********************
-#Make cut-offs based on steepest tangent in curve (maybe not best if very different RA)
-cutOff = function(numbers){
-  if(length(numbers) < 2){
-    return(numbers)
-  }
-  numbers = sort(numbers)
-  myData = data.frame(number = numbers[-1],
-                      diff = diff(numbers) / diff(1:length(numbers))) 
-  myData %>% filter(diff == max(diff)) %>% pull(number) %>% unique()
-}
-
 
 # ---- Inputs ----
 #*****************
@@ -43,8 +30,8 @@ maxStep= as.integer(args[[13]]) #Which parts of the script to run? If NA all is 
 
 maxStep = ifelse(maxStep == 0, 5, maxStep)
 
-maxPathSteps = 2500 #max number of iterations of path finding algorithm
-
+maxStartGap = 800
+ 
 #Generate a list out of the settings file
 settings = readLines(paste0(baseFolder, "settings.txt"))
 settings = settings[str_detect(settings,"^\\s*[^=#]+=.*$")]
@@ -204,7 +191,7 @@ tryCatch({
       if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S -"), "Recover ARG seed sequences ... ")}
       newLogs = rbind(newLogs, list(as.integer(Sys.time()), 7, "Start recovering ARG seed sequences"))
       
-      #Split the file in groups to merge start segments
+      #Split the file in groups to merge start segments (multiple can be done at once)
       myGroups = gfa$links %>% group_by(geneId) %>% summarise(n = n())
       
       myGroup = 1
@@ -214,7 +201,7 @@ tryCatch({
         
         curSum = curSum + myGroups$n[i]
         
-        if(curSum >= 250000){
+        if(curSum >= 500000){
           curSum = 0
           myGroup = myGroup + 1
         }
@@ -224,14 +211,15 @@ tryCatch({
       
       myGroups$group = myResult
       
-      #This process can be done in parallel so speed things up
-      cl <- parallel::makeCluster(detectCores())
+      #This process can be done in parallel to speed things up
+      cl <- parallel::makeCluster(min(detectCores(), myGroup))
       x = clusterEvalQ(cl, {
         library(dplyr)
         library(gfaTools)
         library(RSQLite)
+        library(stringr)
       })
-      clusterExport(cl, varlist = c("myGroups", "tempFolder"))
+      clusterExport(cl, varlist = c("myGroups", "tempFolder", "maxStartGap"))
       
       #Read all GFA files
       gfa = suppressWarnings(parLapply(cl, unique(myGroups$group), function(myGroup){
@@ -250,7 +238,7 @@ tryCatch({
                     paste(myGenes, collapse = ","))))
         dbDisconnect(myConn)
         
-        #Add the geneId to the segment names to make sure they are unique 
+        #Add the geneId to the segment/link names
         gfaGroup$segments = gfaGroup$segments %>% 
           mutate(name = paste0(geneId, "_", name))
         gfaGroup$links = gfaGroup$links %>% 
@@ -262,12 +250,21 @@ tryCatch({
         #Cut out small appendages from graphs to make joining easier
         gfaGroup = gfa_trimLooseEnds(gfaGroup, 100, keepRemoving = F)
         
+        #Remove single splits
+        gfaGroup = gfa_filterSegments(
+          gfaGroup,
+          gfa_getOneSplit(gfaGroup,
+                          except = gfaGroup$segments$name[
+                            str_detect(gfaGroup$segments$name, "_start$")]),
+          action = "remove"
+        )
+        
         #Merge the start segments
         mergeStartSegments(
           list(
             segments = gfaGroup$segments %>% filter(geneId %in% myGenes) ,
             links = gfaGroup$links %>% filter(geneId %in% myGenes)
-          ))
+          ), maxGap = maxStartGap)
         
         }))
       stopCluster(cl)
@@ -310,30 +307,19 @@ tryCatch({
           fileDepth = sum(KC) / sum(LN),
           LNsum = sum(LN[start]),
           KCsum = sum(KC[start])
-        ) %>% ungroup() %>% 
-        filter(start) %>% 
+        ) %>% 
+        filter(start) %>% filter(LN == max(LN)) %>% ungroup() %>% 
         left_join(argGenes, by = "geneId") %>% 
-        group_by(geneId, clusterNr, nBases, gene, subtype, fileDepth, 
-                 nSeg, LNsum, KCsum, startPerc) %>% 
-        summarise(LNmax = max(LN), KCmax = max(KC), 
-                  startPerc = startPerc[LN == LNmax],
-                  startDepth = KCmax / LNmax,
-                  .groups = 'drop') %>% rowwise() %>% 
+        select(geneId, clusterNr, nBases, gene, subtype, LN, KC, fileDepth, 
+               nSeg, LNsum, KCsum, startPerc) %>% 
+        mutate(startDepth = KC / LN) %>% rowwise() %>% 
         # filter(gene == "blaTEM") %>%
         mutate(
-          cover1 = round(min(1, LNmax / nBases), 4),
+          cover1 = round(min(1, LN / nBases), 4),
           cover2 = round(min(1, LNsum / nBases), 4),
-          val = cover1 * startPerc * KCmax) %>% 
-        group_by(gene) %>% 
-        mutate(simToBest = between(fileDepth, 
-                                   fileDepth[val == max(val)][1] * 0.9,
-                                   fileDepth[val == max(val)][1] * 1.1)) %>% 
-        group_by(gene, simToBest) %>% arrange(desc(val)) %>% dplyr::slice(1) %>% 
-        ungroup() %>% 
-        #Weed out the very low quality ones (MAYBE ADJUST)
-        filter(cover1 >= 0.75 | (cover1 >= 0.25 & startDepth / fileDepth >= 0.25)) %>% 
-        select(-val, -simToBest)
-
+          val = cover1 * startPerc * KC) %>% ungroup() %>% 
+        filter((fileDepth >= 10 & cover1 > 0.75) | fileDepth < 10)
+      
       
       # ---- Get all fragmented GFA (only start seg or one connection) ----
       #********************************************************************
@@ -390,29 +376,37 @@ tryCatch({
 
       #GFA should ONLY have single fragments - not combi ...
       
-      singleSeg = unique(c(mySegments, singleSeg))
+      singleSeg = c(mySegments, singleSeg) %>% 
+        str_extract("^\\d+") %>% unique()
       
-      #Add graphs that only consist of a single start segment
-      onlyStartSeg = gfa$segments$geneId[!gfa$segments$geneId %in% gfa$links$geneId]
-      onlyStartSeg = onlyStartSeg[onlyStartSeg %in% genesDetected$geneId]
+      #If seed is well covered, it's not a fragment but linear assembly
+      singleSeg = genesDetected %>% 
+        filter(geneId %in% singleSeg, cover1 < 0.2) %>% pull(geneId)
       
-      #Build a GFA that contains all these short GFAs (will be individual islands)
-      singleSeg = list(segments = gfa$segments %>% 
-                         filter(name %in% singleSeg | geneId %in% onlyStartSeg), 
-                       links = gfa$links %>% filter(
-                         from %in% singleSeg | to %in% singleSeg))
+      # singleSeg$segments %>% 
+      #   filter(!str_detect(name, "_start$")) %>% 
+      #   group_by(geneId) %>% 
+      #   filter(n() < 3 & sum(LN) > 750) %>% pull(geneId) %>% unique()
+      # 
+      # #Add graphs that only consist of a single start segment
+      # onlyStartSeg = gfa$segments$geneId[!gfa$segments$geneId %in% gfa$links$geneId]
+      # onlyStartSeg = onlyStartSeg[onlyStartSeg %in% genesDetected$geneId]
+      # 
+      # #Build a GFA that contains all these short GFAs (will be individual islands)
+      # singleSeg = list(segments = gfa$segments %>% 
+      #                    filter(name %in% singleSeg | geneId %in% onlyStartSeg), 
+      #                  links = gfa$links %>% filter(
+      #                    from %in% singleSeg | to %in% singleSeg))
+      # 
+      # #Consider fragment only if small piece of gene 
+      # myFilter = gfa$segments %>% select(name, LN, geneId) %>% 
+      #   filter(geneId %in% singleSeg$segments$geneId, 
+      #          name %in% c(singleSeg$links$from, singleSeg$links$to)) %>% 
+      #   group_by(geneId) %>% summarise(LN = sum(LN), n = n()) %>% 
+      #   filter(!(n < 4 & LN > 500))
       
-      #Consider fragment only if small piece of gene 
-      myFilter = gfa$segments %>% select(name, LN, geneId) %>% 
-        filter(geneId %in% singleSeg$segments$geneId, 
-               name %in% c(singleSeg$links$from, singleSeg$links$to)) %>% 
-        group_by(geneId) %>% summarise(LN = sum(LN), n = n()) %>% 
-        filter(!(n < 4 & LN > 500))
-      
-      singleSeg = list(segments = gfa$segments %>% 
-                         filter(name %in% singleSeg | geneId %in% onlyStartSeg), 
-                       links = gfa$links %>% filter(
-                         from %in% singleSeg | to %in% singleSeg))
+      singleSeg = list(segments = gfa$segments %>% filter(geneId %in% singleSeg), 
+                       links = gfa$links %>% filter(geneId %in% singleSeg))
       
       #Check fragment type
       fragType = gfa$segments %>% select(name, geneId, LN) %>% 
@@ -434,15 +428,150 @@ tryCatch({
         fragType = data.frame(geneId = "", type = NA)
       }
       
-      
-      
       #Add to this new info to detected genes table
       genesDetected = genesDetected %>% left_join(fragType, by = "geneId") %>% 
         mutate(type = replace_na(type, "noFragments")) %>% 
-        #Only keep decently covered genes (assumed higher abundance), or fragments (low abundance)
-        filter((cover1 > 0.1 & type != "fragmentsOnly") | type == "fragmentsOnly") %>% 
+        # #Only keep decently covered genes (assumed higher abundance), or fragments (low abundance)
+        # filter((cover1 > 0.1 & type != "fragmentsOnly") | type == "fragmentsOnly") %>% 
         mutate(pipelineId = pipelineId, runId = runId) %>% 
         select(pipelineId, runId, everything())
+      
+      
+      
+      #Find identical files (start segments excluded)
+      #**********************************************
+      
+      #check the overlap of identical segments between files
+      simMat = gfa$segments %>% 
+        filter(!str_detect(name, "_start$"),
+               geneId %in% genesDetected$geneId) %>% 
+        mutate(val = 1) %>% 
+        pivot_wider(sequence, names_from = geneId, values_from = LN,
+                    values_fill = 0) %>% select(-sequence) %>% 
+        as.matrix()
+      
+      #Build a similarity matrix
+      simMat = t(simMat) %*% (simMat > 0) 
+      simMat = apply(simMat, 2, function(x) x / max(x))
+      
+      #Extract all identical files and collapse them keeping the 
+      #one with the highest score
+      geneIds = rownames(simMat)
+      test = apply(simMat, 2, function(x){
+        geneIds[x == 1]
+      })
+      
+      
+      new = data.frame()
+      while(length(test) > 0){
+        new = bind_rows(
+          new, genesDetected %>% filter(geneId %in% test[[1]]) %>% 
+            filter(val == max(val)) %>% slice(1)
+        )
+        
+        test[test[[1]]] = NULL
+      }
+      
+      
+      #Examine near identical files
+      #****************************
+      simMat = simMat[colnames(simMat) %in% new$geneId, 
+                      colnames(simMat) %in% new$geneId]
+      
+      #Get the start segments and immediate neighbours and generate FASTA
+      toAlign = gfa$segments %>% 
+        filter(geneId %in% new$geneId, str_detect(name, "_start$")) %>% 
+        group_by(geneId) %>% filter(LN == max(LN)) %>% ungroup() %>% 
+        mutate(pos = 0)
+      toAlign = bind_rows(
+        toAlign,
+        gfa$links %>% filter(from %in% toAlign$name | to %in% toAlign$name) %>% 
+          filter(!(str_detect(from, "_start$") & str_detect(to, "_start$"))) %>% 
+          mutate(name = ifelse(str_detect(from, "_start$"), to, from),
+                 pos = ifelse(str_detect(from, "_start$"), 0, 1),
+                 pos2 = ifelse(pos == 0, fromOrient, toOrient),
+                 pos = case_when(
+                   pos == 0 & pos2 == "+" ~ 1,
+                   pos == 0 & pos2 == "-" ~ 2,
+                   pos == 1 & pos2 == "+" ~ 2,
+                   TRUE ~ 1
+                 )) %>% 
+          select(name, pos)  %>% 
+          left_join(gfa$segments, by = "name"))
+      
+      #Find the distance matrix between the seq with usearch
+      distMat = map_df(0:2, function(i){
+        
+        myFile = tempfile()
+        myFile_RC = tempfile()
+        
+        #Write to fasta
+        x = toAlign %>% filter(pos == i)
+        fasta_write(x$sequence, myFile, 
+                    x$name, type = "n")
+        
+        #Add the reverse complement (usearch does not do that when calc_distmx)
+        system(sprintf("%s -fastx_revcomp %s -label_suffix _RC -fastaout %s",
+                       settings["usearch"], myFile, myFile_RC))
+        file.append(myFile, myFile_RC)
+        
+        #Use cluster_fast to reduce number of segments by grouping in identity clusters
+        system(sprintf("%s -calc_distmx %s -tabbedout %s -termdist 0.5",
+                       settings["usearch"], myFile, myFile))
+        
+        read.delim(myFile, header = F) %>% mutate(pos = i)
+        
+      })
+      
+      #Evaluate similarities again
+      distMat = distMat %>% 
+        mutate(id1 = str_extract(V1, "^\\d+"), id2 = str_extract(V2, "^\\d+")) %>% 
+        pivot_longer(c(id1, id2)) %>% 
+        mutate(V1 = ifelse(.$V1 > .$V2, .$V2, .$V1),
+               V2 = ifelse(.$V1 > .$V2, .$V1, .$V2)) %>% 
+        mutate(id1 = str_extract(V1, "^\\d+"), id2 = str_extract(V2, "^\\d+"),
+               V1 = str_remove(V1, "_RC$"), V2 = str_remove(V2, "_RC$"),
+               V3 = 1 - V3) %>% 
+        select(id1, id2, sim = V3, pos, V1, V2) %>% distinct() 
+      
+      distMat = bind_rows(
+        distMat %>% select(id1, id2, sim, pos, V1, V2),
+        distMat %>% select(id1 = id2, id2 = id1, sim, pos, V1, V2)
+      ) %>% distinct() 
+      
+      
+      distMat = distMat %>% 
+        group_by(V1, V2) %>% filter(sim == max(sim)) %>% ungroup() %>% 
+        left_join(gfa$segments %>% 
+                    select(name, LN1 = LN, KC1 = KC), by = c("V1" = "name")) %>% 
+        left_join(gfa$segments %>% 
+                    select(name, LN2 = LN, KC2 = KC), by = c("V2" = "name")) %>% 
+        rowwise() %>% 
+        mutate(ratio = min(LN1, LN2)) %>% group_by(id1, id2) %>%
+        mutate(ratio2 = ratio / sum(ratio)) %>% ungroup()
+
+      #Get the similarities with scores for each side as well
+      distMat = distMat %>% 
+        group_by(id1, id2) %>% summarise(
+          sim = sum(sim * ratio2), 
+          sim0 = max(sim[pos == 0], 0, na.rm = T),
+          sim1 = max(sim[pos == 1], 0, na.rm = T),
+          sim2 = max(sim[pos == 2], 0, na.rm = T),
+          .groups = "drop"
+        ) %>% left_join(
+          new %>% 
+            select(geneId, gene, subtype, val), by = c("id2" = "geneId")
+        ) 
+      
+      #Filter and group for similarities
+      distMat = distMat %>% group_by(id1) %>% 
+        filter(sim > 0.9, sim0 > 0.9) %>% 
+        filter(val == max(val)) %>% ungroup() %>% 
+        select(geneId = id2, gene, subtype) %>% distinct()
+      
+      #Finally only keep the relevant genes
+      genesDetected = genesDetected %>% filter(geneId %in% distMat$geneId)
+      
       
       #---- Save detected results - but delete old first ----
       q = dbSendStatement(myConn, "DELETE FROM detectedARG WHERE pipelineId == ?", 
@@ -519,8 +648,7 @@ tryCatch({
       })
       clusterExport(cl, 
                     varlist = c("genesDetected", "tempFolder", "verbose",
-                                "maxPathDist", "maxPathSteps", "trimLength", 
-                                "minBlastLength"))
+                                "maxPathDist", "trimLength", "minBlastLength"))
       
       #Read all GFA files
       blastSegments = suppressWarnings(parLapply(cl,
@@ -556,8 +684,7 @@ tryCatch({
               filter(LN == max(LN)) %>% filter(KC == max(KC)) %>% slice(1) %>% pull(name)
             
             #Stay within maxPathDist / maxPathSteps around this segment
-            gfa = gfa_neighbourhood(gfa, segmentOfInterest, maxPathDist, 
-                                    maxSteps = maxPathSteps)
+            gfa = gfa_neighbourhood(gfa, segmentOfInterest, maxPathDist)
             
             #Check if filter yields any results
             if(nrow(gfa$links) == 0){
