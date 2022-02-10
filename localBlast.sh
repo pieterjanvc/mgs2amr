@@ -37,20 +37,22 @@ updateDBwhenError() {
 }
 
 #Options when script is run
-while getopts ":hb:d:p:v:" opt; do
+while getopts ":hn:b:p:v:d:" opt; do
   case $opt in
 	h) echo -e "\n"
 	   awk '/--- LOCALBLAST.SH ---/,/-- END LOCALBLAST.SH ---/' $baseFolder/readme.txt
 	   echo -e "\n"
 	   exit
     ;;	
-	b) blastn=`realpath "${OPTARG}"`
+	n) blastn=`realpath "${OPTARG}"`
     ;;
-	d) blastDB=`realpath "${OPTARG}"`
+	b) blastDB=`realpath "${OPTARG}"`
     ;;
 	p) pipelineId="${OPTARG}"
     ;;
 	v) verbose="${OPTARG}"
+    ;;
+  d) database="${OPTARG}"
     ;;
     \?) echo "Unknown argument provided"
 	    exit
@@ -61,6 +63,12 @@ done
 exec 2>$baseFolder/dataAndScripts/lastError
 
 #Check all the input arguments
+if [ -z ${database+x} ]; then 
+	database="$baseFolder/dataAndScripts/meta2amr.db"
+elif [ ! -f $database ]; then	
+		echo -e "\n\e[91mThe database provided does not exist\e[0m"; exit;
+fi
+
 if [ -z ${blastn+x} ]; then 
 	blastn=`grep -oP "localBlastBlastn\s*=\s*\K(.*)" $baseFolder/settings.txt`
 fi
@@ -80,7 +88,7 @@ elif ! grep -qP "^-?(0|1|2)$" <<< $verbose; then
 fi
 
 #Register the start of the script in the DB
-runId=$($sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
+runId=$($sqlite3 $database \
 	"INSERT INTO scriptUse (pipelineId,scriptName,start,status) \
 	values(0,'localBlast.sh','$(date '+%F %T')','running'); \
 	SELECT runId FROM scriptUse WHERE runId = last_insert_rowid()")
@@ -96,11 +104,11 @@ fi
 
 #Run BLASTn for all in the queue (unless runId specified)
 $Rscript $baseFolder/dataAndScripts/localBlast.R \
-	"$baseFolder" "$runId" "$verbose" "$blastn" "$blastDB" "$pipelineId"
+	"$baseFolder" "$database" "$runId" "$verbose" "$blastn" "$blastDB" "$pipelineId"
 
 
 #Update the DB
-$sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
+$sqlite3 $database \
 	"UPDATE scriptUse
 	SET end = '$(date '+%F %T')', status = 'finished'
 	WHERE runId = $runId"

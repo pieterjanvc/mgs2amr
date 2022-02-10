@@ -27,14 +27,14 @@ trap 'err_report ${LINENO}' ERR
 
 updateDBwhenError() {
 	#Update the DB
-    $sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
+    $sqlite3 "$database" \
 	"UPDATE scriptUse
 	SET end = '$(date '+%F %T')', status = 'error',
 	info = '$2'
 	WHERE runId = $1"
 }
 
-while getopts ":ht" opt; do
+while getopts ":ht:d:" opt; do
   case $opt in
 	h) echo -e "\n"
 	   awk '/--- SETUP.SH ---/,/-- END SETUP.SH ---/' $baseFolder/readme.txt
@@ -43,6 +43,8 @@ while getopts ":ht" opt; do
     ;;
 	t) runTests=true
 	;;
+	d) database="${OPTARG}"
+    ;;
     \?) echo "Unknown argument provided"
 	    exit
 	;;
@@ -71,17 +73,21 @@ fi;
 echo -e " - SQLite 3 is present"
 
 #Check the meta2amr database and create if needed
-if [ ! -f "$baseFolder/dataAndScripts/meta2amr.db" ]; then
-	$sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" -cmd \
+if [ -z ${database+x} ]; then 
+	database="$baseFolder/dataAndScripts/meta2amr.db"
+fi
+
+if [ ! -f "$database" ]; then
+	$sqlite3 "$database" -cmd \
 	".read $baseFolder/dataAndScripts/createMeta2amrDB.sql" \
 	".mode csv" ".import $baseFolder/dataAndScripts/argTable.csv ARG"
-	echo -e " - No meta2amr database found, a new database was created"
+	echo -e " - No existing meta2amr database found, a new database was created"
 else 
 	echo -e " - The meta2amr database is present"
 fi
 
 #Register the start of the script in the DB
-runId=$($sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
+runId=$($sqlite3 "$database" \
 	"INSERT INTO scriptUse (pipelineId,scriptName,start,status) \
 	values(0,'checkSetup.sh','$(date '+%F %T')','running'); \
 	SELECT runId FROM scriptUse WHERE runId = last_insert_rowid()")
@@ -94,13 +100,13 @@ if [ -z `command -v $Rscript` ]; then
 	updateDBwhenError "$runId" "R does not seem to be installed"
 	exit 1;
 fi;
-$sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
+$sqlite3 "$database" \
 	"INSERT INTO logs (runId,tool,timeStamp,actionId,actionName)
 	VALUES($runId,'setup.sh',$(date '+%s'),1,'R installed')"
 
 #Check if the correct R packages are installed
 $Rscript $baseFolder/dataAndScripts/setup.R
-$sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
+$sqlite3 "$database" \
 	"INSERT INTO logs (runId,tool,timeStamp,actionId,actionName)
 	VALUES($runId,'setup.R',$(date '+%s'),2,'R packages installed')"
 echo -e " - R and dependent packages are present"
@@ -114,7 +120,7 @@ if [ -z `command -v $testTool` ]; then
 	updateDBwhenError "$runId" "The usearch package does not seem to be installed"
 	exit 1;
 fi;
-$sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
+$sqlite3 "$database" \
 	"INSERT INTO logs (runId,tool,timeStamp,actionId,actionName)
 	VALUES($runId,'setup.sh',$(date '+%s'),4,'usearch installed')"
 echo -e " - usearch is present"
@@ -128,7 +134,7 @@ if [ -z `command -v $testTool` ]; then
 	updateDBwhenError "$runId" "MetaCherchant script not found"
 	exit 1;
 fi;
-$sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
+$sqlite3 "$database" \
 	"INSERT INTO logs (runId,tool,timeStamp,actionId,actionName)
 	VALUES($runId,'setup.sh',$(date '+%s'),5,'MetaCherchant present')"
 echo -e " - MetaCherchant is present"
@@ -161,7 +167,7 @@ else
 	echo -e " - (!) Remote BLASTn service present: remoteBlast.sh can be used"
 fi
 
-$sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
+$sqlite3 "$database" \
 	"INSERT INTO logs (runId,tool,timeStamp,actionId,actionName)
 	VALUES($runId,'setup.sh',$(date '+%s'),6,'$message')"
 
@@ -171,7 +177,7 @@ if [ -z `command -v pigz` ]; then
 else
 	message="pigz present"
 fi;
-$sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
+$sqlite3 "$database" \
 	"INSERT INTO logs (runId,tool,timeStamp,actionId,actionName)
 	VALUES($runId,'setup.sh',$(date '+%s'),7,'$message')"
 echo -e " - $message"
@@ -183,7 +189,7 @@ if [ -z `command -v pandoc` ]; then
 else
 	message="pandoc present"
 fi;
-$sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
+$sqlite3 "$database" \
 	"INSERT INTO logs (runId,tool,timeStamp,actionId,actionName)
 	VALUES($runId,'setup.sh',$(date '+%s'),7,'$message')"
 echo -e " - $message"
@@ -194,28 +200,23 @@ finalMessage=" All dependencies seem to be present\n"
 if [ "$runTests" == "true" ]; then
 	#STEP 2 - Test the whole pipeline
 	#---------------------------------
-	printf "2) Test mixing metagenome... "
+	printf "2) Test the pipeline ... "
 
-	#Create input file
-	cat $baseFolder/dataAndScripts/testData/input.csv | awk '{gsub(/~/,"'$baseFolder'")}1' > \
-		$baseFolder/dataAndScripts/testData/testInput.csv
+	#... input data
 
-	#Run mixMultiple.sh
-	$baseFolder/mixMultiple.sh -f \
-		-i $baseFolder/dataAndScripts/testData/testInput.csv \
-		-o $baseFolder/dataAndScripts/testData/testOutput.fastq.gz \
-		-v FALSE
+	#Run meta2amr.sh
+	# $baseFolder/meta2amr.sh -f ...
 
-	$sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
+	$sqlite3 "$database" \
 		"INSERT INTO logs (runId,tool,timeStamp,actionId,actionName)
-		VALUES($runId,'setup.sh',$(date '+%s'),8,'mixMultiple test succesful')"
+		VALUES($runId,'setup.sh',$(date '+%s'),8,'pipeline test succesful')"
 	printf "done\n\n"
 	
-	finalMessage="$finalMessage  Mixing test successful\n"
+	finalMessage="$finalMessage  Pipeline test successful\n"
 fi
 
 #Finish script
-$sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
+$sqlite3 "$database" \
 	"UPDATE scriptUse
 	SET end = '$(date '+%F %T')', status = 'finished'
 	WHERE runId = $runId"

@@ -14,11 +14,12 @@ suppressPackageStartupMessages(library(RSQLite))
 
 args = commandArgs(trailingOnly = TRUE) #arguments specified in the bash file
 baseFolder = formatPath(args[[1]], endWithSlash = T)
-runId = as.integer(args[[2]])
-verbose = abs(as.integer(args[[3]]))
-blastn = args[[4]]
-blastDB = args[[5]]
-pipelineId = str_trim(unlist(strsplit(args[[6]], ",")))
+database = args[[2]]
+runId = as.integer(args[[3]])
+verbose = abs(as.integer(args[[4]]))
+blastn = args[[5]]
+blastDB = args[[6]]
+pipelineId = str_trim(unlist(strsplit(args[[7]], ",")))
 
 #Set these general blast args
 blastArgs = list(
@@ -37,7 +38,7 @@ prevRunId = ifelse(length(pipelineId) != 0,
 	"")
 
 #Get all blast submissions that need further follow-up
-myConn = dbConnect(SQLite(), paste0(baseFolder, "dataAndScripts/meta2amr.db"))
+myConn = dbConnect(SQLite(), database)
 submTable = dbGetQuery(myConn, paste("SELECT * FROM blastSubmissions WHERE statusCode in (0,1,3,4)",
 									  prevRunId)) %>% arrange(timeStamp)
 dbDisconnect(myConn) 
@@ -71,7 +72,7 @@ tryCatch({
     for(i in 1:nrow(toSubmit)){
       
       #Update the blastSubmissions table
-      myConn = dbConnect(SQLite(), paste0(baseFolder, "dataAndScripts/meta2amr.db"))
+      myConn = dbConnect(SQLite(), database)
       q = dbSendStatement(
         myConn, 
         "UPDATE blastSubmissions SET runId = ?, timeStamp = ?, statusCode  = ?, statusMessage = ? WHERE submId = ?",
@@ -95,7 +96,7 @@ tryCatch({
                      paste0(toSubmit$folder[i], str_replace(toSubmit$fastaFile[i], ".fasta", ".json.gz"))))
       
       #Update the DB
-      myConn = dbConnect(SQLite(), paste0(baseFolder, "dataAndScripts/meta2amr.db"))
+      myConn = dbConnect(SQLite(), database)
       q = dbSendStatement(
         myConn, 
         "UPDATE blastSubmissions SET runId = ?, timeStamp = ?, statusCode = ?, statusMessage = ?

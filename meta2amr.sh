@@ -28,7 +28,7 @@ trap 'err_report ${LINENO}' ERR
 
 updateDBwhenError() {
 	#Update the DB
-    $sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
+    $sqlite3 $database \
 	"UPDATE scriptUse
 	SET end = '$(date '+%F %T')', status = 'error',
 	info = '$2'
@@ -36,7 +36,7 @@ updateDBwhenError() {
 }
 
 #Options when script is run
-while getopts ":hi:j:o:n:t:fv:p:m:s:" opt; do
+while getopts ":hi:j:o:n:t:fv:p:m:s:d:" opt; do
   case $opt in
 	h) echo -e "\n"
 	   awk '/--- META2AMR.SH ---/,/-- END META2AMR.SH ---/' $baseFolder/readme.txt  
@@ -63,6 +63,8 @@ while getopts ":hi:j:o:n:t:fv:p:m:s:" opt; do
     ;;
 	m) memory="${OPTARG}"
     ;;
+  d) database="${OPTARG}"
+    ;;
     \?) echo "Unknown argument provided"
 	    exit
 	;;
@@ -72,6 +74,12 @@ done
 exec 2>$baseFolder/dataAndScripts/lastError
 
 #Check the arguments
+if [ -z ${database+x} ]; then 
+	database="$baseFolder/dataAndScripts/meta2amr.db"
+elif [ ! -f $database ]; then	
+		echo -e "\n\e[91mThe database provided does not exist\e[0m"; exit;
+fi
+
 if [ -z ${forceOverwrite+x} ]; then 
 	forceOverwrite=`grep -oP "meta2amrForceOverwrite\s*=\s*\K(.*)" $baseFolder/settings.txt`
 fi
@@ -145,7 +153,7 @@ if [ -z ${pipelineId+x} ]; then
 else
 
 	#Get the first runId
-    firstRunId=$($sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
+    firstRunId=$($sqlite3 $database \
 	"SELECT s.runId 
 	FROM scriptArguments as s, scriptUse as p \
 	WHERE p.pipelineId = $pipelineId AND p.runId = s.runId AND \
@@ -155,32 +163,33 @@ else
 		firstRunId=0
 	fi
 	
-	tempFolder=$($sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
+	tempFolder=$($sqlite3 $database \
 	"SELECT value FROM scriptArguments \
 	WHERE scriptName = 'meta2amr.sh' AND argument = 'tempFolder' AND runId = $firstRunId")
 	
-	tempName=$($sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
+	tempName=$($sqlite3 $database \
 	"SELECT value FROM scriptArguments \
 	WHERE scriptName = 'meta2amr.sh' AND argument = 'tempName' AND runId = $firstRunId")
 	
 	if [ ! -f "$tempFolder/$tempName/pipelineId" ]; then
+	  echo "$tempFolder/$tempName"
 		echo -e "\n\e[91mThe the pipelineId provided does not point to a valid folder \e[0m"; exit 1; 
 	fi
 	
     #In case of a previous runId, load all the arguments from the database
-    inputFile1=$($sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
+  inputFile1=$($sqlite3 $database \
 	"SELECT value FROM scriptArguments \
 	WHERE scriptName = 'meta2amr.sh' AND argument = 'inputFile1' AND runId = $firstRunId")
 	
-	inputFile2=$($sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
+	inputFile2=$($sqlite3 $database \
 	"SELECT value FROM scriptArguments \
 	WHERE scriptName = 'meta2amr.sh' AND argument = 'inputFile2' AND runId = $firstRunId")
 	
-	outputFolder=$($sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
+	outputFolder=$($sqlite3 $database \
 	"SELECT value FROM scriptArguments \
 	WHERE scriptName = 'meta2amr.sh' AND argument = 'outputFolder' AND runId = $firstRunId")
 
-	MCsuccess=$($sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
+	MCsuccess=$($sqlite3 $database \
 	"SELECT logId FROM logs
 	WHERE runId IN (SELECT runId FROM scriptUse WHERE pipelineId == $pipelineId) AND \
 	actionId = 2")
@@ -199,12 +208,12 @@ verbose=-$verbose
 #Register the start of the script in the DB
 if [ -z ${pipelineId+x} ]; then
 	#Generate the next pipelineId
-	pipelineId=$($sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
+	pipelineId=$($sqlite3 $database \
 	"INSERT INTO pipeline (name,tempFolder,outputFolder,statusCode,statusMessage,startTimestamp,modifiedTimestamp) \
 	values('$outputName','$tempFolder/$tempName','$outputFolder/$outputName',1,'Pipeline started','$(date '+%F %T')','$(date '+%F %T')'); \
 	SELECT pipelineId FROM pipeline WHERE pipelineId = last_insert_rowid()")
 	
-    runId=$($sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
+  runId=$($sqlite3 $database \
 	"INSERT INTO scriptUse (pipelineId,scriptName,start,status) \
 	values($pipelineId,'meta2amr.sh','$(date '+%F %T')','running'); \
 	SELECT runId FROM scriptUse WHERE runId = last_insert_rowid()")
@@ -216,12 +225,12 @@ if [ -z ${pipelineId+x} ]; then
 	($runId,'meta2amr.sh','tempFolder', '$tempFolder'),
 	($runId,'meta2amr.sh','tempName', '$tempName'),"	
 else
-	$sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
+	$sqlite3 $database \
 	"UPDATE pipeline \
 	SET modifiedTimestamp = '$(date '+%F %T')' \
 	WHERE pipelineId == $pipelineId"
 	
-	runId=$($sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
+	runId=$($sqlite3 $database \
 	"INSERT INTO scriptUse (pipelineId,scriptName,start,status) \
 	values($pipelineId, 'meta2amr.sh','$(date '+%F %T')','running'); \
 	SELECT runId FROM scriptUse WHERE runId = last_insert_rowid()")
@@ -231,7 +240,7 @@ else
 fi
 
 #Save the arguments with which the script was run
-$sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
+$sqlite3 $database \
 	"INSERT INTO scriptArguments (runId,scriptName,argument,value)
 	VALUES $pointerTopipelineId $scriptArgs
 	($runId,'meta2amr.sh','forceOverwrite', '$forceOverwrite'),
@@ -278,7 +287,7 @@ if [ -z "$MCsuccess" ]; then
 	
 	metacherchant=`grep -oP "metacherchant\s*=\s*\K(.*)" $baseFolder/settings.txt`
 	
-	$sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
+	$sqlite3 $database \
 	"INSERT INTO logs (runId,tool,timeStamp,actionId,actionName)
 	VALUES($runId,'metacherchant.sh',$(date '+%s'),1,'Start MetaCherchant')"
 	
@@ -296,11 +305,11 @@ if [ -z "$MCsuccess" ]; then
 		--chunklength=250 \
 		-m $memory
 		
-    $sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
+    $sqlite3 $database \
 	"INSERT INTO logs (runId,tool,timeStamp,actionId,actionName)
 	VALUES($runId,'metacherchant.sh',$(date '+%s'),2,'Finished MetaCherchant')"	
 	
-	$sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
+	$sqlite3 $database \
 	"UPDATE pipeline 
 	SET statusCode = 2, statusMessage = 'Finished MetaCherchant', modifiedTimestamp = '$(date '+%F %T')'
 	WHERE pipelineId == $pipelineId"
@@ -313,7 +322,7 @@ if [ -z "$MCsuccess" ]; then
 else
 
 	if [ "$verbose" -ne 0 ]; then echo -e `date "+%T"`" - Skip MetaCherchant, already done"; fi;
-	$sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
+	$sqlite3 $database \
 	"INSERT INTO logs (runId,tool,timeStamp,actionId,actionName)
 	VALUES($runId,'metacherchant.sh',$(date '+%s'),3,'Skip MetaCherchant, already done')"
 	
@@ -361,11 +370,11 @@ if [ $step -gt 1 ]; then
 	done
 	values=`echo $values | sed -e 's/^,//g'`
 
-	$sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
+	$sqlite3 $database \
 		"INSERT INTO blastPrepOptions (runId,option,value) VALUES $values"
 
 	$Rscript $baseFolder/dataAndScripts/blastPrep.R \
-		"$baseFolder" "$tempFolder"	"$tempName" "$verbose" "$runId" "$pipelineId" \
+		"$baseFolder" "$database" "$tempFolder"	"$tempName" "$verbose" "$runId" "$pipelineId" \
 		${scriptValues[@]}
 
 	if [ "$verbose" -ne 0 ]; then echo -e `date "+%T"`" - Finished BLAST preparations"; fi;
@@ -402,12 +411,12 @@ if [ $step -gt 3 ]; then
 		echo "***************************************"
 	fi
 	
-	$baseFolder/annotation.sh -v "$verbose" -p "$pipelineId"
+	$baseFolder/annotation.sh -v "$verbose" -p "$pipelineId" -d = "$database"
 fi
 
 
 #Update the DB
-$sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
+$sqlite3 $database \
 	"UPDATE scriptUse
 	SET end = '$(date '+%F %T')', status = 'finished'
 	WHERE runId = $runId"

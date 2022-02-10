@@ -29,7 +29,7 @@ trap 'err_report ${LINENO}' ERR
 
 updateDBwhenError() {
 	#Update the DB
-    $sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
+  $sqlite3 $database \
 	"UPDATE scriptUse
 	SET end = '$(date '+%F %T')', status = 'error',
 	info = '$2'
@@ -37,7 +37,7 @@ updateDBwhenError() {
 }
 
 #Options when script is run
-while getopts ":hg:p:v:" opt; do
+while getopts ":hg:p:v:d:" opt; do
   case $opt in
 	h) echo -e "\n"
 	   awk '/--- ANNOTATION.SH ---/,/-- END ANNOTATION.SH ---/' $baseFolder/readme.txt
@@ -50,6 +50,8 @@ while getopts ":hg:p:v:" opt; do
     ;;
 	v) verbose="${OPTARG}"
     ;;
+  d) database="${OPTARG}"
+    ;;
     \?) echo "Unknown argument provided"
 	    exit
 	;;
@@ -59,6 +61,12 @@ done
 exec 2>$baseFolder/dataAndScripts/lastError
 
 #Check all the input arguments
+if [ -z ${database+x} ]; then 
+	database=database
+elif [ ! -f $database ]; then	
+		echo -e "\n\e[91mThe database provided does not exist\e[0m"; exit;
+fi
+
 if [ -z ${generateReport+x} ]; then 
 	generateReport=`grep -oP "annotationHTMLreport\s*=\s*\K(.*)" $baseFolder/settings.txt`
 elif [ ! $(grep -iE "^(true|false|t|f)$" <<< $generateReport) ]; then	
@@ -80,7 +88,7 @@ elif ! grep -qE "^(0|1|-1)$" <<< $verbose; then
 fi
 
 #Register the start of the script in the DB
-runId=$($sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
+runId=$($sqlite3 $database \
 	"INSERT INTO scriptUse (pipelineId,scriptName,start,status) \
 	values(0,'annotation.sh','$(date '+%F %T')','running'); \
 	SELECT runId FROM scriptUse WHERE runId = last_insert_rowid()")
@@ -90,7 +98,7 @@ if [ ! -z ${pipelineId+x} ]; then
 fi
 	
 #Save the arguments with which the script was run
-$sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
+$sqlite3 $database \
 	"INSERT INTO scriptArguments (runId,scriptName,argument,value)
 	VALUES $pipelineArg
 	($runId,'annotation.sh','generateReport', '$generateReport'),	
@@ -110,10 +118,10 @@ fi
 
 #Run annotation script
 $Rscript $baseFolder/dataAndScripts/ARG_annotation.R \
-	"$baseFolder" "$runId" "$verbose" "$pipelineId" "$generateReport"
+	"$baseFolder" "$database" "$runId" "$verbose" "$pipelineId" "$generateReport"
 
 #Update the DB
-$sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
+$sqlite3 $database \
 	"UPDATE scriptUse
 	SET end = '$(date '+%F %T')', status = 'finished'
 	WHERE runId = $runId"
