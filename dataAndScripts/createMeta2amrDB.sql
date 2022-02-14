@@ -34,7 +34,7 @@ CREATE TABLE IF NOT EXISTS "scriptArguments" (
 );
 -- Table that keeps general logs
 CREATE TABLE IF NOT EXISTS "logs" (
-    "logId"	integer primary key,
+  "logId"	integer primary key,
 	"runId"	integer NOT NULL,
 	"tool" text NOT NULL,
 	"timeStamp" integer NOT NULL,
@@ -52,7 +52,7 @@ CREATE TABLE IF NOT EXISTS "blastPrepOptions" (
 );
 -- Table that stores BLAST submissions and status
 CREATE TABLE IF NOT EXISTS "blastSubmissions" (
-    "submId" integer primary key,
+  "submId" integer primary key,
 	"pipelineId"	integer NOT NULL,
 	"runId"	integer NOT NULL,
 	"RID" text,
@@ -73,7 +73,7 @@ CREATE TABLE IF NOT EXISTS "antibiotics" (
 );
 -- Table that stores all ARG
 CREATE TABLE IF NOT EXISTS "ARG" (
-    "geneId" integer primary key,
+  "geneId" integer primary key,
 	"prot" text,
 	"nucl" text,
 	"gene" text,
@@ -86,7 +86,7 @@ CREATE TABLE IF NOT EXISTS "ARG" (
 CREATE TABLE IF NOT EXISTS "detectedARG" (
 	"pipelineId" integer NOT NULL,
 	"runId" integer NOT NULL,
-    "geneId" integer NOT NULL,
+  "geneId" integer NOT NULL,
 	"ARGgroup" integer,
 	"bactGroup" integer,
 	"plasmid" integer,
@@ -111,7 +111,7 @@ CREATE TABLE IF NOT EXISTS "detectedBact" (
 	"pipelineId" integer NOT NULL,
 	"runId" integer NOT NULL,
 	"bactGroup" integer NOT NULL,
-    "taxId" integer NOT NULL,	
+  "taxId" integer NOT NULL,	
 	"genus" text,
 	"species" text,
 	"plasmidOnly" integer,
@@ -121,6 +121,20 @@ CREATE TABLE IF NOT EXISTS "detectedBact" (
 	PRIMARY KEY("pipelineId", "bactGroup", "taxId"),
 	FOREIGN KEY("pipelineId") REFERENCES "pipeline"("pipelineId") ON UPDATE CASCADE ON DELETE CASCADE,
 	FOREIGN KEY("runId") REFERENCES "scriptUse"("runId") ON UPDATE CASCADE ON DELETE CASCADE
+);
+-- Table that stores all AMRcluster info
+CREATE TABLE IF NOT EXISTS "AMRclusters" (
+	"pipelineId" integer NOT NULL,
+	"runId" integer NOT NULL,
+	"bactGroup" integer NOT NULL,
+  "taxId" integer NOT NULL,	
+	"geneId" integer NOT NULL,
+	"val" numeric,
+	"origin" text,
+	PRIMARY KEY("pipelineId", "bactGroup", "taxId", "geneId"),
+	FOREIGN KEY("pipelineId") REFERENCES "pipeline"("pipelineId") ON UPDATE CASCADE ON DELETE CASCADE,
+	FOREIGN KEY("runId") REFERENCES "scriptUse"("runId") ON UPDATE CASCADE ON DELETE CASCADE,
+  FOREIGN KEY("geneId") REFERENCES "ARG"("geneId") ON UPDATE CASCADE ON DELETE CASCADE
 );
 -- Table that stores all AMR predictions
 CREATE TABLE IF NOT EXISTS "AMRprediction" (
