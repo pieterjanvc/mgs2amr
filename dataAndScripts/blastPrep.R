@@ -322,128 +322,11 @@ tryCatch({
           cover2 = round(min(1, LNsum / nBases), 4),
           val = cover1 * startPerc * KC) %>% ungroup() %>%
         filter((fileDepth >= 10 & cover1 > 0.75) | fileDepth < 10)
-
-
-      # ---- Get all fragmented GFA (only start seg or one connection) ----
-      #********************************************************************
-      #Get all start segments
-      singleSeg = gfa$segments %>%
-        filter(
-          geneId %in% genesDetected$geneId,
-          str_detect(name, "_start$"))
-
-      mySegments = singleSeg$name
-
-      #Find all the segments that connect to a start segment
-      singleSeg = gfa$links %>%
-        filter(
-          geneId %in% genesDetected$geneId,
-          from %in% mySegments |
-            to %in% mySegments)
-
-      #Save start segments that do not connect to anything (isolated)
-      mySegments = mySegments[!mySegments %in% unique(c(singleSeg$from, singleSeg$to))]
-
-      singleSeg = c(singleSeg$from, singleSeg$to) %>% unique()
-      singleSeg = singleSeg[!str_detect(singleSeg, "_start$")]
-
-      singleSeg = gfa$links %>%
-        filter(
-          geneId %in% genesDetected$geneId,
-          from %in% singleSeg |
-            to %in% singleSeg) %>%
-        mutate(start = (str_detect(from, "_start") |
-                          str_detect(to, "_start")))
-
-      singleSeg = singleSeg %>% group_by(geneId) %>%
-        filter(!any(
-          from[start] %in% c(from[!start], to[!start])) &
-            !any(to[start] %in% c(from[!start], to[!start])))
-
-      if(nrow(singleSeg) > 0){
-        singleSeg = singleSeg %>% select(from, to, geneId)
-        singleSeg[(nrow(singleSeg)+1):(nrow(singleSeg)*2),] = data.frame(
-          from  = singleSeg$to,
-          to = singleSeg$from,
-          geneId = singleSeg$geneId
-        )
-      }
-
-
-      singleSeg = singleSeg %>%
-        # distinct() %>%
-        filter(str_detect(from, "_start$")) %>%
-        group_by(from) %>% summarise(n = n()) %>%
-        filter(n < 3) %>%
-        pull(from)
-
-      #GFA should ONLY have single fragments - not combi ...
-
-      singleSeg = c(mySegments, singleSeg) %>%
-        str_extract("^\\d+") %>% unique()
-
-      #If seed is well covered, it's not a fragment but linear assembly
-      singleSeg = genesDetected %>%
-        filter(geneId %in% singleSeg, cover1 < 0.2) %>% pull(geneId)
-
-      # singleSeg$segments %>%
-      #   filter(!str_detect(name, "_start$")) %>%
-      #   group_by(geneId) %>%
-      #   filter(n() < 3 & sum(LN) > 750) %>% pull(geneId) %>% unique()
-      #
-      # #Add graphs that only consist of a single start segment
-      # onlyStartSeg = gfa$segments$geneId[!gfa$segments$geneId %in% gfa$links$geneId]
-      # onlyStartSeg = onlyStartSeg[onlyStartSeg %in% genesDetected$geneId]
-      #
-      # #Build a GFA that contains all these short GFAs (will be individual islands)
-      # singleSeg = list(segments = gfa$segments %>%
-      #                    filter(name %in% singleSeg | geneId %in% onlyStartSeg),
-      #                  links = gfa$links %>% filter(
-      #                    from %in% singleSeg | to %in% singleSeg))
-      #
-      # #Consider fragment only if small piece of gene
-      # myFilter = gfa$segments %>% select(name, LN, geneId) %>%
-      #   filter(geneId %in% singleSeg$segments$geneId,
-      #          name %in% c(singleSeg$links$from, singleSeg$links$to)) %>%
-      #   group_by(geneId) %>% summarise(LN = sum(LN), n = n()) %>%
-      #   filter(!(n < 4 & LN > 500))
-
-      singleSeg = list(segments = gfa$segments %>% filter(geneId %in% singleSeg),
-                       links = gfa$links %>% filter(geneId %in% singleSeg))
-
-      #Check fragment type
-      fragType = gfa$segments %>% select(name, geneId, LN) %>%
-        filter(geneId %in% singleSeg$segments$geneId) %>%
-        filter(str_detect(name, "_start$"))
-
-
-
-      if(nrow(fragType) > 0){
-        fragType = fragType %>% left_join(singleSeg$segments %>% select(-sequence, -LN),
-                                          by = c("name", "geneId")) %>%
-          group_by(geneId) %>%
-          summarise(type = case_when(
-            sum(is.na(KC)) == 0 ~ "fragmentsOnly",
-            is.na(sum(KC[LN == max(LN)])) ~ "longestFragment",
-            TRUE ~ "longestNoFragment"
-          ), .groups = "drop")
-      } else {
-        fragType = data.frame(geneId = "", type = NA)
-      }
-
-      #Add to this new info to detected genes table
-      genesDetected = genesDetected %>% left_join(fragType, by = "geneId") %>%
-        mutate(type = replace_na(type, "noFragments")) %>%
-        # #Only keep decently covered genes (assumed higher abundance), or fragments (low abundance)
-        # filter((cover1 > 0.1 & type != "fragmentsOnly") | type == "fragmentsOnly") %>%
-        mutate(pipelineId = pipelineId, runId = runId) %>%
-        select(pipelineId, runId, everything())
-
-
-
+      
+      
       #Find identical files (start segments excluded)
       #**********************************************
-
+      
       #check the overlap of identical segments between files
       simMat = gfa$segments %>%
         filter(!str_detect(name, "_start$"),
@@ -452,35 +335,35 @@ tryCatch({
         pivot_wider(sequence, names_from = geneId, values_from = LN,
                     values_fill = 0) %>% select(-sequence) %>%
         as.matrix()
-
+      
       #Build a similarity matrix
       simMat = t(simMat) %*% (simMat > 0)
       simMat = apply(simMat, 2, function(x) x / max(x))
-
+      
       #Extract all identical files and collapse them keeping the
       #one with the highest score
       geneIds = rownames(simMat)
       test = apply(simMat, 2, function(x){
         geneIds[x == 1]
       })
-
-
+      
+      
       new = data.frame()
       while(length(test) > 0){
         new = bind_rows(
           new, genesDetected %>% filter(geneId %in% test[[1]]) %>%
             filter(val == max(val)) %>% slice(1)
         )
-
+        
         test[test[[1]]] = NULL
       }
-
-
+      
+      
       #Examine near identical files
       #****************************
       simMat = simMat[colnames(simMat) %in% new$geneId,
                       colnames(simMat) %in% new$geneId]
-
+      
       #Get the start segments and immediate neighbours and generate FASTA
       toAlign = gfa$segments %>%
         filter(geneId %in% new$geneId, str_detect(name, "_start$")) %>%
@@ -501,31 +384,31 @@ tryCatch({
                  )) %>%
           select(name, pos)  %>%
           left_join(gfa$segments, by = "name"))
-
+      
       #Find the distance matrix between the seq with usearch
       distMat = map_df(0:2, function(i){
-
+        
         myFile = tempfile()
         myFile_RC = tempfile()
-
+        
         #Write to fasta
         x = toAlign %>% filter(pos == i)
         suppressWarnings(fasta_write(x$sequence, myFile,
-                    x$name, type = "n"))
-
+                                     x$name, type = "n"))
+        
         #Add the reverse complement (usearch does not do that when calc_distmx)
         system(sprintf("%s -fastx_revcomp %s -label_suffix _RC -fastaout %s -quiet",
                        settings["usearch"], myFile, myFile_RC))
         file.append(myFile, myFile_RC)
-
+        
         #Use cluster_fast to reduce number of segments by grouping in identity clusters
         system(sprintf("%s -calc_distmx %s -tabbedout %s -termdist 0.5 -quiet",
                        settings["usearch"], myFile, myFile))
-
+        
         read.delim(myFile, header = F) %>% mutate(pos = i)
-
+        
       })
-
+      
       #Evaluate similarities again
       distMat = distMat %>%
         mutate(id1 = str_extract(V1, "^\\d+"), id2 = str_extract(V2, "^\\d+")) %>%
@@ -536,13 +419,13 @@ tryCatch({
                V1 = str_remove(V1, "_RC$"), V2 = str_remove(V2, "_RC$"),
                V3 = 1 - V3) %>%
         select(id1, id2, sim = V3, pos, V1, V2) %>% distinct()
-
+      
       distMat = bind_rows(
         distMat %>% select(id1, id2, sim, pos, V1, V2),
         distMat %>% select(id1 = id2, id2 = id1, sim, pos, V1, V2)
       ) %>% distinct()
-
-
+      
+      
       distMat = distMat %>%
         group_by(V1, V2) %>% filter(sim == max(sim)) %>% ungroup() %>%
         left_join(gfa$segments %>%
@@ -552,7 +435,7 @@ tryCatch({
         rowwise() %>%
         mutate(ratio = min(LN1, LN2)) %>% group_by(id1, id2) %>%
         mutate(ratio2 = ratio / sum(ratio)) %>% ungroup()
-
+      
       #Get the similarities with scores for each side as well
       distMat = distMat %>%
         group_by(id1, id2) %>% summarise(
@@ -565,15 +448,161 @@ tryCatch({
           new %>%
             select(geneId, gene, subtype, val), by = c("id2" = "geneId")
         )
-
+      
       #Filter and group for similarities
       distMat = distMat %>% group_by(id1) %>%
         filter(sim > 0.9, sim0 > 0.9) %>%
         filter(val == max(val)) %>% ungroup() %>%
         select(geneId = id2, gene, subtype) %>% distinct()
-
+      
       #Finally only keep the relevant genes
       genesDetected = genesDetected %>% filter(geneId %in% distMat$geneId)
+
+
+      # ---- Get all fragmented GFA (only start seg or one connection) ----
+      #********************************************************************
+      
+      #If the longest start fragment only is flanked on max one side it is 
+      #considered fragmented and all fragments are kept. 
+      #If flanked on both sides it's considered non-fragmented
+      
+      #Get all graphs that only have start seg with max 1 level connection to start
+      singleSeg = gfa$links %>% group_by(geneId) %>% 
+        filter(geneId %in% genesDetected$geneId,
+               all(str_detect(from, "_start$") | str_detect(to, "_start$"))) %>% 
+        pull(geneId) %>% unique()
+      
+      #Get all longest start segments from these graphs
+      fragmented = gfa$segments %>%
+        filter(geneId %in% singleSeg, start > 0) %>% 
+        group_by(geneId) %>% filter(LN == max(LN))
+
+      #Find all the segments that connect to these start segments
+      singleSeg = gfa$links %>%
+        filter(geneId %in% genesDetected$geneId,
+               from %in% fragmented$name | to %in% fragmented$name)
+      
+      #Longest segments that have no connections are per definition fragmented
+      fragmented = fragmented$geneId[!fragmented$geneId %in% singleSeg$geneId]
+      
+      fragmented = c(fragmented,
+        singleSeg %>% 
+          #If two start segments connect that's per def not fragmented
+          filter(!(str_detect(from, "_start$") & str_detect(to, "_start$"))) %>% 
+          mutate(startSeg = ifelse(str_detect(from, "_start$"), from, to)) %>% 
+          #If flankend on both sides not fragmented (can be FP small bit)
+          group_by(startSeg) %>% filter(n() < 2) %>% ungroup() %>% 
+          pull(geneId) %>% unique(),
+        #Graphs that only contain start segments are also fragmented by definition
+        gfa$segments %>% group_by(geneId) %>% 
+          filter(all(start == 1)) %>% pull(geneId) %>% unique()
+      )
+
+      #Add the fragmentation info to the genesDetected table
+      genesDetected = genesDetected %>% 
+        mutate(type = ifelse(geneId %in% fragmented, "fragmentsOnly", "noFragments")) %>%
+        mutate(pipelineId = pipelineId, runId = runId) %>%
+        select(pipelineId, runId, everything())
+      
+      
+      # #Save start segments that do not connect to anything (isolated)
+      # mySegments = mySegments[!mySegments %in% unique(c(singleSeg$from, singleSeg$to))]
+      # 
+      # singleSeg = c(singleSeg$from, singleSeg$to) %>% unique()
+      # singleSeg = singleSeg[!str_detect(singleSeg, "_start$")]
+      # 
+      # singleSeg = gfa$links %>%
+      #   filter(
+      #     geneId %in% genesDetected$geneId,
+      #     from %in% singleSeg |
+      #       to %in% singleSeg) %>%
+      #   mutate(start = (str_detect(from, "_start") |
+      #                     str_detect(to, "_start")))
+      # 
+      # singleSeg = singleSeg %>% group_by(geneId) %>%
+      #   filter(!any(
+      #     from[start] %in% c(from[!start], to[!start])) &
+      #       !any(to[start] %in% c(from[!start], to[!start])))
+      # 
+      # if(nrow(singleSeg) > 0){
+      #   singleSeg = singleSeg %>% select(from, to, geneId)
+      #   singleSeg[(nrow(singleSeg)+1):(nrow(singleSeg)*2),] = data.frame(
+      #     from  = singleSeg$to,
+      #     to = singleSeg$from,
+      #     geneId = singleSeg$geneId
+      #   )
+      # }
+      # 
+      # 
+      # singleSeg = singleSeg %>%
+      #   # distinct() %>%
+      #   filter(str_detect(from, "_start$")) %>%
+      #   group_by(from) %>% mutate(n = n()) %>%
+      #   filter(n < 3) %>%
+      #   pull(from)
+      # 
+      # #GFA should ONLY have single fragments - not combi ...
+      # 
+      # singleSeg = c(mySegments, singleSeg) %>%
+      #   str_extract("^\\d+") %>% unique()
+      # 
+      # #If seed is well covered, it's not a fragment but linear assembly
+      # singleSeg = genesDetected %>%
+      #   filter(geneId %in% singleSeg, cover1 < 0.2) %>% pull(geneId)
+      # 
+      # # singleSeg$segments %>%
+      # #   filter(!str_detect(name, "_start$")) %>%
+      # #   group_by(geneId) %>%
+      # #   filter(n() < 3 & sum(LN) > 750) %>% pull(geneId) %>% unique()
+      # #
+      # # #Add graphs that only consist of a single start segment
+      # # onlyStartSeg = gfa$segments$geneId[!gfa$segments$geneId %in% gfa$links$geneId]
+      # # onlyStartSeg = onlyStartSeg[onlyStartSeg %in% genesDetected$geneId]
+      # #
+      # # #Build a GFA that contains all these short GFAs (will be individual islands)
+      # # singleSeg = list(segments = gfa$segments %>%
+      # #                    filter(name %in% singleSeg | geneId %in% onlyStartSeg),
+      # #                  links = gfa$links %>% filter(
+      # #                    from %in% singleSeg | to %in% singleSeg))
+      # #
+      # # #Consider fragment only if small piece of gene
+      # # myFilter = gfa$segments %>% select(name, LN, geneId) %>%
+      # #   filter(geneId %in% singleSeg$segments$geneId,
+      # #          name %in% c(singleSeg$links$from, singleSeg$links$to)) %>%
+      # #   group_by(geneId) %>% summarise(LN = sum(LN), n = n()) %>%
+      # #   filter(!(n < 4 & LN > 500))
+      # 
+      # singleSeg = list(segments = gfa$segments %>% filter(geneId %in% singleSeg),
+      #                  links = gfa$links %>% filter(geneId %in% singleSeg))
+      # 
+      # #Check fragment type
+      # fragType = gfa$segments %>% select(name, geneId, LN) %>%
+      #   filter(geneId %in% singleSeg$segments$geneId) %>%
+      #   filter(str_detect(name, "_start$"))
+      # 
+      # 
+      # 
+      # if(nrow(fragType) > 0){
+      #   fragType = fragType %>% left_join(singleSeg$segments %>% select(-sequence, -LN),
+      #                                     by = c("name", "geneId")) %>%
+      #     group_by(geneId) %>%
+      #     summarise(type = case_when(
+      #       sum(is.na(KC)) == 0 ~ "fragmentsOnly",
+      #       is.na(sum(KC[LN == max(LN)])) ~ "longestFragment",
+      #       TRUE ~ "longestNoFragment"
+      #     ), .groups = "drop")
+      # } else {
+      #   fragType = data.frame(geneId = "", type = NA)
+      # }
+
+      # #Add to this new info to detected genes table
+      # genesDetected = genesDetected %>% left_join(fragType, by = "geneId") %>%
+      #   mutate(type = replace_na(type, "noFragments")) %>%
+      #   # #Only keep decently covered genes (assumed higher abundance), or fragments (low abundance)
+      #   # filter((cover1 > 0.1 & type != "fragmentsOnly") | type == "fragmentsOnly") %>%
+      #   mutate(pipelineId = pipelineId, runId = runId) %>%
+      #   select(pipelineId, runId, everything())
+
 
 
       #---- Save detected results - but delete old first ----
