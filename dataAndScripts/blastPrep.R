@@ -347,6 +347,13 @@ tryCatch({
         filter(geneId %in% genesDetected$geneId,
                from %in% fragmented$name | to %in% fragmented$name)
       
+      #Ignore very small segments < 100 bp
+      toRemove = gfa$segments %>% 
+        filter(geneId %in% singleSeg$geneId, start == 0, LN < 100) %>% 
+        pull(name)
+      
+      singleSeg = singleSeg %>% filter(!(from %in% toRemove | to %in% toRemove))
+      
       #Longest segments that have no connections are per definition fragmented
       fragmented = fragmented$geneId[!fragmented$geneId %in% singleSeg$geneId]
       
@@ -436,9 +443,12 @@ tryCatch({
       
       #Remove all genes that are fully contained within other one and have
       #lower depth
-      i = 1
-      while(i < nrow(clusters)){
-        toRemove = clusters$id1[i]
+      toAdd = c()
+      while(!all(unique(clusters$id1) %in% toAdd)){
+        myId = unique(clusters$id1)
+        myId = myId[!myId %in% toAdd][1]
+        
+        toRemove = myId
         l = 0
         while(l < length(toRemove)){
           toRemove = clusters %>% filter(id1 %in% toRemove | id2 %in% toRemove) 
@@ -446,11 +456,11 @@ tryCatch({
           l = l + 1
         }
         
-        toRemove = toRemove[!toRemove %in% clusters$id1[i]]
+        toRemove = toRemove[!toRemove %in% myId]
         clusters= clusters%>% filter(!(id1 %in% toRemove | id2 %in% toRemove) |
-                                 id1 == clusters$id1[i])
+                                 id1 == myId)
         
-        i = i + 1
+        toAdd = c(toAdd, myId)
       }
       
       #Only the remaining fragmented ARG are kept
@@ -632,7 +642,15 @@ tryCatch({
       }
 
       #Write the fragmented ones as a one GFA and fasta
-      gfa_write(singleSeg, paste0(tempFolder, "fragmentGFA.gfa"), verbose = 0)
+      fragmented = list(
+        segments = gfa$segments %>% 
+          filter(geneId %in% 
+                   genesDetected$geneId[genesDetected$type == "fragmentsOnly"]),
+        links = gfa$links %>% 
+          filter(geneId %in% 
+                   genesDetected$geneId[genesDetected$type == "fragmentsOnly"])
+      )
+      gfa_write(fragmented, paste0(tempFolder, "fragmentGFA.gfa"), verbose = 0)
 
       #Feedback and Logs
       if(verbose > 0){cat("done\n")}
