@@ -9,8 +9,8 @@ suppressPackageStartupMessages(library(RSQLite))
 suppressPackageStartupMessages(library(igraph))
 suppressPackageStartupMessages(library(visNetwork))
 suppressPackageStartupMessages(library(rmarkdown))
-
-library(parallel)
+suppressPackageStartupMessages(library(doParallel))
+suppressPackageStartupMessages(library(foreach))
 
 args = commandArgs(trailingOnly = TRUE) 
 baseFolder = formatPath(args[[1]], endWithSlash = T)
@@ -20,6 +20,7 @@ verbose = abs(as.integer(args[[4]]))
 pipelineIds = str_trim(unlist(strsplit(args[[5]], ",")))
 generateReport = as.logical(args[[6]])
 
+maxCPU = 4
 #Get the arguments
 # baseFolder = "/mnt/meta2amrData/meta2amr/"
 # runId = 0
@@ -109,28 +110,11 @@ if(nrow(toProcess) == 0) {
   
 } else {
   
-  # UNCOMMENT if running in parallel
+
+  sampleIndex = 1:nrow(toProcess)
+  registerDoParallel(cores=min(maxCPU, length(sampleIndex)))
   
-  nCores = min(detectCores(), nrow(toProcess))
-  cl <- parallel::makeCluster(nCores, outfile = "")
-  x = clusterEvalQ(cl, {
-    suppressPackageStartupMessages(library(tidyverse))
-    suppressPackageStartupMessages(library(RSQLite))
-    suppressPackageStartupMessages(library(xgboost))
-    suppressPackageStartupMessages(library(igraph))
-    suppressPackageStartupMessages(library(gfaTools))
-  })
-  verbose = 0
-  clusterExport(
-    cl,
-    varlist = c("baseFolder", "toProcess", "softmax", "settings", "ARG",
-                "predictionModels", "myAntibiotics", "bactGenomeSize", "runId",
-                "generateReport", "verbose", "database"))
-
-
-  result = parLapply(cl, 1:nrow(toProcess), function(sampleIndex){
-    
-  # for(sampleIndex in 1:nrow(toProcess)){
+  result = foreach(sampleIndex = sampleIndex) %dopar% {
     
     #Process each sample
     tryCatch({
@@ -696,6 +680,9 @@ if(nrow(toProcess) == 0) {
         )
       
       #Adjust the scored for genes by presences of other genes in the same bact
+      # myData = allBact %>% filter(!geneId %in% AMRclusters$geneId)
+      # bactGroupStart = max(AMRclusters$bactGroup)
+      
       adjustBact = function(myData, bactGroupStart = 0){
         
         if(nrow(myData) == 0) {
@@ -725,7 +712,12 @@ if(nrow(toProcess) == 0) {
             geneMatrix = matrix(myData$pathScore / max(myData$pathScore), ncol = 1)
             colnames(geneMatrix) = unique(myData$geneId)
             rownames(geneMatrix) = myData$taxid
-            myClusters = list("1" = unique(myData$geneId))
+            myClusters = data.frame(
+              taxid =  myData$taxid,
+              bactGroup = 1 + bactGroupStart,
+              primary = geneMatrix[,1] == 1,
+              geneId = as.integer(unique(myData$geneId)),
+              val = geneMatrix[,1])
           }
           
           
@@ -1024,7 +1016,6 @@ if(nrow(toProcess) == 0) {
                                     "Save results"))
       
       myConn = myConn = dbConnect(SQLite(), database, synchronous = NULL)
-      
       sqliteSetBusyHandler(myConn, 30000)
       
       #Add the ARGgroup to the detectedARG table (remove?)
@@ -1114,7 +1105,6 @@ if(nrow(toProcess) == 0) {
       newLogs = newLogs %>% select(runId,tool,timeStamp,actionId,actionName)
       
       myConn = dbConnect(SQLite(), database, synchronous = NULL)
-      
       sqliteSetBusyHandler(myConn, 30000)
       
       q = dbSendStatement(
@@ -1139,8 +1129,5 @@ if(nrow(toProcess) == 0) {
     })
     
   }
-  )
-  stopCluster(cl)
-  rm(cl)
 }
 
