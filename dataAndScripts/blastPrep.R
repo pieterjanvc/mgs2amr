@@ -7,7 +7,8 @@ suppressPackageStartupMessages(library(tidyverse))
 suppressPackageStartupMessages(library(igraph))
 suppressPackageStartupMessages(library(gfaTools))
 suppressPackageStartupMessages(library(RSQLite))
-suppressPackageStartupMessages(library(parallel))
+suppressPackageStartupMessages(library(foreach))
+suppressPackageStartupMessages(library(doParallel))
 
 
 # ---- Inputs ----
@@ -29,6 +30,7 @@ clusterIdentidy  = as.numeric(args[[12]]) #The cluster identity percent used in 
 forceRedo = as.logical(args[[13]]) #If parts of the code have successfully run before a crash, do not repeat unless forceRedo = T
 maxStep = as.integer(args[[14]]) #Which parts of the script to run? If NA all is run
 
+maxCPU = 4
 maxStep = ifelse(maxStep == 0, 5, maxStep)
 maxStartGap = 800
 
@@ -50,7 +52,8 @@ tempFolder = formatPath(paste0(tempFolder, tempName), endWithSlash = T)
 logPath = sprintf("%s%s_log.csv", tempFolder,tempName)
 
 #Check the log file to see if there was a previous run of the code
-myConn = dbConnect(SQLite(), database)
+myConn = dbConnect(SQLite(), database, synchronous = NULL)
+sqliteSetBusyHandler(myConn, 30000)
 logs = dbGetQuery(
   myConn,
   paste("SELECT * FROM logs WHERE runId IN",
@@ -101,38 +104,29 @@ tryCatch({
       myFiles = myFiles[!str_detect(myFiles, "masterGFA")]
 
       #This process can be done in parallel so speed things up
-      cl <- parallel::makeCluster(detectCores())
-      x = clusterEvalQ(cl, {
-        library(dplyr)
-        library(stringr)
-        library(gfaTools)
-      })
-      clusterExport(cl, varlist = c("tempFolder", "zipMethod"))
-
       #Read all GFA files
-      gfa = suppressWarnings(parLapply(cl, myFiles, function(x){
+      registerDoParallel(cores=maxCPU)
+      gfa = foreach(myFiles = myFiles) %dopar% {
 
         geneId = str_extract(x, "\\d+(?=/graph.gfa)")
-        gfa = gfa_fixMetacherchant(x)
+        myGFA = gfa_fixMetacherchant(x)
 
         #Check if the file is not empty
-        if(nrow(gfa$segments) > 0){
+        if(nrow(myGFA$segments) > 0){
 
-          gfa$segments$geneId = geneId
+          myGFA$segments$geneId = geneId
 
-          if(nrow(gfa$links) > 0){
-            gfa$links$geneId = geneId
+          if(nrow(myGFA$links) > 0){
+            myGFA$links$geneId = geneId
           }
 
-          return(gfa)
+          return(myGFA)
 
         } else {
           return(NULL)
         }
 
-      }))
-
-      rm(cl)
+      }
 
       #Merge all the GFAs that we need for further analysis
       x = sapply(gfa, is.null)
@@ -214,18 +208,10 @@ tryCatch({
 
       myGroups$group = myResult
 
-      #This process can be done in parallel to speed things up
-      cl <- parallel::makeCluster(min(detectCores(), myGroup))
-      x = clusterEvalQ(cl, {
-        library(dplyr)
-        library(gfaTools)
-        library(RSQLite)
-        library(stringr)
-      })
-      clusterExport(cl, varlist = c("myGroups", "tempFolder", "maxStartGap"))
-
+      registerDoParallel(cores=min(maxCPU, myGroup, na.rm = T))
+      
       #Read all GFA files
-      gfa = suppressWarnings(parLapply(cl, unique(myGroups$group), function(myGroup){
+      gfa = foreach(myGroup = unique(myGroups$group)) %dopar% {
 
         myGenes = myGroups$geneId[myGroups$group == myGroup]
 
@@ -269,16 +255,13 @@ tryCatch({
             links = gfaGroup$links %>% filter(geneId %in% myGenes)
           ), maxGap = maxStartGap)
 
-        }))
-      stopCluster(cl)
-      rm(cl)
+      }
 
       #Merge the results
       gfa = list(
         segments = bind_rows(sapply(gfa, "[", 1)),
         links = bind_rows(sapply(gfa, "[", 2))
       )
-
 
       #Add the geneId back to the links and unitig names
       gfa$links$geneId = str_extract(gfa$links$from, "^\\d+")
@@ -299,7 +282,8 @@ tryCatch({
         rename(segmentId = name)
 
       #Get the ARG list
-      myConn = dbConnect(SQLite(), database)
+      myConn = dbConnect(SQLite(), database, synchronous = NULL)
+      sqliteSetBusyHandler(myConn, 30000)
       argGenes = dbGetQuery(myConn, "SELECT geneId, clusterNr, gene, subtype, nBases FROM ARG") %>%
         mutate(geneId = as.character(geneId))
       dbDisconnect(myConn)
@@ -626,6 +610,9 @@ tryCatch({
       
      
       #---- Save detected results - but delete old first ----
+      myConn = dbConnect(SQLite(), database, synchronous = NULL)
+      sqliteSetBusyHandler(myConn, 30000)
+      
       q = dbSendStatement(myConn, "DELETE FROM detectedARG WHERE pipelineId == ?",
                           params = pipelineId)
       dbClearResult(q)
@@ -699,35 +686,24 @@ tryCatch({
       newLogs = rbind(newLogs, list(as.integer(Sys.time()), 13, "Start simplifying GFA files"))
 
       dir.create(sprintf("%sgenesDetected/simplifiedGFA", tempFolder), showWarnings = F)
-
-      #Process in parallel
-      cl <- parallel::makeCluster(detectCores())
-      x = clusterEvalQ(cl, {
-        library(dplyr)
-        library(stringr)
-        library(gfaTools)
-        library(igraph)
-      })
-      clusterExport(cl,
-                    varlist = c("genesDetected", "tempFolder", "verbose",
-                                "maxPathDist", "trimLength", "minBlastLength"))
+      
+      registerDoParallel(cores=maxCPU)
 
       #Read all GFA files
-      blastSegments = suppressWarnings(parLapply(cl,
-        genesDetected$geneId[! genesDetected$type %in%
-                               c("fragmentsOnly", "longestFragment")], function(myGene){
-
-            gfa = gfa_read(sprintf("%sgenesDetected/%s.gfa", tempFolder, myGene))
+      blastSegments = foreach(myGene = genesDetected$geneId[! genesDetected$type %in%
+                               c("fragmentsOnly", "longestFragment")], .combine = "bind_rows") %dopar% {
+                
+            myGFA = gfa_read(sprintf("%sgenesDetected/%s.gfa", tempFolder, myGene))
 
             #Check if filter yields any results
-            if(nrow(gfa$links) == 0){
+            if(nrow(myGFA$links) == 0){
               return(data.frame())
             }
 
             #Remove disconnected pieces that do not contain a start segment
             myGraph = graph_from_data_frame(data.frame(
-              from = gfa$links$from,
-              to = gfa$links$to
+              from = myGFA$links$from,
+              to = myGFA$links$to
             ), directed = F)
 
             myGraph = components(myGraph)$membership
@@ -738,54 +714,50 @@ tryCatch({
               group_by(group) %>%
               filter(any(str_detect(name, "_start$"))) %>%
               ungroup() %>% distinct()
-
-            gfa = gfa_filterSegments(gfa, myGraph$name[myGraph$name %in% gfa$segments$name])
+            
+            myGFA = gfa_filterSegments(myGFA, myGraph$name[myGraph$name %in% myGFA$segments$name])
 
             #Get largest start segment
-            segmentOfInterest = gfa$segments %>% filter(str_detect(name, "_start$")) %>%
+            segmentOfInterest = myGFA$segments %>% filter(str_detect(name, "_start$")) %>%
               filter(LN == max(LN)) %>% filter(KC == max(KC)) %>% slice(1) %>% pull(name)
 
             #Stay within maxPathDist / maxPathSteps around this segment
-            gfa = gfa_neighbourhood(gfa, segmentOfInterest, maxPathDist)
+            myGFA = gfa_neighbourhood(myGFA, segmentOfInterest, maxPathDist)
 
             #Check if filter yields any results
-            if(nrow(gfa$links) == 0){
+            if(nrow(myGFA$links) == 0){
               if(verbose > 0){cat("done\n")}
               return(data.frame())
             }
 
-            #Get all other start segments too
-            allStart = gfa$segments %>% filter(str_detect(name, "_start$")) %>%
-              pull(name)
-
             #Remove parallel sequences by picking the shortest
-            gfa = gfa_removeRedundant(gfa, segmentOfInterest)
-            gfa = gfa_mergeSegments(
-              gfa, exclude = segmentOfInterest,
+            myGFA = gfa_removeRedundant(myGFA, segmentOfInterest)
+
+            myGFA = gfa_mergeSegments(
+              myGFA, exclude = segmentOfInterest,
               extraSummaries = list(
                 name = function(x) paste0(str_extract(x$name[1], "^\\d+"), "_unitig")
               ))
 
             #Keep pruning the graph to get rid of small appendages
-            gfa = gfa_trimLooseEnds(
-              gfa, trimLength - 1, keepRemoving = T, exclude = segmentOfInterest,
+            myGFA = gfa_trimLooseEnds(
+              myGFA, trimLength - 1, keepRemoving = T, exclude = segmentOfInterest,
               extraSummaries = list(
                 name = function(x) paste0(str_extract(x$name[1], "^\\d+"), "_unitig")
               ))
 
             #Colour the ARG segments green for easier display in Bandage and save results
-            gfa = gfa_annotation(gfa, gfa$segments$name[
-              str_detect(gfa$segments$name, "_start$")], color = "green")
-            gfa_write(gfa, sprintf("%s/genesDetected/simplifiedGFA/%s_simplified.gfa",
+            myGFA = gfa_annotation(myGFA, myGFA$segments$name[
+              str_detect(myGFA$segments$name, "_start$")], color = "green")
+            gfa_write(myGFA, sprintf("%s/genesDetected/simplifiedGFA/%s_simplified.gfa",
                                    tempFolder, myGene))
 
-        return(gfa$segments %>% filter((LN > minBlastLength) |
+        return(myGFA$segments %>% filter((LN > minBlastLength) |
                                          (start == "1" & LN >= 75)) %>%
           mutate(geneId = myGene))
 
-      }))
-      stopCluster(cl)
-      rm(cl)
+      }
+
       blastSegments = bind_rows(blastSegments)
       if(verbose > 0){cat("done\n")}
 
@@ -836,7 +808,8 @@ tryCatch({
       newLogs = rbind(newLogs, list(as.integer(Sys.time()), 15,
                                     "No genes detected"))
 
-      myConn = dbConnect(SQLite(), database)
+      myConn = dbConnect(SQLite(), database, synchronous = NULL)
+      sqliteSetBusyHandler(myConn, 30000)
       q = dbSendStatement(
         myConn,
         "UPDATE pipeline SET statusCode = 10, statusMessage = 'No ARG detected - pipeline halted', modifiedTimestamp = ?
@@ -943,7 +916,8 @@ tryCatch({
         select(pipelineId,runId,RID,timeStamp,tempName,fastaFile,statusCode,statusMessage,folder)
 
       #Delete old ones fist in case of a redo
-      myConn = dbConnect(SQLite(), database)
+      myConn = dbConnect(SQLite(), database, synchronous = NULL)
+      sqliteSetBusyHandler(myConn, 30000)
 
       q = dbSendStatement(myConn, "DELETE FROM blastSubmissions WHERE pipelineId == ?",
                           params = pipelineId)
@@ -989,7 +963,8 @@ finally = {
   if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S -"),
                       "Cleaning up and saving logs ... ")}
 
-  myConn = dbConnect(SQLite(), database)
+  myConn = dbConnect(SQLite(), database, synchronous = NULL)
+  sqliteSetBusyHandler(myConn, 30000)
 
   #Submit the logs, even in case of error so we know where to resume
   newLogs$runId = runId
