@@ -344,13 +344,13 @@ tryCatch({
         #Longest segments that have no connections are per definition fragmented
         fragmented = fragmented$geneId[!fragmented$geneId %in% singleSeg$geneId]
         
-        fragmented = singleSeg %>% 
+        fragmented = c(fragmented, singleSeg %>% 
           #If two start segments connect that's per def not fragmented
           filter(!(str_detect(from, "_start$") & str_detect(to, "_start$"))) %>% 
           mutate(startSeg = ifelse(str_detect(from, "_start$"), from, to)) %>% 
           #If flankend on both sides not fragmented (can be FP small bit)
           group_by(startSeg) %>% filter(n() < 2) %>% ungroup() %>% 
-          pull(geneId) %>% unique()
+          pull(geneId) %>% unique())
       } else {
         fragmented = c()
       }
