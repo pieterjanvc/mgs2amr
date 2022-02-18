@@ -19,25 +19,32 @@ runId = as.integer(args[[3]])
 verbose = abs(as.integer(args[[4]]))
 pipelineIds = str_trim(unlist(strsplit(args[[5]], ",")))
 generateReport = as.logical(args[[6]])
-
-maxCPU = 4
-#Get the arguments
-# baseFolder = "/mnt/meta2amrData/meta2amr/"
-# runId = 0
-# verbose = 1
-# pipelineIds = NULL
-# generateReport = T
+# forceRedo = as.logical(as.logical(args[[7]]))
+forceRedo = T
+  
+maxCPU = 12
 
 #Load the ARG and the sample list to process
 myConn = myConn = dbConnect(SQLite(), database,  synchronous = NULL)
 
 ARG = dbReadTable(myConn, "ARG") 
 
-toProcess = dbReadTable(myConn, "pipeline") %>% 
-  filter(statusCode == 4)
-if(length(pipelineIds) > 0){
-  toProcess = toProcess %>% filter(pipelineId %in% pipelineIds)
+#Pick the samples to process
+if(forceRedo & length(pipelineIds) > 0){
+  #Redo (finished) samples
+  toProcess = dbReadTable(myConn, "pipeline") %>% 
+    filter(pipelineId %in% local(pipelineIds))
+  
+} else if(length(pipelineIds) > 0) {
+  #Only process specific unprocessed samples
+  toProcess = dbReadTable(myConn, "pipeline") %>% 
+    filter(statusCode == 4 & pipelineId %in% local(pipelineIds))
+} else {
+  #All unprocessed
+  toProcess = dbReadTable(myConn, "pipeline") %>% 
+    filter(statusCode == 4)
 }
+
 
 #Generate a list out of the settings file
 settings = readLines(paste0(baseFolder, "settings.txt"))
@@ -850,13 +857,14 @@ if(nrow(toProcess) == 0) {
           filter(!geneId %in% genomeARG$myClusters$geneId) %>% 
           left_join(
             genomeARG$bactList %>% 
-              filter(val == 1) %>% #maybe remove?
+              # filter(val == 1) %>% #maybe remove?
               select(taxid, bactGroup, prob, genomeDepth = depth,
                      genomePathscore = pathScore, val) %>%  
               mutate(genomePathscore = genomePathscore),
             by = "taxid"
           ) %>% left_join(
-            AMRclusters %>% filter(val == 1) %>% 
+            AMRclusters %>% 
+              # filter(val == 1) %>% 
               select(taxid, geneId) %>% 
               left_join(genesDetected %>% 
                           select(geneId, cover1, startDepth, type),
@@ -875,8 +883,11 @@ if(nrow(toProcess) == 0) {
         #Only match if the quality of ARG is comparable (type, cover, ...)
         # EXPERIMENTAL ...
         genomeWithPlasmid = genomeWithPlasmid %>% 
-          filter(cover1 >= genomeCover*0.8, depth >= 0.5*genomeDepth,
-                 genomeCover >= cover1*0.8)
+          #Pathscore should be at in the top range
+          group_by(geneId) %>% filter(pathScore >= 0.75*max(pathScore)) %>% 
+          ungroup() %>% 
+          filter(cover1 >= genomeCover*0.75, depth >= 0.5*genomeDepth,
+                 genomeCover >= cover1*0.75)
         
         #Only continue if there are matches
         if(nrow(genomeWithPlasmid) > 0){
