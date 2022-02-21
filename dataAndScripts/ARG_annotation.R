@@ -22,7 +22,7 @@ generateReport = as.logical(args[[6]])
 # forceRedo = as.logical(as.logical(args[[7]]))
 forceRedo = T
   
-maxCPU = 12
+maxCPU = 14
 
 #Load the ARG and the sample list to process
 myConn = myConn = dbConnect(SQLite(), database,  synchronous = NULL)
@@ -141,7 +141,8 @@ if(nrow(toProcess) == 0) {
       sqliteSetBusyHandler(myConn, 30000)
       
       genesDetected = tbl(myConn, "detectedARG") %>% 
-        filter(pipelineId == myPipelineId) %>% as.data.frame()
+        filter(pipelineId == myPipelineId) %>% as.data.frame() %>% 
+        mutate(cover = ifelse(type == 'noFragments', cover1, cover2))
       dbDisconnect(myConn)
       
       newLogs = data.frame(
@@ -475,9 +476,9 @@ if(nrow(toProcess) == 0) {
       #   identicalARG = identicalARG %>% 
       #     left_join(genesDetected %>% 
       #                 mutate(geneId = as.character(geneId)) %>%
-      #                 select(geneId, startPerc, startDepth, cover1), 
+      #                 select(geneId, startPerc, startDepth, cover), 
       #               by = "geneId") %>% 
-      #     mutate(val = startPerc * startDepth * cover1,
+      #     mutate(val = startPerc * startDepth * cover,
       #            ARGgroup = as.integer(ARGgroup)) %>% 
       #     group_by(ARGgroup) %>% mutate(keep = val == max(val)) %>% ungroup()
       # } else {
@@ -682,7 +683,7 @@ if(nrow(toProcess) == 0) {
       }) %>% mutate(depth = KC / LN) %>% 
         left_join(
           genesDetected %>% mutate(geneId = as.character(geneId)) %>% 
-            select(geneId, gene, subtype, cover1, type), 
+            select(geneId, gene, subtype, cover, type), 
           by = "geneId"
         )
       
@@ -754,7 +755,7 @@ if(nrow(toProcess) == 0) {
           myAdjustment = data.frame(
             geneId = colnames(geneMatrix)
           ) %>% left_join(
-            genesDetected %>% select(geneId, cover1) %>%
+            genesDetected %>% select(geneId, cover) %>%
               mutate(geneId = as.character(geneId)), by = "geneId")
           
           #-----------
@@ -762,8 +763,8 @@ if(nrow(toProcess) == 0) {
           # on the similarity in coverage. If the coverage is very different, the
           # weight of adjustment in lower (prevents FP association of low cover to high)
           ncols = ncol(geneMatrix)
-          myAdjustment = (1 - abs(matrix(myAdjustment$cover1, nrow = ncols, ncol = ncols) -
-                                    matrix(myAdjustment$cover1, nrow = ncols, ncol = ncols, byrow = T)))
+          myAdjustment = (1 - abs(matrix(myAdjustment$cover, nrow = ncols, ncol = ncols) -
+                                    matrix(myAdjustment$cover, nrow = ncols, ncol = ncols, byrow = T)))
           
           
           myAdjustment = sapply(1:ncols, function(col){
@@ -773,7 +774,7 @@ if(nrow(toProcess) == 0) {
           
           #---------------
           ##Old adjustment techinique
-          # geneMatrix = t(t(geneMatrix) * myAdjustment$cover1)
+          # geneMatrix = t(t(geneMatrix) * myAdjustment$cover)
           # 
           # #Calulcate the adjustment for each cell based on other scores in the row
           # # the higher the scores (e.g. other gened detected), the more scaled up
@@ -824,7 +825,7 @@ if(nrow(toProcess) == 0) {
           left_join(
             myData %>% group_by(taxid) %>% 
               summarise(
-                depth = sum(depth * softmax(cover1, normalise = T)),
+                depth = sum(depth * softmax(cover, normalise = T)),
                 pathScore = sum(pathScore), 
                 .groups = "drop"
               ),
@@ -867,11 +868,11 @@ if(nrow(toProcess) == 0) {
               # filter(val == 1) %>% 
               select(taxid, geneId) %>% 
               left_join(genesDetected %>% 
-                          select(geneId, cover1, startDepth, type),
+                          select(geneId, cover, startDepth, type),
                         by = "geneId") %>% 
               group_by(taxid) %>% 
               summarise(
-                genomeCover = mean(cover1),
+                genomeCover = weighted.mean(cover, cover),
                 genomeType = case_when(
                   all(type == "noFragments") ~ "noFragments",
                   all(type == "fragmentsOnly") ~ "fragmentsOnly",
@@ -886,8 +887,8 @@ if(nrow(toProcess) == 0) {
           #Pathscore should be at in the top range
           group_by(geneId) %>% filter(pathScore >= 0.75*max(pathScore)) %>% 
           ungroup() %>% 
-          filter(cover1 >= genomeCover*0.75, depth >= 0.5*genomeDepth,
-                 genomeCover >= cover1*0.75)
+          filter(cover >= genomeCover*0.75, depth >= 0.25*genomeDepth,
+                 genomeCover >= cover*0.75)
         
         #Only continue if there are matches
         if(nrow(genomeWithPlasmid) > 0){
@@ -904,7 +905,7 @@ if(nrow(toProcess) == 0) {
           
           #Keep the best scoring bacterium per gene
           genomeWithPlasmid = genomeWithPlasmid %>% 
-            group_by(geneId) %>% filter(genomePathscore == max(genomePathscore))
+            group_by(geneId) %>% filter(pathScore == max(pathScore))
           
           #Add the ARG to the exisintg clusters (no new clusters)
           AMRclusters = bind_rows(
@@ -983,11 +984,11 @@ if(nrow(toProcess) == 0) {
       myInputs = genesDetected %>%
         mutate(id = paste(pipelineId,  bactGroup, sep = "_")) %>%
         group_by(pipelineId, bactGroup, gene) %>%
-        mutate(val = startPerc * startDepth * cover1) %>% 
+        mutate(val = startPerc * startDepth * cover) %>% 
         filter(val == max(val)) %>% dplyr::slice(1) %>%
         ungroup() %>% 
-        select(id, gene, cover1) %>%
-        pivot_wider(gene, names_from = id, values_from = cover1)
+        select(id, gene, cover) %>%
+        pivot_wider(gene, names_from = id, values_from = cover)
       
       myInputs = map_df(sapply(predictionModels, function(x) x$feature_names), function(y){
         data.frame(
