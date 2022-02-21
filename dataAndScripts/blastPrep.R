@@ -33,6 +33,8 @@ maxStep = as.integer(args[[14]]) #Which parts of the script to run? If NA all is
 maxCPU = 4
 maxStep = ifelse(maxStep == 0, 5, maxStep)
 maxStartGap = 800
+minCover = 0.25 #The minimum coverage to conksider a ARG being present
+
 
 # database = sprintf("%sdataAndScripts/meta2amr.db", baseFolder)
 # database = "/mnt/meta2amrData/pipelineTest/after1200/meta2amr.db"
@@ -293,10 +295,12 @@ tryCatch({
         group_by(geneId) %>% mutate(
           nSeg = sum(start),
           fileDepth = sum(KC) / sum(LN),
+          maxLN = max(LN[start]),
           LNsum = sum(LN[start]),
           KCsum = sum(KC[start])
         ) %>%
-        filter(start) %>% filter(LN == max(LN)) %>% slice(1) %>% ungroup() %>%
+        filter(start, maxLN > 0) %>% 
+        filter(LN == max(LN)) %>% slice(1) %>% ungroup() %>%
         left_join(argGenes, by = "geneId") %>%
         select(geneId, clusterNr, nBases, gene, subtype, LN, KC, fileDepth,
                nSeg, LNsum, KCsum, startPerc) %>%
@@ -304,9 +308,10 @@ tryCatch({
         mutate(
           cover1 = round(min(1, LN / nBases), 4),
           cover2 = round(min(1, LNsum / nBases), 4),
-          val = cover1 * startPerc * KC) %>% ungroup() %>%
-        #Change cutoffs?
-        filter((fileDepth >= 10 & cover1 > 0.75) | fileDepth < 10)
+          val = cover1 * startPerc * KC) %>% ungroup() %>% 
+        # #Change cutoffs?
+        filter(cover1 >= 0.1)
+        # filter((fileDepth >= 10 & cover2 > 0.5) | fileDepth < 10)
       
       
       # ---- Get all fragmented GFA (only start seg or one connection) ----
@@ -607,6 +612,12 @@ tryCatch({
         
       }
       
+      
+      #Final filter
+      genesDetected = genesDetected %>% filter(
+        (cover1 >= minCover & type == "noFragments") |
+          (cover2 >= minCover & type == "fragmentsOnly")
+      )
       
      
       #---- Save detected results - but delete old first ----
