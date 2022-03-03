@@ -392,7 +392,7 @@ if [ $step -gt 2 ]; then
 
 	blastPath=`grep -oP "localBlastBlastn\s*=\s*\K(.*)" $baseFolder/settings.txt`
 	if [ `command -v $blastPath` ]; then 
-		$baseFolder/localBlast.sh -v $verbose -p "$pipelineId"
+		$baseFolder/localBlast.sh -v "$verbose" -p "$pipelineId" -d "$database"
 	else
 		# $baseFolder/remoteBlast.sh -v $verbose -p "$pipelineId"
 		echo -e "\e[91mRemote BLASTn has not been implemented yet.\n Please use local version for now...\e[0m"
@@ -411,7 +411,7 @@ if [ $step -gt 3 ]; then
 		echo "***************************************"
 	fi
 	
-	$baseFolder/annotation.sh -v "$verbose" -p "$pipelineId" -d = "$database"
+	$baseFolder/annotation.sh -v "$verbose" -p "$pipelineId" -d "$database"
 fi
 
 
