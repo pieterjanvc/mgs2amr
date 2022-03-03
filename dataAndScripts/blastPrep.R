@@ -108,10 +108,10 @@ tryCatch({
       #This process can be done in parallel so speed things up
       #Read all GFA files
       registerDoParallel(cores=maxCPU)
-      gfa = foreach(myFiles = myFiles) %dopar% {
+      gfa = foreach(myFile = myFiles) %dopar% {
 
-        geneId = str_extract(x, "\\d+(?=/graph.gfa)")
-        myGFA = gfa_fixMetacherchant(x)
+        geneId = str_extract(myFile, "\\d+(?=/graph.gfa)")
+        myGFA = gfa_fixMetacherchant(myFile)
 
         #Check if the file is not empty
         if(nrow(myGFA$segments) > 0){
@@ -131,14 +131,14 @@ tryCatch({
       }
 
       #Merge all the GFAs that we need for further analysis
-      x = sapply(gfa, is.null)
-      notUsed = gfa[x] %>% unlist()
-      gfa = gfa[!x]
+      myFile = sapply(gfa, is.null)
+      notUsed = gfa[myFile] %>% unlist()
+      gfa = gfa[!myFile]
       gfa = list(
         segments = bind_rows(sapply(gfa, "[", 1)),
         links = bind_rows(sapply(gfa, "[", 2))
       )
-      rm(x)
+      rm(myFile)
 
       if(verbose > 0){cat("done\n")}
       newLogs = rbind(newLogs, list(as.integer(Sys.time()), 4,
