@@ -330,9 +330,15 @@ tryCatch({
       if(length(singleSeg) > 0){
         
         #Get all longest start segments from these graphs
+        # fragmented = gfa$segments %>%
+        #   filter(geneId %in% singleSeg, start > 0) %>% 
+        #   group_by(geneId) %>% filter(LN == max(LN)) %>% pull()
+        
         fragmented = gfa$segments %>%
-          filter(geneId %in% singleSeg, start > 0) %>% 
-          group_by(geneId) %>% filter(LN == max(LN))
+          filter(geneId %in% singleSeg | (!name %in% gfa$links$from) & (!name %in% gfa$links$to),start > 0) %>% 
+          group_by(geneId) %>% filter(LN == max(LN)) %>% ungroup()
+        
+        
         
         #Find all the segments that connect to these start segments
         singleSeg = gfa$links %>%
@@ -341,7 +347,7 @@ tryCatch({
         
         #Ignore very small segments < 100 bp (unless start)
         toRemove = gfa$segments %>% 
-          filter(geneId %in% singleSeg$geneId, start == 0, LN < 100) %>% 
+          filter(geneId %in% singleSeg$geneId, start == 0, LN < 250) %>% 
           pull(name)
         
         singleSeg = singleSeg %>% filter(!(from %in% toRemove | to %in% toRemove))
@@ -666,6 +672,8 @@ tryCatch({
           filter(geneId %in% 
                    genesDetected$geneId[genesDetected$type == "fragmentsOnly"])
       )
+      
+
       gfa_write(fragmented, paste0(tempFolder, "fragmentGFA.gfa"), verbose = 0)
 
       #Feedback and Logs
