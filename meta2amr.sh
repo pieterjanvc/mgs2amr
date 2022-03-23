@@ -349,7 +349,7 @@ if [ $step -gt 1 ]; then
 
 	#Set any option to modify the script
 	scriptOptions=(keepAllMetacherchantData maxPathDist minBlastLength trimLength clusterIdentidy forceRedo, maxStep)
-	scriptValues=(FALSE 1500 250 250 0.99 "$forceOverwrite" 0)
+	scriptValues=(FALSE 2000 250 250 0.99 "$forceOverwrite" 0)
 
 	if [ "${scriptValues[6]}" != 0 ]; then 
 		echo "  WARNING: the blast prep is limited to step ${scriptValues[6]}" 
