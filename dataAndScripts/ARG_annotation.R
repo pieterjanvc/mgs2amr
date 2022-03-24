@@ -22,7 +22,7 @@ generateReport = as.logical(args[[6]])
 # forceRedo = as.logical(as.logical(args[[7]]))
 forceRedo = T
   
-maxCPU = 14
+maxCPU = 14 #!!!!!!!!!!!!!!!
 
 #Load the ARG and the sample list to process
 myConn = myConn = dbConnect(SQLite(), database,  synchronous = NULL)
