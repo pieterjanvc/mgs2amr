@@ -19,8 +19,7 @@ meta2amrStep=4
 
 --- LOCALBLAST.SH
 localBlastVerbose=1
-localBlastBlastn=/opt/ncbi-blast-2.10.1+/bin/blastn
-localBlastDB=/mnt/meta2amrData/ncbi/blastdb/nt
+localBlastDB=/mnt/meta2amrData/ncbi/blastdb
 
 --- REMOTEBLAST.SH
 remoteBlastVerbose=1

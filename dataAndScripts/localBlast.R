@@ -8,6 +8,10 @@ suppressPackageStartupMessages(library(dplyr))
 suppressPackageStartupMessages(library(gfaTools))
 suppressPackageStartupMessages(library(RSQLite))
 
+#Make sure the blast bin folder is in the R env 
+#Sys.getenv("PATH")
+#If not, add to PATH in Renviron file at /opt/R/4.0.2/lib/R/etc/Renviron
+
 
 # ---- Inputs ----
 #*****************
@@ -17,9 +21,15 @@ baseFolder = formatPath(args[[1]], endWithSlash = T)
 database = args[[2]]
 runId = as.integer(args[[3]])
 verbose = abs(as.integer(args[[4]]))
-blastn = args[[5]]
-blastDB = args[[6]]
-pipelineId = str_trim(unlist(strsplit(args[[7]], ",")))
+blastDB = args[[5]]
+pipelineId = str_trim(unlist(strsplit(args[[6]], ",")))
+
+maxCPU = parallel::detectCores()
+
+#Fix and integrate later!!
+#The Renv needs to know where the BLASTDB is and this is not taken
+#using and export by the user for now ...
+Sys.setenv(BLASTDB = args$blastDB)
 
 #Set these general blast args
 blastArgs = list(
@@ -28,7 +38,8 @@ blastArgs = list(
   word_size = 64,
   max_target_seqs = 250,
   max_hsps = 1,
-  taxidlist = sprintf("%sdataAndScripts/%s", baseFolder, "bact.txids")
+  taxidlist = sprintf("%sdataAndScripts/%s", baseFolder, "bact.txids"),
+  outfmt = "6 qseqid sallacc staxids sscinames salltitles qlen slen qstart qend sstart send bitscore score length pident nident qcovs qcovhsp"
 )
 
 #Limit the search for specific pipelineIds if set, else do all
@@ -89,11 +100,11 @@ tryCatch({
                                   i, nrow(toSubmit), toSubmit$pipelineId[i], toSubmit$submId[i]))}
       
       #Run local blastn
-      system(sprintf('%s -db "%s" -query "%s" -task megablast -evalue %s -word_size %i -max_target_seqs %i -max_hsps %i -taxidlist %s -num_threads %i -outfmt 15 | gzip > "%s"',
-                     blastn, blastDB, paste0(toSubmit$folder[i], toSubmit$fastaFile[i]),
+      system(sprintf('blastn -db "%s" -query "%s" -task megablast -evalue %s -word_size %i -max_target_seqs %i -max_hsps %i -taxidlist %s -num_threads %i -outfmt "%s" | gzip > "%s"',
+                     blastArgs$db, paste0(toSubmit$folder[i], toSubmit$fastaFile[i]),
                      blastArgs$evalue, blastArgs$word_size, blastArgs$max_target_seqs, 
-                     blastArgs$max_hsps, blastArgs$taxidlist, parallel::detectCores(),
-                     paste0(toSubmit$folder[i], str_replace(toSubmit$fastaFile[i], ".fasta", ".json.gz"))))
+                     blastArgs$max_hsps, blastArgs$taxidlist, maxCPU, blastArgs$outfmt, 
+                     paste0(toSubmit$folder[i], str_replace(toSubmit$fastaFile[i], ".fasta", ".csv.gz"))))
       
       #Update the DB
       myConn = dbConnect(SQLite(), database)

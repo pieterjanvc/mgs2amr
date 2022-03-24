@@ -921,7 +921,7 @@ tryCatch({
                                     "Start clustering segments and generate FASTA for BLAST"))
       
       #Remove old blast data
-      unlink(list.files(tempFolder, ".json.gz|expand_", full.names = T))
+      unlink(list.files(tempFolder, ".csv.gz|expand_", full.names = T))
 
       #Use cluster_fast to reduce number of segments by grouping in identity clusters
       system(sprintf("%s -cluster_fast %s -sort length -query_cov 0.975 -target_cov 0.975 -id %f -uc %s%s",

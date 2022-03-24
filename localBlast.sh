@@ -44,8 +44,6 @@ while getopts ":hn:b:p:v:d:" opt; do
 	   echo -e "\n"
 	   exit
     ;;	
-	n) blastn=`realpath "${OPTARG}"`
-    ;;
 	b) blastDB=`realpath "${OPTARG}"`
     ;;
 	p) pipelineId="${OPTARG}"
@@ -67,10 +65,6 @@ if [ -z ${database+x} ]; then
 	database="$baseFolder/dataAndScripts/meta2amr.db"
 elif [ ! -f $database ]; then	
 		echo -e "\n\e[91mThe database provided does not exist\e[0m"; exit;
-fi
-
-if [ -z ${blastn+x} ]; then 
-	blastn=`grep -oP "localBlastBlastn\s*=\s*\K(.*)" $baseFolder/settings.txt`
 fi
 
 if [ -z ${blastDB+x} ]; then 
@@ -104,7 +98,7 @@ fi
 
 #Run BLASTn for all in the queue (unless runId specified)
 $Rscript $baseFolder/dataAndScripts/localBlast.R \
-	"$baseFolder" "$database" "$runId" "$verbose" "$blastn" "$blastDB" "$pipelineId"
+	"$baseFolder" "$database" "$runId" "$verbose" "$blastDB" "$pipelineId"
 
 
 #Update the DB

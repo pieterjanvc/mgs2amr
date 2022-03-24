@@ -10,19 +10,67 @@ pipelineIds = NULL
 generateReport = F
 forceRedo = F
 
-minBlastLength = 250
-
 myId = "672" #452, 845, 18
 
+
+minBlastLength = 250
+#INTEGRATE LATER AS ARGUMENT
+Sys.setenv(BLASTDB = "/mnt/meta2amrData/ncbi/blastdb") 
+outfmt = "6 qseqid sallacc staxids sscinames salltitles qlen slen qstart qend sstart send bitscore score length pident nident qcovs qcovhsp"
+maxCPU = parallel::detectCores()
+
+#FUNCTIONS
 softmax = function(vals, normalise = F, log = T){
   if(normalise) vals = vals / max(vals)
   if(log) vals = log(vals)
   return(exp(vals) / sum(exp(vals)))
 }
 
-normalise = function(x){
-  (x - min(x)) /  (max(x) - min(x))
+blast_readOutput = function(file, outfmt, separate = T, includeIssues = F, verbose = 1){
+  
+  #Load the output csv (zipped)
+  blastOut = read.table(file, sep = "\t", quote = "", comment.char = "")
+  colnames(blastOut) = strsplit(outfmt, " ")[[1]][-1]
+  
+  #split multiple matches
+  blastOut = blastOut %>% 
+    mutate(x = str_count(staxids, ";"), y = str_count(sallacc, ";"), 
+           z = x == y | x == 0, plasmid = str_detect(salltitles, "plasmid|Plasmid")) 
+  
+  if(!includeIssues){
+    blastOut = blastOut %>% filter(!(x > 0 & !z))
+    issues = data.frame()
+  } else {
+    #Multiple taxid but not the same number of accessions
+    issues = blastOut %>% filter(x > 0 & !z) 
+  }
+  
+  if(nrow(issues) > 0){
+    warning(nrow(issues), " rows contain ambiguous accession / taxid results")
+  }
+  
+  if(separate){
+    return(bind_rows(
+      
+      #No merged data
+      blastOut %>% filter(y == 0),
+      #Identical number of accession and taxids 
+      blastOut %>% 
+        filter(x > 0 & z) %>% 
+        separate_rows(sallacc, staxids, sscinames, sep = ";"),
+      #One taxId for multiple accessions
+      blastOut %>% 
+        filter(x == 0 & y > 0 & z) %>% 
+        separate_rows(sallacc, staxids, sscinames, sep = ";"),
+      issues
+      
+    ) %>% select(-x, -y, -z))
+  } else {
+    return(blastOut %>% select(-x, -y, -z))
+  }
+  
 }
+
 
 myConn = dbConnect(SQLite(), database)
 
@@ -83,9 +131,9 @@ newLogs = rbind(newLogs, list(as.integer(Sys.time()), 2,
 #Read all blast output
 blastOut = lapply(
   list.files(sample, full.names = T,
-             pattern = "blastSegmentsClustered\\d+.json.gz"),
-  blast_readResults, outFormat = "dataFrame1") %>% bind_rows() %>% 
-  mutate(geneId = str_extract(query_title, "^([^_]+)"))
+             pattern = "blastSegmentsClustered\\d+.csv.gz"),
+  blast_readOutput, outfmt = outfmt) %>% bind_rows() %>% 
+  mutate(geneId = str_extract(qseqid, "^([^_]+)"))
 
 
 # ---- RERUN BLAST FOR IDENTICAl RESULTS ----
@@ -95,16 +143,13 @@ if(!(file.exists(sprintf("%s/expand_1.json.gz", sample)) |
   
   #Get segments that have identical blast results (thus might miss some because of 250 lim)
   rerun = blastOut %>% 
-    select(segmentId = query_title, bit_score, geneId, identity, 
-           query_len, align_len) %>% 
+    select(segmentId = qseqid, bitscore, geneId, nident, 
+           qlen, length) %>% 
     group_by(segmentId, geneId) %>% 
     summarise(x = n_distinct(bit_score) == 1, .groups = "drop",
-              identity = identity[1] / query_len[1],
-              cover = align_len[1] / query_len[1]) %>% 
+              identity = nident[1] / qlen[1],
+              cover = length[1] / qlen[1]) %>% 
     filter(x)
-  
-  blastFolder = "/opt/ncbi-blast-2.10.1+/bin"
-  blastDB = "/mnt/meta2amrData/ncbi/blastdb/nt"
   
   #Set these general blast args
   blastArgs = list(
@@ -133,11 +178,12 @@ if(!(file.exists(sprintf("%s/expand_1.json.gz", sample)) |
                 myFasta$id, type = "n")
     
     #Run local blastn on the new database
-    system(sprintf('%s/blastn -db "%s" -query "%s" -task megablast -evalue %s -word_size %i -max_target_seqs %i -max_hsps %i -num_threads %i -qcov_hsp_perc %.2f -perc_identity %.2f -taxidlist %s -outfmt 15 | gzip > "%s"',
-                   blastFolder, blastDB, sprintf("%s/expand_1.fasta", sample),
+    system(sprintf('blastn -db "%s" -query "%s" -task megablast -evalue %s -word_size %i -max_target_seqs %i -max_hsps %i -num_threads %i -qcov_hsp_perc %.2f -perc_identity %.2f -taxidlist %s -outfmt "%s" | gzip > "%s"',
+                   blastArgs$db, sprintf("%s/expand_1.fasta", sample),
                    blastArgs$evalue, blastArgs$word_size, blastArgs$max_target_seqs, 
-                   blastArgs$max_hsps, parallel::detectCores(),blastArgs$qcov_hsp_perc,
-                   blastArgs$perc_identity, blastArgs$taxidlist, sprintf("%s/expand_1.json.gz", sample)))
+                   blastArgs$max_hsps, maxCPU, blastArgs$qcov_hsp_perc,
+                   blastArgs$perc_identity, blastArgs$taxidlist, outfmt,
+                   sprintf("%s/expand_1.csv.gz", sample)))
   }
   
   #Imperfect ones get blased separately
@@ -156,42 +202,46 @@ if(!(file.exists(sprintf("%s/expand_1.json.gz", sample)) |
     blastArgs$perc_identity = floor(min(toFasta$identity) * 10000) / 10000
     
     #Run local blastn on the new database
-    system(sprintf('%s/blastn -db "%s" -query "%s" -task megablast -evalue %s -word_size %i -max_target_seqs %i -max_hsps %i -num_threads %i -qcov_hsp_perc %.4f -perc_identity %.4f -taxidlist %s -outfmt 15 | gzip > "%s"',
-                   blastFolder, blastDB, sprintf("%s/expand_2.fasta", sample),
+    system(sprintf('blastn -db "%s" -query "%s" -task megablast -evalue %s -word_size %i -max_target_seqs %i -max_hsps %i -num_threads %i -qcov_hsp_perc %.2f -perc_identity %.2f -taxidlist %s -outfmt "%s" | gzip > "%s"',
+                   blastArgs$db, sprintf("%s/expand_2.fasta", sample),
                    blastArgs$evalue, blastArgs$word_size, blastArgs$max_target_seqs, 
-                   blastArgs$max_hsps, parallel::detectCores(),blastArgs$qcov_hsp_perc,
-                   blastArgs$perc_identity, blastArgs$taxidlist, sprintf("%s/expand_2.json.gz", sample)))
+                   blastArgs$max_hsps, maxCPU, blastArgs$qcov_hsp_perc,
+                   blastArgs$perc_identity, blastArgs$taxidlist, outfmt,
+                   sprintf("%s/expand_2.csv.gz", sample)))
   }
   
   
 }
 
-expandBlast = list.files(sample, full.names = T, pattern = "expand_\\d+.json.gz")
+expandBlast = list.files(sample, full.names = T, pattern = "expand_\\d+.csv.gz")
+
 if(length(expandBlast) > 0){
   
   #Get the new results
   blastOut2 = lapply(
     list.files(sample, full.names = T,
-               pattern = "expand_\\d+.json.gz"),
-    blast_readResults, outFormat = "dataFrame1") %>% bind_rows() %>% 
-    mutate(geneId = str_extract(query_title, "^([^_]+)"))
+               pattern = "expand_\\d+.csv.gz"),
+    blast_readOutput, outfmt = outfmt) %>% bind_rows() %>% 
+    mutate(geneId = str_extract(qseqid, "^([^_]+)"))
   
   blastOut = bind_rows(
-    blastOut %>% filter(!query_title %in% unique(blastOut2$query_title)),
+    blastOut %>% filter(!qseqid %in% unique(blastOut2$qseqid)),
     blastOut2
   )
   
   rm(blastOut2)
 }
 
+#FIX FROM HERE
 # backup1 = blastOut
 # blastOut = backup1
 
 #Extract data we need + transform
 blastOut = blastOut %>% 
-  select(query_title, hitId, taxid, accession , bact = title, bit_score, 
-         score, evalue, identity, query_len, query_from, 
-         query_to, hit_from, hit_to, align_len, geneId) %>% 
+  select(query_title = qseqid, taxid = staxids, accession = sallacc, 
+         bact = sscinames, plasmid, bit_score = bitscore, score, identity, 
+         query_len = qlen, query_from = qstart, query_to = qend, 
+         hit_from = sstart, hit_to = send, align_len = length, geneId) %>% 
   mutate(bact = str_remove_all(bact, "[^\\w\\s]")) %>% 
   extract(bact, c("genus", "species", "extra"), 
           regex = "(\\w+)\\s+(\\w+)($|\\s+.*)") %>% 
@@ -204,9 +254,7 @@ blastOut = blastOut %>%
   mutate(
     subspecies = str_extract(extra, "(?<=subsp\\s)[^\\s]+"),
     strain = str_extract(extra, "(?<=strain\\s)[^\\s]+") %>% 
-      str_remove(" chromosome.*| plasmid.*| complete.*"),
-    plasmid = str_detect(extra, "plasmid|Plasmid"),
-    plasmidName = str_extract(extra, "(?<=plasmid\\s)[^\\s]+")
+      str_remove(" chromosome.*| plasmid.*| complete.*")
   )
 
 #Expand results from clustering segments before blast
