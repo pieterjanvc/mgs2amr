@@ -10,7 +10,7 @@ pipelineIds = NULL
 generateReport = F
 forceRedo = F
 
-myId = "672" #452, 845, 18
+myId = "6" #452, 845, 18
 
 
 minBlastLength = 250
@@ -138,15 +138,15 @@ blastOut = lapply(
 
 # ---- RERUN BLAST FOR IDENTICAl RESULTS ----
 #********************************************
-if(!(file.exists(sprintf("%s/expand_1.json.gz", sample)) | 
-   file.exists(sprintf("%s/expand_2.json.gz", sample))) | forceRedo){
+if(!(file.exists(sprintf("%s/expand_1.csv.gz", sample)) | 
+   file.exists(sprintf("%s/expand_2.csv.gz", sample))) | forceRedo){
   
   #Get segments that have identical blast results (thus might miss some because of 250 lim)
   rerun = blastOut %>% 
     select(segmentId = qseqid, bitscore, geneId, nident, 
            qlen, length) %>% 
     group_by(segmentId, geneId) %>% 
-    summarise(x = n_distinct(bit_score) == 1, .groups = "drop",
+    summarise(x = n_distinct(bitscore) == 1, .groups = "drop",
               identity = nident[1] / qlen[1],
               cover = length[1] / qlen[1]) %>% 
     filter(x)
@@ -170,7 +170,7 @@ if(!(file.exists(sprintf("%s/expand_1.json.gz", sample)) |
   
   if(nrow(toFasta) > 0){
     
-    myFasta = map_df(1:length(list.files(sample, pattern = "blastSegmentsClustered\\d.json.gz")), function(x){
+    myFasta = map_df(1:length(list.files(sample, pattern = "blastSegmentsClustered\\d.csv.gz")), function(x){
       fasta_read(sprintf("%s/blastSegmentsClustered%i.fasta", sample, x),
                  type = "n") %>% filter(id %in% toFasta$segmentId)})
     
@@ -190,7 +190,7 @@ if(!(file.exists(sprintf("%s/expand_1.json.gz", sample)) |
   toFasta = rerun %>% filter(cover < 1 | identity < 1)
   if(nrow(toFasta) > 0){
     
-    myFasta = map_df(1:length(list.files(sample, pattern = "blastSegmentsClustered\\d.json.gz")), function(x){
+    myFasta = map_df(1:length(list.files(sample, pattern = "blastSegmentsClustered\\d+.csv.gz")), function(x){
       fasta_read(sprintf("%s/blastSegmentsClustered%i.fasta", sample, x),
                  type = "n") %>% filter(id %in% toFasta$segmentId)})
     
@@ -239,10 +239,11 @@ if(length(expandBlast) > 0){
 #Extract data we need + transform
 blastOut = blastOut %>% 
   select(query_title = qseqid, taxid = staxids, accession = sallacc, 
-         bact = sscinames, plasmid, bit_score = bitscore, score, identity, 
-         query_len = qlen, query_from = qstart, query_to = qend, 
+         bact = sscinames, plasmid, bit_score = bitscore, score, 
+         identity = nident, query_len = qlen, query_from = qstart, query_to = qend, 
          hit_from = sstart, hit_to = send, align_len = length, geneId) %>% 
-  mutate(bact = str_remove_all(bact, "[^\\w\\s]")) %>% 
+  mutate(bact = str_remove_all(bact, "[^\\w\\s]"),
+         geneId = as.integer(geneId), taxid = as.integer(taxid)) %>% 
   extract(bact, c("genus", "species", "extra"), 
           regex = "(\\w+)\\s+(\\w+)($|\\s+.*)") %>% 
   #Sp. will be pasted with taxid to make it unique
@@ -299,103 +300,120 @@ newLogs = rbind(newLogs, list(as.integer(Sys.time()), 4,
                               "Start mapping"))
 
 
+segmentsOfInterest = read.csv(paste0(sample, "/segmentsOfInterest.csv"))
+
 #Get information about the blasted seq where they are in the path of GFA
 pathData = list.files(
   paste0(sample, "/genesDetected/simplifiedGFA"), 
   pattern = ".gfa", full.names = T)
 
 pathData = map_df(pathData, function(myGFA){
-
-  #Read the GFA
-  gfa = gfa_read(myGFA)
   
-  #If there are linked segments ...
-  if(nrow(gfa$links) > 0){
+  #Read the GFA
+  fullGFA = gfa_read(myGFA)
+  
+  myGene = str_extract(fullGFA$segments$name[1], "^\\d+")
+  
+  segmentOfInterest = segmentsOfInterest %>% 
+    filter(geneId == myGene, type != "fragmentsOnly") 
+  
+  map_df(1:nrow(segmentOfInterest), function(i){
     
-    #Get the (largest) start segment
-    segmentOfInterest = gfa$segments %>% 
-      filter(str_detect(name, "_start$")) %>%
-      filter(LN == max(LN)) %>% filter(KC == max(KC)) %>% 
-      dplyr::slice(1) %>% pull(name)
+    myGroup = segmentOfInterest %>% filter(name == segmentOfInterest$name[i]) %>% 
+      pull(group)
     
-    if(length(segmentOfInterest) == 0){
-      return(data.frame())
-    }
+    gfa = gfa_filterSegments(fullGFA, segments = (fullGFA$segments %>% 
+                               filter(group == myGroup) %>% pull(name)))
     
-    #Get all semenents in path to start
-    x = gfa_pathsToSegment(gfa, segmentOfInterest, returnList = T, 
-                           pathSegmentsOnly = T, verbose = F) %>% 
-      map_df(function(path){
-        data.frame(
-          pathId = path$id,
-          orientation = path$orientation,
-          pathType = path$pathType,
-          segmentId = path$segmentOrder,
-          dist = path$dist,
-          LN = path$LN,
-          KC = path$KC)
-      }) %>% 
-      mutate(geneId = str_extract(segmentId, "^\\d+"))
-    
-    
-    #If no paths, return empty frame
-    if(nrow(x) == 0 ){
-      return(data.frame())
-    }
-    #Otherwise add the path data 
-    else{
+    0#If there are linked segments ...
+    if(nrow(gfa$links) > 0){
       
-
-      x = x %>% 
-        # left_join(
-        #   pathsToSegmentTable(gfa, segmentOfInterest) %>% 
-        #     filter(dist < Inf) %>% group_by(segment) %>% 
-        #     filter(dist == min(dist)) %>% 
-        #     select(segment, segmentEnd, KC, LN, dist) %>% 
-        #     mutate(geneId = str_extract(segment, "^\\d+")) %>% 
-        #     distinct(),
-        #   by = c("segmentId" = "segment")
-        # ) %>% 
-        # filter(LN >=250) %>%
-        group_by(geneId, pathId) %>% mutate(
-          pathId = as.integer(pathId),
-          order = n():1,
-          #These files contain full GFA structures, no fragments
-          type = "full")
-      
-      # if(any(x$pathType == 2)){
-      #   
-      #   #In case of circular loop, only keep 1 path that has least competition
-      #   toRemove = x %>% filter(pathType != 2) %>% group_by(pathId, orientation) %>% 
-      #     summarise(LN = sum(LN) - 30*(n() - 1), .groups = "drop") %>% 
-      #     filter(LN == max(LN)) %>% dplyr::slice(1) %>% pull(orientation)
-      #   
-      #   x = x %>% filter(!(pathType == 2 & orientation == toRemove))
+      # #Get the (largest) start segment
+      # segmentOfInterest = gfa$segments %>% 
+      #   filter(str_detect(name, "_start$")) %>%
+      #   filter(LN == max(LN)) %>% filter(KC == max(KC)) %>% 
+      #   dplyr::slice(1) %>% pull(name)
+      # 
+      # if(length(segmentOfInterest) == 0){
+      #   return(data.frame())
       # }
       
-      return(x)
+      #Get all semenents in path to start
+      x = gfa_pathsToSegment(gfa, segmentOfInterest$name[i], returnList = T, 
+                             pathSegmentsOnly = T, verbose = F) %>% 
+        map_df(function(path){
+          data.frame(
+            pathId = path$id,
+            orientation = path$orientation,
+            pathType = path$pathType,
+            segmentId = path$segmentOrder,
+            dist = path$dist,
+            LN = path$LN,
+            KC = path$KC)
+        }) %>% 
+        mutate(geneId = str_extract(segmentId, "^\\d+"))
       
+      
+      #If no paths, return empty frame
+      if(nrow(x) == 0 ){
+        return(data.frame())
+      }
+      #Otherwise add the path data 
+      else{
+        
+        
+        x = x %>% 
+          # left_join(
+          #   pathsToSegmentTable(gfa, segmentOfInterest) %>% 
+          #     filter(dist < Inf) %>% group_by(segment) %>% 
+          #     filter(dist == min(dist)) %>% 
+          #     select(segment, segmentEnd, KC, LN, dist) %>% 
+          #     mutate(geneId = str_extract(segment, "^\\d+")) %>% 
+          #     distinct(),
+          #   by = c("segmentId" = "segment")
+          # ) %>% 
+          # filter(LN >=250) %>%
+          group_by(geneId, pathId) %>% mutate(
+            pathId = as.integer(pathId),
+            order = n():1,
+            #These files contain full GFA structures, no fragments
+            type = segmentOfInterest$type[i]) %>% 
+          ungroup()
+        
+        # if(any(x$pathType == 2)){
+        #   
+        #   #In case of circular loop, only keep 1 path that has least competition
+        #   toRemove = x %>% filter(pathType != 2) %>% group_by(pathId, orientation) %>% 
+        #     summarise(LN = sum(LN) - 30*(n() - 1), .groups = "drop") %>% 
+        #     filter(LN == max(LN)) %>% dplyr::slice(1) %>% pull(orientation)
+        #   
+        #   x = x %>% filter(!(pathType == 2 & orientation == toRemove))
+        # }
+        
+        return(x)
+        
+      }
+      
+      
+      
+    } else if(nrow(gfa$segments) > 0){
+      #Case where there are no links, just one or more segments
+      gfa$segments %>% 
+        select(segmentId = name, KC, LN) %>% 
+        mutate(
+          pathId = 1:n(),
+          orientation = 0,
+          geneId = str_extract(segmentId, "^\\d+"),
+          dist = ifelse(str_detect(segmentId, "_start$"), -LN, 0),
+          order = 1,
+          type = "full"
+        )
+      
+    } else{
+      #File is empty
+      return(data.frame())
     }
-    
-    
-    
-  } else if(nrow(gfa$segments) > 0){
-    #Case where there are no links, just one or more segments
-    gfa$segments %>% 
-      select(segmentId = name, KC, LN) %>% 
-      mutate(
-        pathId = 1:n(),
-        orientation = 0,
-        geneId = str_extract(segmentId, "^\\d+"),
-        dist = ifelse(str_detect(segmentId, "_start$"), -LN, 0),
-        order = 1,
-        type = "full"
-      )
-    
-  } else{
-    #File is empty
-    return(data.frame())
-  }
+  })
   
 })
 
@@ -421,7 +439,7 @@ pathData = pathData %>%
   ungroup()
 
 #Also add the fragment data to the paths
-fragments = gfa_read(paste0(sample, "/fragmentsOnly.gfa"))
+fragments = gfa_read(paste0(sample, "/fragmentGFA.gfa"))
 
 if(nrow(fragments$segments) > 0){
   #Fragments were merged, so treated as a non-start piece
@@ -507,11 +525,14 @@ blastOut = blastOut %>%
 
 # backup = blastOut
 # blastOut = backup
-fragments = fragments %>% 
-  mutate(geneId = as.integer(geneId)) %>% 
-  left_join(genesDetected %>% select(geneId, fragType = type), by = "geneId")
+# if(nrow(fragments) > 0){
+#   fragments = fragments %>% 
+#     mutate(geneId = as.integer(geneId)) %>% 
+#     left_join(genesDetected %>% select(geneId, fragType = type), by = "geneId")
+# }
 
-segmentsOfInterest = read.csv(paste0(sample, "/segmentsOfInterest.csv"))
+
+
 
 blastOut$start[blastOut$start & 
                  ! blastOut$segmentId %in% segmentsOfInterest$from] = F
@@ -986,11 +1007,11 @@ if(nrow(genomeARG) > 0){
     )
   
   bactList = genomeARG$bactList %>% group_by(bactGroup) %>% 
-    mutate(depth = weighted.mean(depth, prob)) %>% ungroup()
+    mutate(x = depth, depth = weighted.mean(depth, prob)) %>% ungroup()
 }
 
 
-#Check for plasmids (i.e., non-genome matches)
+#Check for likely plasmids
 if(n_distinct(genomeARG$myClusters$geneId) < n_distinct(allBact$geneId)){
   
   #Check if any of the remaining ARG match a genome ARG species
@@ -1035,7 +1056,10 @@ if(n_distinct(genomeARG$myClusters$geneId) < n_distinct(allBact$geneId)){
     group_by(geneId) %>% 
     # filter(pathScore >= quantile(pathScore, 0.75)) %>%
     mutate(top = pathScore == max(pathScore)) %>% 
-    ungroup()
+    ungroup() %>% 
+    #Give a slight edge to genome matches over plasmid
+    mutate(pathScore = ifelse(!plasmid & !is.na(bactGroup), 
+                              pathScore * 1.01, pathScore))
   
   
   myPlasmids = list()
@@ -1057,15 +1081,17 @@ if(n_distinct(genomeARG$myClusters$geneId) < n_distinct(allBact$geneId)){
   
   #Link genome taxid to the plasmids and asssign if match criteria
   # sapply(myPlasmids, function(x) "2518" %in%  x$geneId)
-  # x = myPlasmids[[5]]
+  # x = myPlasmids[[1]]
   temp = map_df(myPlasmids, function(x){
     
     test = checkPlasmid %>% filter(geneId %in% x$geneId) %>% 
       group_by(taxid, geneId) %>% filter(fullPath == max(fullPath)) %>% 
       dplyr:: slice(1) %>% 
+      group_by(taxid) %>% mutate(x = sum(pathScore)) %>% 
+      ungroup() %>% mutate(x = x / max(x)) %>% 
       group_by(taxid, geneId) %>% 
       summarise(pathScore = sum(pathScore), depth = mean(depth),
-                across(c(bactGroup:genomeType), max)) %>%
+                across(c(bactGroup:genomeType), max), .groups = "drop") %>%
       mutate(pathScore = ifelse(is.na(bactGroup), pathScore, pathScore*1.05)) %>% 
       group_by(geneId) %>% 
       filter(depth >= 0.75 * genomeDepth | is.na(genomeDepth) |
