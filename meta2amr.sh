@@ -390,12 +390,11 @@ if [ $step -gt 2 ]; then
 		echo "**********************"
 	fi
 
-	blastPath=`grep -oP "localBlastBlastn\s*=\s*\K(.*)" $baseFolder/settings.txt`
-	if [ `command -v $blastPath` ]; then 
+	if [ `command -v "blastn"` ]; then 
 		$baseFolder/localBlast.sh -v "$verbose" -p "$pipelineId" -d "$database"
 	else
 		# $baseFolder/remoteBlast.sh -v $verbose -p "$pipelineId"
-		echo -e "\e[91mRemote BLASTn has not been implemented yet.\n Please use local version for now...\e[0m"
+		echo -e "\e[91mRemote BLASTn has not been implemented yet.\n Please setup local version for now...\e[0m"
 		step=2
 	fi
 	
