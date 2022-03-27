@@ -79,6 +79,12 @@ switchLinks = function(links){
   
 }
 
+#! Added only for benchmarking
+myStats = list(info = data.frame(
+  pipelineId = pipelineId, runId = runId, 
+  timeStamp = as.integer(Sys.time()), tempFolder = tempFolder))
+#!
+
 tryCatch({
   
   #Check if data exists
@@ -105,19 +111,36 @@ tryCatch({
 
       #Takes long time to load, only do if next step is not completed (not needed afterwards)
       # if(nrow(logs %>% filter(actionId %in% c(9,11))) == 0 | forceRedo){
-        if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S -"),
+      if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S -"),
                             "Load master GFA file for processing ... ")}
-        # gfa = gfa_read(gzfile(paste0(tempFolder, "/masterGFA.gfa.gz")))
-        system(sprintf("%s -d %s", zipMethod, paste0(tempFolder, "masterGFA.db.gz")))
-        myConn = dbConnect(SQLite(), sprintf("%smasterGFA.db", tempFolder))
-        gfa = list(
-          segments = dbReadTable(myConn, "segments"),
-          links = dbReadTable(myConn, "links")
-        )
-        dbDisconnect(myConn)
-
-        if(verbose > 0){cat("done\n")}
-      # }
+        
+      #! Get the database size 
+      myStats$DBzipped = file.info(paste0(tempFolder, "masterGFA.db.gz"))$size
+      #!
+    
+      system(sprintf("%s -d %s", zipMethod, paste0(tempFolder, "masterGFA.db.gz")))
+      myConn = dbConnect(SQLite(), sprintf("%smasterGFA.db", tempFolder))
+      gfa = list(
+        segments = dbReadTable(myConn, "segments"),
+        links = dbReadTable(myConn, "links")
+      )
+      dbDisconnect(myConn)
+      
+      #! Get the masterGFA info 
+      myStats$masterGFA = list(
+        segments = gfa$segments %>% 
+          mutate(start = str_detect(name, "_start$")) %>% 
+          group_by(geneId) %>% summarise(
+            nSeg = n(), nStart = sum(start), 
+            avgLN = mean(LN), sdLN = sd(LN), avgKC = mean(KC), sdKC = sd(KC),
+            .groups = "drop"
+          ),
+        links = nrow(gfa$links)
+      )
+      #!
+      
+      if(verbose > 0){cat("done\n")}
+      
 
     } else { #Not processed yet ...
 
@@ -167,6 +190,19 @@ tryCatch({
       if(verbose > 0){cat("done\n")}
       newLogs = rbind(newLogs, list(as.integer(Sys.time()), 4,
                                     "Finished filtering and merging MetaCherchant output"))
+      
+      #! Get the masterGFA info 
+      myStats$masterGFA = list(
+        segments = gfa$segments %>% 
+          mutate(start = str_detect(name, "_start$")) %>% 
+          group_by(geneId) %>% summarise(
+            nSeg = n(), avgLN = mean(LN), sdLN = sd(LN), avgKC = mean(KC), sdKC = sd(KC),
+            nStart = sum(start), avgSLN = mean(LN[start]), avgSKC = mean(KC[start]),
+            .groups = "drop"
+          ),
+        links = nrow(gfa$links)
+      )
+      #!
 
       # ---- Update the master GFA file and zip it to save space ----
       if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S -"), "Write master GFA ... ")}
@@ -179,11 +215,7 @@ tryCatch({
 
       #Remove Metacherchant Data if set
       if(keepAllMetacherchantData == F & (nrow(logs %>% filter(actionId == 4)) == 0)){
-        # allDirs = list.dirs(tempFolder,recursive = F)
-        # allDirs = allDirs[!str_detect(allDirs,"metacherchant_logs")]
-        # system(sprintf("rm -R '%s'", paste(allDirs, collapse = " ")))
         system(sprintf("ls -d %s/* | grep -P \"/\\d+$\" | xargs rm -R", tempFolder))
-        # system(sprintf('find %s -name "lcl*" -exec rm -r {} \\; > /dev/null 2>&1', tempFolder))
       }
 
       if(verbose > 0){cat("done\n")}
@@ -303,6 +335,16 @@ tryCatch({
       if(verbose > 0){cat("done\n")}
       newLogs = rbind(newLogs, list(as.integer(Sys.time()), 8,
                                     "Finished recovering ARG seed sequences"))
+      
+      #! Get the updates after start seg merge 
+      myStats$mergedStart = gfa$segments %>% 
+        filter(start > 0) %>% 
+        group_by(geneId) %>% summarise(
+          nStart = sum(start > 0), 
+          avgSLN = mean(LN), avgSKC = mean(KC),
+          .groups = "drop"
+        )
+      #!
 
 
       # ---- Estimate ARG presence by coverage and fragmentation----
@@ -405,6 +447,16 @@ tryCatch({
           TRUE ~ "fragmentsOnly"
         )) 
       
+      #! Get startConnInfo before filter 
+      myStats$startConn = startConn %>% group_by(geneId) %>% summarise(
+        type = case_when(
+          any(type == "noFragments") ~ "noFragments",
+          all(type == "fragmentsOnly") ~ "fragmentsOnly",
+          TRUE ~ "singleSide"
+        ), .groups = "drop"
+      ) %>% group_by(type) %>% summarise(nBefore = n(), .groups = "drop")
+      #!
+      
       #Extract the kmercounts
       kmerCounts = gfa$segments %>% 
         # mutate(keep  = ! group %in% 
@@ -459,8 +511,14 @@ tryCatch({
                val = cover * startPerc * KC) %>%
         select(pipelineId, runId, everything()) %>% 
         filter(cover >= minCover)
-
-
+      
+      #! Get the geneInfo before filter
+      myStats$genesBeforeFilter = list(
+        summary = genesDetected %>% summarise(
+          n = n(), avgCover = mean(cover), sdCover = sd(cover), minCover = {{minCover}}), 
+        genes = genesDetected$geneId
+      )
+      #!
       
       #Split the master GFA into fragments and noFragments
       #***************************************************
@@ -511,6 +569,11 @@ tryCatch({
       
       noFragments = gfa_filterSegments(gfa, noFragments)
       
+      #! Get the updates before fragment filtering
+      myStats$removeDuplicates = list(
+        nFragBefore = n_distinct(fragments$segments$geneId)
+      )
+      #!
       
       #Find identical fragmented files
       #*******************************
@@ -661,6 +724,10 @@ tryCatch({
         
       }
       
+      #! Get the updates after frag filtering
+      myStats$removeDuplicates$nFragAfter = length(toKeep)
+      myStats$removeDuplicates$nBranchedBefore = n_distinct(noFragments$segments$geneId)
+      #!
 
       #Find identical unfragmented files (start segments excluded)
       #**********************************************
@@ -808,6 +875,14 @@ tryCatch({
       #Final filter
       genesDetected = genesDetected %>% filter(geneId %in% toKeep) 
       
+      #! Get the genes after filtering
+      myStats$removeDuplicates$nBranchedAfter = n_distinct(distMat$geneId)
+      myStats$genesAfterFilter = list(
+        summary = genesDetected %>% summarise(
+          n = n(), avgCover = mean(cover), sdCover = sd(cover), minCover = {{minCover}}), 
+        genes = genesDetected$geneId
+      )
+      #!
      
       #---- Save detected results - but delete old first ----
       myConn = dbConnect(SQLite(), database, synchronous = NULL)
@@ -840,6 +915,18 @@ tryCatch({
       #Write the startConn table
       startConn = startConn %>% filter(geneId %in% genesDetected$geneId)
       write_csv(startConn, paste0(tempFolder, "segmentsOfInterest.csv"))
+      
+      #! Get startConnInfo before filter 
+      myStats$startConn = myStats$startConn %>% left_join(
+        startConn %>% group_by(geneId) %>% summarise(
+        type = case_when(
+          any(type == "noFragments") ~ "noFragments",
+          all(type == "fragmentsOnly") ~ "fragmentsOnly",
+          TRUE ~ "singleSide"
+        ), .groups = "drop"
+      ) %>% group_by(type) %>% summarise(nAfter = n(), .groups = "drop"),
+      by  ="type")
+      #!
 
       #Update GFA files 
       noFragments = list(
@@ -897,10 +984,20 @@ tryCatch({
       registerDoParallel(cores=maxCPU)
 
       #Read all GFA files
-      blastSegments = foreach(myGene = unique(noFragments$segments$geneId), 
-        .combine = "bind_rows") %dopar% {
+      #! add .combine = "bind_rows" when removed and chage below too!!
+      blastSegments = foreach(myGene = unique(noFragments$segments$geneId)) %dopar% {
                 
             fullGFA = gfa_read(sprintf("%sgenesDetected/%s.gfa", tempFolder, myGene))
+            
+            #! Get the info before simplification
+            tempStats = fullGFA$segments %>% 
+              summarise(
+                geneId = {{myGene}}, when = "before", 
+                nSeg = n(), avgLN = mean(LN), 
+                sdLN = sd(LN), avgKC = mean(KC), sdKC = sd(KC),
+                links = nrow(fullGFA$links), .groups = "drop"
+              )
+            #!
             
             if(nrow(fullGFA$links) == 0){
               return(data.frame())
@@ -911,31 +1008,7 @@ tryCatch({
               pull(name)
             
             myGFA = map(segmentsOfInterest, function(segmentOfInterest){
-              
-              #Check if filter yields any results
-              
-              
-              # #Remove disconnected pieces that do not contain a start segment
-              # myGraph = igraph::graph_from_data_frame(data.frame(
-              #   from = myGFA$links$from,
-              #   to = myGFA$links$to
-              # ), directed = F)
-              # 
-              # myGraph = igraph::components(myGraph)$membership
-              # myGraph = data.frame(
-              #   name = names(myGraph),
-              #   group = myGraph
-              # ) %>%
-              #   group_by(group) %>%
-              #   filter(any(str_detect(name, "_start$"))) %>%
-              #   ungroup() %>% distinct()
-              # 
-              # myGFA = gfa_filterSegments(myGFA, myGraph$name[myGraph$name %in% myGFA$segments$name])
-              # 
-              # #Get start segment to evaluate
-              # segmentOfInterest = segmentsOfInterest %>% 
-              #   filter(geneId == myGene) %>% pull(from)
-              
+
               #Stay within maxPathDist / maxPathSteps around this segment
               myGFA = gfa_neighbourhood(fullGFA, segmentOfInterest, maxPathDist,
                                         maxSteps = maxPathIter)
@@ -1011,13 +1084,37 @@ tryCatch({
             
             gfa_write(fullGFA, sprintf("%s/genesDetected/simplifiedGFA/%s_simplified.gfa",
                                      tempFolder, myGene))
-            return(fullGFA$segments %>% filter((LN > minBlastLength) |
-                                               (start != "0" & LN >= 75)) %>%
-                     mutate(geneId = myGene))
+            
+            #! Get the info before simplification
+            tempStats = bind_rows(
+              tempStats, fullGFA$segments %>% 
+                summarise(
+                  geneId = {{myGene}}, when = "after", 
+                  nSeg = n(), avgLN = mean(LN), 
+                  sdLN = sd(LN), avgKC = mean(KC), sdKC = sd(KC),
+                  links = nrow(fullGFA$links), .groups = "drop"
+                ))
+            #!
+            
+            return(list(gfa = fullGFA$segments %>% 
+                          filter((LN > minBlastLength) | (start != "0" & LN >= 75)) %>%
+                          mutate(geneId = myGene), tempStats = tempStats))
 
       }
 
-      blastSegments = bind_rows(blastSegments)
+      #! Get the info after simplification - reductinon in cases more than 3 seg
+      myStats$simplification = bind_rows(lapply(blastSegments, "[[", 2)) %>%
+        group_by(geneId) %>% filter(nSeg[when == "before"] > 3) %>%  summarise(
+          segReduction = nSeg[when == "after"] / nSeg[when == "before"],
+          avgLNincrease = avgLN[when == "after"] / avgLN[when == "before"],
+          sdLNincrease = sdLN[when == "after"] / sdLN[when == "before"],
+          linkReduction = links[when == "after"] / links[when == "before"],
+          .groups = "drop"
+        )
+      #!
+      
+      blastSegments = bind_rows(lapply(blastSegments, "[[", 1))
+      
       if(verbose > 0){cat("done\n")}
 
       #Create final table of fragmented and simplified GFA
@@ -1042,6 +1139,14 @@ tryCatch({
                   blastSegments$blastId, type = "nucleotide")
       
       write.csv(blastSegments, sprintf("%sblastSegments.csv", tempFolder), row.names = F)
+      
+      #! Blast segments 
+      myStats$blastSeg = blastSegments %>% summarise(
+        when = "beforeCluster", n = n(), avgLN = mean(LN), sdLN = sd(LN), 
+        minBlastLength = {{minBlastLength}},
+        .groups = "drop"
+      )
+      #!
 
       #Feedback and Logs
       newLogs = rbind(newLogs, list(as.integer(Sys.time()), 14,
@@ -1102,7 +1207,15 @@ tryCatch({
 
       fastaPaths = read.table(sprintf("%sblastSegments.out", tempFolder))
       fastaPaths = blastSegments %>% filter(blastId %in% (fastaPaths %>% filter(V10 == "*") %>% pull("V9")))
-
+      
+      #! Blast segments after cluster
+      myStats$blastSeg = bind_rows(myStats$blastSeg, fastaPaths %>% summarise(
+        when = "afterCluster", n = n(), avgLN = mean(LN), sdLN = sd(LN), 
+        minBlastLength = {{minBlastLength}},
+        .groups = "drop"
+      ))
+      #!
+     
       #FASTA to blast should not contain more than 250,000 nucleotides per file (split if needed)
       x = file.remove(list.files(sprintf("%s",tempFolder),
                              pattern = "blastSegmentsClustered", full.names = T))
@@ -1230,6 +1343,12 @@ finally = {
   if(file.exists(sprintf("%smasterGFA.db", tempFolder))){
     system(sprintf("%s -f %s", zipMethod, sprintf("%smasterGFA.db", tempFolder)))
   }
+  
+  #! Wrap up and save 
+  myStats$final = data.frame(timeStamp = as.numeric(Sys.time()), 
+                             success = 22 %in% newLogs$actionId)
+  write_rds(myStats, sprintf("/mnt/meta2amrData/pipelineTest/after1200/stats/%s_stats.rds", pipelineId))
+  #!
 
   #Garbage collection
   x = gc(verbose = FALSE, full = T)
