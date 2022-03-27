@@ -10,7 +10,8 @@ suppressPackageStartupMessages(library(RSQLite))
 
 #Make sure the blast bin folder is in the R env 
 #Sys.getenv("PATH")
-#If not, add to PATH in Renviron file at /opt/R/4.0.2/lib/R/etc/Renviron
+#If not, add /opt/ncbi-blast-2.10.1+/bin to PATH in 
+#Renviron file at /opt/R/4.0.2/lib/R/etc/Renviron
 
 
 # ---- Inputs ----
@@ -29,7 +30,7 @@ maxCPU = parallel::detectCores()
 #Fix and integrate later!!
 #The Renv needs to know where the BLASTDB is and this is not taken
 #using and export by the user for now ...
-Sys.setenv(BLASTDB = args$blastDB)
+Sys.setenv(BLASTDB = blastDB)
 
 #Set these general blast args
 blastArgs = list(
@@ -63,10 +64,10 @@ statusCodes = data.frame(
               "remote results downloaded and processed", "remote download or post-processing failed", 
               "local search started", "local search finished and processed sucessfully", "local search failed"))
 
-if(system(paste0("if [ -z `command -v ", blastn, "` ]; then echo T; else echo F; fi"), intern = T)){
+if(system(paste0("if [ -z `command -v \"blastn\"` ]; then echo T; else echo F; fi"), intern = T)){
   stop("The local blastn module cannot be located.\n ",
-       "Please check the settings file and update the localBlastBlastn to the blastn module if needed.\n ",
-       "Or run remoteBlast.sh if you don't have blast installed (or the resources)")
+       "Please verify that blastn is in the PATH variable (both system and Renvironment)",
+       "\n More info in documnetation")
 }
 
 tryCatch({
