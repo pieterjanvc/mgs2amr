@@ -44,13 +44,11 @@ while getopts ":hn:b:p:v:d:" opt; do
 	   echo -e "\n"
 	   exit
     ;;	
-	b) blastDB=`realpath "${OPTARG}"`
-    ;;
 	p) pipelineId="${OPTARG}"
     ;;
 	v) verbose="${OPTARG}"
     ;;
-  d) database="${OPTARG}"
+	d) database="${OPTARG}"
     ;;
     \?) echo "Unknown argument provided"
 	    exit
@@ -67,18 +65,35 @@ elif [ ! -f $database ]; then
 		echo -e "\n\e[91mThe database provided does not exist\e[0m"; exit;
 fi
 
-if [ -z ${blastDB+x} ]; then 
-	blastDB=`grep -oP "localBlastDB\s*=\s*\K(.*)" $baseFolder/settings.txt`
+if [ ${pipelineId+x} ]; then 
+	if ! echo "$pipelineId" | grep -qP "^\s*(\d+\s*,\s*)*\d+\s*$"; then
+		echo -e "\n\e[91mThe pipelineIds (-p) must be comma separated integers\e[0m"; exit;
+	fi
 fi
-
-# if [ -z ${pipelineId+x} ]; then 
-	# pipelineId=0
-# fi
 
 if [ -z ${verbose+x} ]; then 
 	verbose=`grep -oP "localBlastVerbose\s*=\s*\K(.*)" $baseFolder/settings.txt`
 elif ! grep -qP "^-?(0|1|2)$" <<< $verbose; then	
-	echo -e "\n\e[91mThe verbose option (-v) needs to be either 0 or 1\e[0m"; exit 1;
+	echo -e "\n\e[91mThe verbose option (-v) needs to be either 0 or 1\e[0m"; exit;
+fi
+
+#Check if BLASTn is present
+if [ -z `command -v blastn` ]; then 
+	echo -e "\n\e[91mBLASTn not found\n"\
+	"  Make sure blastn is installed and in the PATH (see documentation)\e[0m"
+	exit
+else 
+	blastn=`which blastn`
+fi
+
+#Check if the $BLASTDB variable is set
+if [ -z "$BLASTDB" ]; then
+	BLASTDB=`grep -oP "localBlastDB\s*=\s*\K(.*)" $baseFolder/settings.txt`
+fi
+
+if ! blastdbcmd -list "$BLASTDB" | grep -q Nucleotide ; then 
+	echo -e "\n\e[91mThe \$BLASTDB variable is not found\n"\
+	"  Set by: export BLASTDB=/path/to/ntDBfolder\e[0m"
 fi
 
 #Register the start of the script in the DB
@@ -98,7 +113,7 @@ fi
 
 #Run BLASTn for all in the queue (unless runId specified)
 $Rscript $baseFolder/dataAndScripts/localBlast.R \
-	"$baseFolder" "$database" "$runId" "$verbose" "$blastDB" "$pipelineId"
+	"$baseFolder" "$database" "$runId" "$verbose" "$blastn" "$blastDB" "$pipelineId"
 
 
 #Update the DB

@@ -22,8 +22,9 @@ baseFolder = formatPath(args[[1]], endWithSlash = T)
 database = args[[2]]
 runId = as.integer(args[[3]])
 verbose = abs(as.integer(args[[4]]))
-blastDB = args[[5]]
-pipelineId = str_trim(unlist(strsplit(args[[6]], ",")))
+blastn = args[[5]]
+blastDB = args[[6]]
+pipelineId = str_trim(unlist(strsplit(args[[7]], ",")))
 
 maxCPU = parallel::detectCores()
 
@@ -64,13 +65,8 @@ statusCodes = data.frame(
               "remote results downloaded and processed", "remote download or post-processing failed", 
               "local search started", "local search finished and processed sucessfully", "local search failed"))
 
-if(system(paste0("if [ -z `command -v \"blastn\"` ]; then echo T; else echo F; fi"), intern = T)){
-  stop("The local blastn module cannot be located.\n ",
-       "Please verify that blastn is in the PATH variable (both system and Renvironment)",
-       "\n More info in documnetation")
-}
-
 tryCatch({
+  
   # ---- Local BLAST ----
   #**********************
   
@@ -101,8 +97,8 @@ tryCatch({
                                   i, nrow(toSubmit), toSubmit$pipelineId[i], toSubmit$submId[i]))}
       
       #Run local blastn
-      system(sprintf('blastn -db "%s" -query "%s" -task megablast -evalue %s -word_size %i -max_target_seqs %i -max_hsps %i -taxidlist %s -num_threads %i -outfmt "%s" | gzip > "%s"',
-                     blastArgs$db, paste0(toSubmit$folder[i], toSubmit$fastaFile[i]),
+      system(sprintf('%s -db "%s" -query "%s" -task megablast -evalue %s -word_size %i -max_target_seqs %i -max_hsps %i -taxidlist %s -num_threads %i -outfmt "%s" | gzip > "%s"',
+                     blastn, blastArgs$db, paste0(toSubmit$folder[i], toSubmit$fastaFile[i]),
                      blastArgs$evalue, blastArgs$word_size, blastArgs$max_target_seqs, 
                      blastArgs$max_hsps, blastArgs$taxidlist, maxCPU, blastArgs$outfmt, 
                      paste0(toSubmit$folder[i], str_replace(toSubmit$fastaFile[i], ".fasta", ".csv.gz"))))

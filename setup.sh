@@ -139,32 +139,28 @@ $sqlite3 "$database" \
 	VALUES($runId,'setup.sh',$(date '+%s'),5,'MetaCherchant present')"
 echo -e " - MetaCherchant is present"
 
-#Check if BLASTn is either a local tool or link to a remote service
-blastPath=`grep -oP "localBlastBlastn\s*=\s*\K(.*)" $baseFolder/settings.txt`
-if [ -z `command -v $blastPath` ]; then 
-	blastPath=`grep -oP "remoteBlastBlastn\s*=\s*\K(.*)" $baseFolder/settings.txt`
-	curl -s --head $blastPath| head -n 1 | grep "HTTP/1.[01] [23].." > /dev/null
-	if [ "$?" != 0 ]; then
-		message="No valid path to either a local or remote BLASTn service is set\n Set the path to 'blastn' in the settings file"
-		echo -e "\e[91m$message\n" $baseFolder/settings.txt"\e[0m"
-		updateDBwhenError "$runId" "No valid path to either a local or remote BLASTn"
-		exit 1;
-	fi
-	message="local BLASTn NOT present - "
-	echo -e " - (!) Local BLASTn instance not found: localBlast.sh can NOT be used"
+#Check if BLASTn is present
+if [ -z `command -v blastn` ]; then 
+	message="local BLASTn NOT present, "
+	echo -e " - BLASTn not found\n"\
+	"   Make sure blastn is installed and in the PATH (see documentation)"
 else
-	message="local BLASTn present - "
-	echo -e " - Local BLASTn instance present: localBlast.sh can be used"
+	message="local BLASTn present, "
+	echo -e " - Local BLASTn instance present"
 fi
 
-blastPath=`grep -oP "remoteBlastBlastn\s*=\s*\K(.*)" $baseFolder/settings.txt`
-curl -s --head $blastPath| head -n 1 | grep "HTTP/1.[01] [23].." > /dev/null
-if [ "$?" != 0 ]; then
-	message=$message"remote BLASTn present"
-	echo -e " - Remote BLASTn service present: remoteBlast.sh can be used"
-else
-	message=$message"remote BLASTn NOT present"
-	echo -e " - (!) Remote BLASTn service present: remoteBlast.sh can be used"
+#Check if the $BLASTDB variable is set
+if [ -z "$BLASTDB" ]; then
+	BLASTDB=`grep -oP "localBlastDB\s*=\s*\K(.*)" $baseFolder/settings.txt`
+fi
+
+if blastdbcmd -list "$BLASTDB" | grep -q Nucleotide ; then 
+	message=$message"nt DB detected"
+	echo -e " - Nucleotide database found\n"
+else 
+	message=$message"nt DB not detected"
+	echo -e " - The \$BLASTDB variable is not found\n"\
+	"   Set by: export BLASTDB=/path/to/ntDBfolder"
 fi
 
 $sqlite3 "$database" \
