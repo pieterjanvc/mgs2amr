@@ -26,11 +26,9 @@ blastn = args[[5]]
 blastDB = args[[6]]
 pipelineId = str_trim(unlist(strsplit(args[[7]], ",")))
 
-maxCPU = parallel::detectCores()
+forceRedo = F
+maxCPU = parallel::detectCores() ## EDIT LATER
 
-#Fix and integrate later!!
-#The Renv needs to know where the BLASTDB is and this is not taken
-#using and export by the user for now ...
 Sys.setenv(BLASTDB = blastDB)
 
 #Set these general blast args
@@ -43,6 +41,58 @@ blastArgs = list(
   taxidlist = sprintf("%sdataAndScripts/%s", baseFolder, "bact.txids"),
   outfmt = "6 qseqid sallacc staxids sscinames salltitles qlen slen qstart qend sstart send bitscore score length pident nident qcovs qcovhsp"
 )
+
+
+# ---- FUNCTIONS ----
+#********************
+blast_readOutput = function(file, outfmt, separate = T, includeIssues = F, verbose = 1){
+  
+  #Load the output csv (zipped)
+  blastOut = read.table(file, sep = "\t", quote = "", comment.char = "")
+  colnames(blastOut) = strsplit(outfmt, " ")[[1]][-1]
+  
+  #split multiple matches
+  blastOut = blastOut %>% 
+    mutate(x = str_count(staxids, ";"), y = str_count(sallacc, ";"), 
+           z = x == y | x == 0, plasmid = str_detect(salltitles, "plasmid|Plasmid")) 
+  
+  if(!includeIssues){
+    blastOut = blastOut %>% filter(!(x > 0 & !z))
+    issues = data.frame()
+  } else {
+    #Multiple taxid but not the same number of accessions
+    issues = blastOut %>% filter(x > 0 & !z) 
+  }
+  
+  if(nrow(issues) > 0){
+    warning(nrow(issues), " rows contain ambiguous accession / taxid results")
+  }
+  
+  if(separate){
+    return(bind_rows(
+      
+      #No merged data
+      blastOut %>% filter(y == 0),
+      #Identical number of accession and taxids 
+      blastOut %>% 
+        filter(x > 0 & z) %>% 
+        separate_rows(sallacc, staxids, sscinames, sep = ";"),
+      #One taxId for multiple accessions
+      blastOut %>% 
+        filter(x == 0 & y > 0 & z) %>% 
+        separate_rows(sallacc, staxids, sscinames, sep = ";"),
+      issues
+      
+    ) %>% select(-x, -y, -z))
+  } else {
+    return(blastOut %>% select(-x, -y, -z))
+  }
+  
+}
+
+
+# ---- MAIN CODE ----
+#********************
 
 #Limit the search for specific pipelineIds if set, else do all
 prevRunId = ifelse(length(pipelineId) != 0,
@@ -97,11 +147,99 @@ tryCatch({
                                   i, nrow(toSubmit), toSubmit$pipelineId[i], toSubmit$submId[i]))}
       
       #Run local blastn
+      #----------------
+      
+      # First blast run
       system(sprintf('%s -db "%s" -query "%s" -task megablast -evalue %s -word_size %i -max_target_seqs %i -max_hsps %i -taxidlist %s -num_threads %i -outfmt "%s" | gzip > "%s"',
                      blastn, blastArgs$db, paste0(toSubmit$folder[i], toSubmit$fastaFile[i]),
                      blastArgs$evalue, blastArgs$word_size, blastArgs$max_target_seqs, 
                      blastArgs$max_hsps, blastArgs$taxidlist, maxCPU, blastArgs$outfmt, 
                      paste0(toSubmit$folder[i], str_replace(toSubmit$fastaFile[i], ".fasta", ".csv.gz"))))
+      
+      # Second blast run (in case all results identical bit_score)
+      blastOut = lapply(
+        list.files(toSubmit$folder[i], full.names = T,
+                   pattern = "blastSegmentsClustered\\d+.csv.gz"),
+        blast_readOutput, outfmt = outfmt) %>% bind_rows() %>% 
+        mutate(geneId = str_extract(qseqid, "^([^_]+)"))
+
+      if(!(file.exists(sprintf("%s/expand_1.csv.gz", toSubmit$folder[i])) | 
+           file.exists(sprintf("%s/expand_2.csv.gz", toSubmit$folder[i]))) | forceRedo){
+        
+        #Get segments that have identical blast results (thus might miss some because of 250 lim)
+        rerun = blastOut %>% 
+          select(segmentId = qseqid, bitscore, geneId, nident, 
+                 qlen, length) %>% 
+          group_by(segmentId, geneId) %>% 
+          summarise(x = n_distinct(bitscore) == 1, .groups = "drop",
+                    identity = nident[1] / qlen[1],
+                    cover = length[1] / qlen[1]) %>% 
+          filter(x)
+        
+        #Set these general blast args
+        blastArgs = list(
+          db = "nt",
+          evalue = "1e-20",
+          word_size = 64,
+          max_target_seqs = 5000, #Set max of 5000 results per target
+          max_hsps = 1,
+          qcov_hsp_perc = 100, #Only consider perfect matches
+          perc_identity = 100, #Only consider perfect matches
+          taxidlist = sprintf("%s/bact.txids", toSubmit$folder[i]) #limit to taxa found in first part
+        )
+        
+        write(unique(blastOut$taxid), sprintf("%s/bact.txids", toSubmit$folder[i]), sep = "\n")
+        
+        #Blast all perfect matches together
+        toFasta = rerun %>% filter(cover == 1, identity == 1)
+        
+        if(nrow(toFasta) > 0){
+          
+          myFasta = map_df(1:length(list.files(toSubmit$folder[i], pattern = "blastSegmentsClustered\\d.csv.gz")), function(x){
+            fasta_read(sprintf("%s/blastSegmentsClustered%i.fasta", toSubmit$folder[i], x),
+                       type = "n") %>% filter(id %in% toFasta$segmentId)})
+          
+          fasta_write(myFasta$seq, sprintf("%s/expand_1.fasta", toSubmit$folder[i]), 
+                      myFasta$id, type = "n")
+          
+          #Run local blastn on the new database
+          system(sprintf('blastn -db "%s" -query "%s" -task megablast -evalue %s -word_size %i -max_target_seqs %i -max_hsps %i -num_threads %i -qcov_hsp_perc %.2f -perc_identity %.2f -taxidlist %s -outfmt "%s" | gzip > "%s"',
+                         blastArgs$db, sprintf("%s/expand_1.fasta", toSubmit$folder[i]),
+                         blastArgs$evalue, blastArgs$word_size, blastArgs$max_target_seqs, 
+                         blastArgs$max_hsps, maxCPU, blastArgs$qcov_hsp_perc,
+                         blastArgs$perc_identity, blastArgs$taxidlist, outfmt,
+                         sprintf("%s/expand_1.csv.gz", toSubmit$folder[i])))
+        }
+        
+        #Imperfect ones get blased separately
+        toFasta = rerun %>% filter(cover < 1 | identity < 1)
+        if(nrow(toFasta) > 0){
+          
+          myFasta = map_df(1:length(list.files(toSubmit$folder[i], pattern = "blastSegmentsClustered\\d+.csv.gz")), function(x){
+            fasta_read(sprintf("%s/blastSegmentsClustered%i.fasta", toSubmit$folder[i], x),
+                       type = "n") %>% filter(id %in% toFasta$segmentId)})
+          
+          fasta_write(myFasta$seq, sprintf("%s/expand_2.fasta", toSubmit$folder[i]), 
+                      myFasta$id, type = "n")
+          
+          #Set the settings to the min cover and identity of imperfect ones
+          blastArgs$qcov_hsp_perc = floor(min(toFasta$cover) * 10000) / 10000
+          blastArgs$perc_identity = floor(min(toFasta$identity) * 10000) / 10000
+          
+          #Run local blastn on the new database
+          system(sprintf('blastn -db "%s" -query "%s" -task megablast -evalue %s -word_size %i -max_target_seqs %i -max_hsps %i -num_threads %i -qcov_hsp_perc %.2f -perc_identity %.2f -taxidlist %s -outfmt "%s" | gzip > "%s"',
+                         blastArgs$db, sprintf("%s/expand_2.fasta", toSubmit$folder[i]),
+                         blastArgs$evalue, blastArgs$word_size, blastArgs$max_target_seqs, 
+                         blastArgs$max_hsps, maxCPU, blastArgs$qcov_hsp_perc,
+                         blastArgs$perc_identity, blastArgs$taxidlist, outfmt,
+                         sprintf("%s/expand_2.csv.gz", toSubmit$folder[i])))
+        }
+        
+        
+      }
+      
+      #Update MGS2AMR DB
+      #------------------
       
       #Update the DB
       myConn = dbConnect(SQLite(), database)
