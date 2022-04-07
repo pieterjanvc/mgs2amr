@@ -29,7 +29,7 @@ trap 'err_report ${LINENO}' ERR
 
 updateDBwhenError() {
 	#Update the DB
-    $sqlite3 "$baseFolder/dataAndScripts/meta2amr.db" \
+    $sqlite3 -cmd ".timeout 30000" $database \
 	"UPDATE scriptUse
 	SET end = '$(date '+%F %T')', status = 'error',
 	info = '$2'
@@ -97,7 +97,7 @@ if ! blastdbcmd -list "$BLASTDB" | grep -q Nucleotide ; then
 fi
 
 #Register the start of the script in the DB
-runId=$($sqlite3 $database \
+runId=$($sqlite3 -cmd ".timeout 30000" $database \
 	"INSERT INTO scriptUse (pipelineId,scriptName,start,status) \
 	values(0,'localBlast.sh','$(date '+%F %T')','running'); \
 	SELECT runId FROM scriptUse WHERE runId = last_insert_rowid()")
@@ -113,11 +113,11 @@ fi
 
 #Run BLASTn for all in the queue (unless runId specified)
 $Rscript $baseFolder/dataAndScripts/localBlast.R \
-	"$baseFolder" "$database" "$runId" "$verbose" "$blastn" "$blastDB" "$pipelineId"
+	"$baseFolder" "$database" "$runId" "$verbose" "$blastn" "$BLASTDB" "$pipelineId"
 
 
 #Update the DB
-$sqlite3 $database \
+$sqlite3 -cmd ".timeout 30000" $database \
 	"UPDATE scriptUse
 	SET end = '$(date '+%F %T')', status = 'finished'
 	WHERE runId = $runId"
