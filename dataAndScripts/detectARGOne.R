@@ -10,7 +10,7 @@ pipelineIds = NULL
 generateReport = F
 forceRedo = F
 
-myId = "6" #452, 845, 18
+myId = "4" #452, 845, 18
 
 
 minBlastLength = 250
@@ -64,9 +64,10 @@ blast_readOutput = function(file, outfmt, separate = T, includeIssues = F, verbo
         separate_rows(sallacc, staxids, sscinames, sep = ";"),
       issues
       
-    ) %>% select(-x, -y, -z))
+    ) %>% select(-x, -y, -z) %>% mutate(staxids = as.character(staxids)))
   } else {
-    return(blastOut %>% select(-x, -y, -z))
+    return(blastOut %>% select(-x, -y, -z) %>% 
+             mutate(staxids = as.character(staxids))) 
   }
   
 }
@@ -221,7 +222,8 @@ if(length(expandBlast) > 0){
   blastOut2 = lapply(
     list.files(sample, full.names = T,
                pattern = "expand_\\d+.csv.gz"),
-    blast_readOutput, outfmt = outfmt) %>% bind_rows() %>% 
+    blast_readOutput, outfmt = outfmt) %>% 
+    bind_rows() %>% 
     mutate(geneId = str_extract(qseqid, "^([^_]+)"))
   
   blastOut = bind_rows(
@@ -281,6 +283,9 @@ blastOut[blastOut$genus == "Enterobacter" &
            blastOut$species == "aerogenes","genus"] = "Klebsiella"
 
 
+# test = blastOut %>% filter(!segmentId %in% blastSegments$name)
+# test = blastSegments %>% filter(!name %in% blastOut$segmentId)
+
 #--
 # backup2 = blastOut
 # blastOut = backup2
@@ -317,7 +322,10 @@ pathData = map_df(pathData, function(myGFA){
   segmentOfInterest = segmentsOfInterest %>% 
     filter(geneId == myGene, type != "fragmentsOnly") 
   
-  map_df(1:nrow(segmentOfInterest), function(i){
+  maxPathId = 0
+  result = data.frame()
+  
+  for(i in 1:nrow(segmentOfInterest)){
     
     myGroup = segmentOfInterest %>% filter(name == segmentOfInterest$name[i]) %>% 
       pull(group)
@@ -325,7 +333,9 @@ pathData = map_df(pathData, function(myGFA){
     gfa = gfa_filterSegments(fullGFA, segments = (fullGFA$segments %>% 
                                filter(group == myGroup) %>% pull(name)))
     
-    0#If there are linked segments ...
+    
+    
+    #If there are linked segments ...
     if(nrow(gfa$links) > 0){
       
       # #Get the (largest) start segment
@@ -351,16 +361,12 @@ pathData = map_df(pathData, function(myGFA){
             LN = path$LN,
             KC = path$KC)
         }) %>% 
-        mutate(geneId = str_extract(segmentId, "^\\d+"))
+        mutate(geneId = str_extract(segmentId, "^\\d+"),
+               group = myGroup)
       
       
       #If no paths, return empty frame
-      if(nrow(x) == 0 ){
-        return(data.frame())
-      }
-      #Otherwise add the path data 
-      else{
-        
+      if(nrow(x) != 0 ){
         
         x = x %>% 
           # left_join(
@@ -374,11 +380,13 @@ pathData = map_df(pathData, function(myGFA){
           # ) %>% 
           # filter(LN >=250) %>%
           group_by(geneId, pathId) %>% mutate(
-            pathId = as.integer(pathId),
+            pathId = pathId + maxPathId,
             order = n():1,
             #These files contain full GFA structures, no fragments
             type = segmentOfInterest$type[i]) %>% 
           ungroup()
+        
+        maxPathId = max(x$pathId)
         
         # if(any(x$pathType == 2)){
         #   
@@ -390,18 +398,19 @@ pathData = map_df(pathData, function(myGFA){
         #   x = x %>% filter(!(pathType == 2 & orientation == toRemove))
         # }
         
-        return(x)
+        result = bind_rows(result, x)
         
       }
       
       
       
     } else if(nrow(gfa$segments) > 0){
+      
       #Case where there are no links, just one or more segments
-      gfa$segments %>% 
+      x = gfa$segments %>% 
         select(segmentId = name, KC, LN) %>% 
         mutate(
-          pathId = 1:n(),
+          pathId = 1:n() + maxPathId,
           orientation = 0,
           geneId = str_extract(segmentId, "^\\d+"),
           dist = ifelse(str_detect(segmentId, "_start$"), -LN, 0),
@@ -409,11 +418,14 @@ pathData = map_df(pathData, function(myGFA){
           type = "full"
         )
       
-    } else{
-      #File is empty
-      return(data.frame())
-    }
-  })
+      maxPathId = max(x$pathId)
+      
+      result = bind_rows(result, x)
+      
+    } 
+  }
+  
+  return(result)
   
 })
 
@@ -531,16 +543,27 @@ blastOut = blastOut %>%
 #     left_join(genesDetected %>% select(geneId, fragType = type), by = "geneId")
 # }
 
+# test = pathData %>% filter(type != "fragment") %>% group_by(geneId, pathId) %>% 
+#   mutate(startSeg = segmentId[order == 1]) %>% ungroup() %>% 
+#   select(geneId, segmentId, startSeg) %>% distinct() %>% 
+#   mutate(geneId = as.integer(geneId))
+# 
+# test = segmentsOfInterest %>% select(geneId, startSeg = name, group) %>% 
+#   left_join(test, by = c("geneId", "startSeg")) %>% 
+#   mutate(segmentId = ifelse(is.na(segmentId), startSeg, segmentId)) %>% 
+#   group_by(segmentId) %>% mutate(n = n_distinct(group))
 
+blastOut$start[blastOut$start &
+                 ! blastOut$segmentId %in% segmentsOfInterest$name] = F
 
+#Add the group (membership of subgraphs)
+blastOut = blastOut %>% left_join(
+  pathData %>% select(segmentId, group) %>% distinct(), by = "segmentId")
 
-blastOut$start[blastOut$start & 
-                 ! blastOut$segmentId %in% segmentsOfInterest$from] = F
-
-#Only consider segmenst in the graph that are also the same distance
-#in the actual geome alignments
+#Only consider segments in the graph that are also the same distance
+#in the actual genome alignments
 tempVar = blastOut %>% 
-  group_by(geneId, accession) %>% 
+  group_by(geneId, accession, group) %>% 
   filter(any(start)) %>% 
   mutate(sMin = ifelse(hit_from < hit_to, hit_from, hit_to),
          sMax = ifelse(hit_from >= hit_to, hit_from, hit_to),
