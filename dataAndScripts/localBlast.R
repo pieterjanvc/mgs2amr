@@ -3,14 +3,13 @@
 #******************************
 # ---- Local BLASTn search ----
 #******************************
-suppressPackageStartupMessages(library(stringr))
-suppressPackageStartupMessages(library(dplyr))
+suppressPackageStartupMessages(library(tidyverse))
 suppressPackageStartupMessages(library(gfaTools))
 suppressPackageStartupMessages(library(RSQLite))
 
 #Make sure the blast bin folder is in the R env 
 #Sys.getenv("PATH")
-#If not, add /opt/ncbi-blast-2.10.1+/bin to PATH in 
+#If not, add /opt/ncbi-blast-2.13.0+/bin to PATH in 
 #Renviron file at /opt/R/4.0.2/lib/R/etc/Renviron
 
 
@@ -27,9 +26,14 @@ blastDB = args[[6]]
 pipelineId = str_trim(unlist(strsplit(args[[7]], ",")))
 
 forceRedo = F
-maxCPU = parallel::detectCores() ## EDIT LATER
+maxCPU = parallel::detectCores() ## EDIT LATER 
 
 Sys.setenv(BLASTDB = blastDB)
+
+#Check if pigz is available
+
+zipMethod = ifelse(system("command -v pigz", ignore.stdout = T) != 1, 
+                   "pigz", "gzip")
 
 #Set these general blast args
 blastArgs = list(
@@ -83,9 +87,10 @@ blast_readOutput = function(file, outfmt, separate = T, includeIssues = F, verbo
         separate_rows(sallacc, staxids, sscinames, sep = ";"),
       issues
       
-    ) %>% select(-x, -y, -z))
+    ) %>% select(-x, -y, -z) %>% mutate(staxids = as.character(staxids)))
   } else {
-    return(blastOut %>% select(-x, -y, -z))
+    return(blastOut %>% select(-x, -y, -z) %>% 
+             mutate(staxids = as.character(staxids)))
   }
   
 }
@@ -101,7 +106,8 @@ prevRunId = ifelse(length(pipelineId) != 0,
 	"")
 
 #Get all blast submissions that need further follow-up
-myConn = dbConnect(SQLite(), database)
+myConn = dbConnect(SQLite(), database, synchronous = NULL)
+sqliteSetBusyHandler(myConn, 30000)
 submTable = dbGetQuery(myConn, paste("SELECT * FROM blastSubmissions WHERE statusCode in (0,1,3,4)",
 									  prevRunId)) %>% arrange(timeStamp)
 dbDisconnect(myConn) 
@@ -127,44 +133,61 @@ tryCatch({
   #Get all files to submit
   toSubmit = submTable %>% filter(statusCode == 0)
   if(nrow(toSubmit) > 0){
-    for(i in 1:nrow(toSubmit)){
+    
+    allIds = unique(toSubmit$pipelineId)
+    
+    for(myId in allIds){
       
-      #Update the blastSubmissions table
-      myConn = dbConnect(SQLite(), database)
-      q = dbSendStatement(
-        myConn, 
-        "UPDATE blastSubmissions SET runId = ?, timeStamp = ?, statusCode  = ?, statusMessage = ? WHERE submId = ?",
-        params = list(runId, as.integer(Sys.time()), 12, statusCodes$message[12], toSubmit$submId[i]))
-      dbClearResult(q)
-      dbDisconnect(myConn)
+      nextSubmit = toSubmit %>% filter(pipelineId == myId)
       
-      #Feedback and Logs
-      newLogs = rbind(newLogs, list(as.integer(Sys.time()), 2, 
-                                    sprintf("Start BLASTn for pipelineId %i, submId %i", 
-                                            toSubmit$pipelineId[i], toSubmit$submId[i])))
-      if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S  "), 
-                          sprintf("- (%i/%i) pipelineId %i : submId %i ... ", 
-                                  i, nrow(toSubmit), toSubmit$pipelineId[i], toSubmit$submId[i]))}
+      if(verbose > 0){cat(
+        format(Sys.time(), "%H:%M:%S  "), 
+        sprintf("- (%i/%i) Process pipelineId %i \n", which(myId == allIds), 
+                length(allIds), nextSubmit$pipelineId[1]))}
       
-      #Run local blastn
-      #----------------
-      
-      # First blast run
-      system(sprintf('%s -db "%s" -query "%s" -task megablast -evalue %s -word_size %i -max_target_seqs %i -max_hsps %i -taxidlist %s -num_threads %i -outfmt "%s" | gzip > "%s"',
-                     blastn, blastArgs$db, paste0(toSubmit$folder[i], toSubmit$fastaFile[i]),
-                     blastArgs$evalue, blastArgs$word_size, blastArgs$max_target_seqs, 
-                     blastArgs$max_hsps, blastArgs$taxidlist, maxCPU, blastArgs$outfmt, 
-                     paste0(toSubmit$folder[i], str_replace(toSubmit$fastaFile[i], ".fasta", ".csv.gz"))))
+      #Run blastn first round on on all files to blast
+      for(i in 1:nrow(nextSubmit)){
+        
+        #Update the blastSubmissions table
+        myConn = dbConnect(SQLite(), database, synchronous = NULL)
+        sqliteSetBusyHandler(myConn, 30000)
+        q = dbSendStatement(
+          myConn, 
+          "UPDATE blastSubmissions SET runId = ?, timeStamp = ?, statusCode  = ?, statusMessage = ? WHERE submId = ?",
+          params = list(runId, as.integer(Sys.time()), 12, statusCodes$message[12], nextSubmit$submId[i]))
+        dbClearResult(q)
+        dbDisconnect(myConn)
+        
+        #Feedback and Logs
+        newLogs = rbind(newLogs, list(as.integer(Sys.time()), 2, 
+                                      sprintf("Start BLASTn for pipelineId %i, submId %i", 
+                                              nextSubmit$pipelineId[i], nextSubmit$submId[i])))
+        if(verbose > 0){cat(paste(rep(" ", 12), collapse = ""),
+          sprintf("BLASTn for submId %i (%i/%i) ... ", 
+                  nextSubmit$submId[i], i, nrow(nextSubmit)))}
+        
+        # First blast run
+        system(sprintf('%s -db "%s" -query "%s" -task megablast -evalue %s -word_size %i -max_target_seqs %i -max_hsps %i -taxidlist %s -num_threads %i -outfmt "%s" | %s > "%s"',
+                       blastn, blastArgs$db, paste0(nextSubmit$folder[i], nextSubmit$fastaFile[i]),
+                       blastArgs$evalue, blastArgs$word_size, blastArgs$max_target_seqs, 
+                       blastArgs$max_hsps, blastArgs$taxidlist, maxCPU, blastArgs$outfmt, zipMethod,
+                       paste0(nextSubmit$folder[i], str_replace(nextSubmit$fastaFile[i], ".fasta", ".csv.gz"))))
+        
+        if(verbose > 0){cat("done\n")}
+        
+      }
       
       # Second blast run (in case all results identical bit_score)
       blastOut = lapply(
-        list.files(toSubmit$folder[i], full.names = T,
+        list.files(nextSubmit$folder[i], full.names = T,
                    pattern = "blastSegmentsClustered\\d+.csv.gz"),
-        blast_readOutput, outfmt = outfmt) %>% bind_rows() %>% 
+        blast_readOutput, outfmt = blastArgs$outfmt) %>% bind_rows() %>% 
         mutate(geneId = str_extract(qseqid, "^([^_]+)"))
 
-      if(!(file.exists(sprintf("%s/expand_1.csv.gz", toSubmit$folder[i])) | 
-           file.exists(sprintf("%s/expand_2.csv.gz", toSubmit$folder[i]))) | forceRedo){
+      if(!(file.exists(sprintf("%s/expand_1.csv.gz", nextSubmit$folder[1])) | 
+           file.exists(sprintf("%s/expand_2.csv.gz", nextSubmit$folder[1]))) | forceRedo){
+        
+        if(verbose > 0){cat(paste(rep(" ", 12), collapse = ""), "expand BLASTn search ... ")}
         
         #Get segments that have identical blast results (thus might miss some because of 250 lim)
         rerun = blastOut %>% 
@@ -177,49 +200,44 @@ tryCatch({
           filter(x)
         
         #Set these general blast args
-        blastArgs = list(
-          db = "nt",
-          evalue = "1e-20",
-          word_size = 64,
-          max_target_seqs = 5000, #Set max of 5000 results per target
-          max_hsps = 1,
-          qcov_hsp_perc = 100, #Only consider perfect matches
-          perc_identity = 100, #Only consider perfect matches
-          taxidlist = sprintf("%s/bact.txids", toSubmit$folder[i]) #limit to taxa found in first part
-        )
+        blastArgs$max_target_seqs = 5000 #Set max of 5000 results per target
+        blastArgs$qcov_hsp_perc = 100 #Only consider perfect matches
+        blastArgs$perc_identity = 100 #Only consider perfect matches
+        blastArgs$taxidlist = sprintf("%s/bact.txids", nextSubmit$folder[1]) #limit to taxa found in first part
         
-        write(unique(blastOut$taxid), sprintf("%s/bact.txids", toSubmit$folder[i]), sep = "\n")
+        
+        write(unique(blastOut$staxids), sprintf("%s/bact.txids", nextSubmit$folder[1]), sep = "\n")
         
         #Blast all perfect matches together
         toFasta = rerun %>% filter(cover == 1, identity == 1)
         
         if(nrow(toFasta) > 0){
           
-          myFasta = map_df(1:length(list.files(toSubmit$folder[i], pattern = "blastSegmentsClustered\\d.csv.gz")), function(x){
-            fasta_read(sprintf("%s/blastSegmentsClustered%i.fasta", toSubmit$folder[i], x),
+          myFasta = map_df(1:length(list.files(nextSubmit$folder[i], pattern = "blastSegmentsClustered\\d.csv.gz")), function(x){
+            fasta_read(sprintf("%s/blastSegmentsClustered%i.fasta", nextSubmit$folder[1], x),
                        type = "n") %>% filter(id %in% toFasta$segmentId)})
           
-          fasta_write(myFasta$seq, sprintf("%s/expand_1.fasta", toSubmit$folder[i]), 
+          fasta_write(myFasta$seq, sprintf("%s/expand_1.fasta", nextSubmit$folder[1]), 
                       myFasta$id, type = "n")
           
           #Run local blastn on the new database
-          system(sprintf('blastn -db "%s" -query "%s" -task megablast -evalue %s -word_size %i -max_target_seqs %i -max_hsps %i -num_threads %i -qcov_hsp_perc %.2f -perc_identity %.2f -taxidlist %s -outfmt "%s" | gzip > "%s"',
-                         blastArgs$db, sprintf("%s/expand_1.fasta", toSubmit$folder[i]),
+          system(sprintf('%s -db "%s" -query "%s" -task megablast -evalue %s -word_size %i -max_target_seqs %i -max_hsps %i -num_threads %i -qcov_hsp_perc %.2f -perc_identity %.2f -taxidlist %s -outfmt "%s" | %s > "%s"',
+                         blastn, blastArgs$db, sprintf("%s/expand_1.fasta", nextSubmit$folder[1]),
                          blastArgs$evalue, blastArgs$word_size, blastArgs$max_target_seqs, 
                          blastArgs$max_hsps, maxCPU, blastArgs$qcov_hsp_perc,
-                         blastArgs$perc_identity, blastArgs$taxidlist, outfmt,
-                         sprintf("%s/expand_1.csv.gz", toSubmit$folder[i])))
+                         blastArgs$perc_identity, blastArgs$taxidlist, blastArgs$outfmt, zipMethod,
+                         sprintf("%s/expand_1.csv.gz", nextSubmit$folder[1])))
         }
         
         #Imperfect ones get blased separately
         toFasta = rerun %>% filter(cover < 1 | identity < 1)
         if(nrow(toFasta) > 0){
           
-          myFasta = map_df(1:length(list.files(toSubmit$folder[i], pattern = "blastSegmentsClustered\\d+.csv.gz")), function(x){
-            fasta_read(sprintf("%s/blastSegmentsClustered%i.fasta", toSubmit$folder[i], x),
+          myFasta = map_df(1:length(list.files(nextSubmit$folder[i], pattern = "blastSegmentsClustered\\d+.csv.gz")), function(x){
+            fasta_read(sprintf("%s/blastSegmentsClustered%i.fasta", nextSubmit$folder[1], x),
                        type = "n") %>% filter(id %in% toFasta$segmentId)})
           
-          fasta_write(myFasta$seq, sprintf("%s/expand_2.fasta", toSubmit$folder[i]), 
+          fasta_write(myFasta$seq, sprintf("%s/expand_2.fasta", nextSubmit$folder[1]), 
                       myFasta$id, type = "n")
           
           #Set the settings to the min cover and identity of imperfect ones
@@ -227,14 +245,15 @@ tryCatch({
           blastArgs$perc_identity = floor(min(toFasta$identity) * 10000) / 10000
           
           #Run local blastn on the new database
-          system(sprintf('blastn -db "%s" -query "%s" -task megablast -evalue %s -word_size %i -max_target_seqs %i -max_hsps %i -num_threads %i -qcov_hsp_perc %.2f -perc_identity %.2f -taxidlist %s -outfmt "%s" | gzip > "%s"',
-                         blastArgs$db, sprintf("%s/expand_2.fasta", toSubmit$folder[i]),
+          system(sprintf('%s -db "%s" -query "%s" -task megablast -evalue %s -word_size %i -max_target_seqs %i -max_hsps %i -num_threads %i -qcov_hsp_perc %.2f -perc_identity %.2f -taxidlist %s -outfmt "%s" | %s > "%s"',
+                         blastn, blastArgs$db, sprintf("%s/expand_2.fasta", nextSubmit$folder[1]),
                          blastArgs$evalue, blastArgs$word_size, blastArgs$max_target_seqs, 
                          blastArgs$max_hsps, maxCPU, blastArgs$qcov_hsp_perc,
-                         blastArgs$perc_identity, blastArgs$taxidlist, outfmt,
-                         sprintf("%s/expand_2.csv.gz", toSubmit$folder[i])))
+                         blastArgs$perc_identity, blastArgs$taxidlist, blastArgs$outfmt, zipMethod,
+                         sprintf("%s/expand_2.csv.gz", nextSubmit$folder[1])))
         }
         
+        if(verbose > 0){cat("done\n")}
         
       }
       
@@ -242,31 +261,30 @@ tryCatch({
       #------------------
       
       #Update the DB
-      myConn = dbConnect(SQLite(), database)
+      myConn = dbConnect(SQLite(), database, synchronous = NULL)
+      sqliteSetBusyHandler(myConn, 30000)
       q = dbSendStatement(
         myConn, 
-        "UPDATE blastSubmissions SET runId = ?, timeStamp = ?, statusCode = ?, statusMessage = ?
-      WHERE submId = ?",
-        params = list(runId, as.integer(Sys.time()), 13, statusCodes$message[13], toSubmit$submId[i]))
+        sprintf("UPDATE blastSubmissions SET runId = %i, timeStamp = %i, statusCode = %i, statusMessage = \"%s\" WHERE submId IN (%s)",
+        runId, as.integer(Sys.time()), 13, statusCodes$message[13], paste(nextSubmit$submId, collapse = ",")))
       dbClearResult(q)
       
       q = dbSendStatement(
         myConn, 
         "UPDATE pipeline SET statusCode = 4, statusMessage = 'Finished blast', modifiedTimestamp = ?
         WHERE pipelineId = ?",
-        params = list(as.character(Sys.time()), toSubmit$pipelineId[i]))
+        params = list(as.character(Sys.time()), nextSubmit$pipelineId[1]))
       dbClearResult(q)
       
       dbDisconnect(myConn)
       
       #Touch the pipelineId to show that the action was completed
-      system(paste0("touch ", toSubmit$folder[i], "pipelineId"))
+      system(paste0("touch ", nextSubmit$folder[1], "pipelineId"))
       
       #Feedback and Logs
       newLogs = rbind(newLogs, list(as.integer(Sys.time()), 3, 
-                                    sprintf("Finished BLASTn for submId %s",toSubmit$submId[i])))
-      if(verbose > 0){cat("done\n")}
-      
+                                    sprintf("Finished BLASTn for submId %s",
+                                            paste(nextSubmit$submId, collapse = ","))))
     }
   } else {
     
@@ -283,7 +301,8 @@ tryCatch({
 }, 
 finally = {
   
-  myConn = dbConnect(SQLite(), sprintf("%sdataAndScripts/meta2amr.db", baseFolder))
+  myConn = dbConnect(SQLite(), database, synchronous = NULL)
+  sqliteSetBusyHandler(myConn, 30000)
   
   #Submit the logs, even in case of error so we know where to resume
   newLogs$runId = runId
