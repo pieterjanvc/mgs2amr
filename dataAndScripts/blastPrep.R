@@ -131,11 +131,13 @@ tryCatch({
         segments = gfa$segments %>% 
           mutate(start = str_detect(name, "_start$")) %>% 
           group_by(geneId) %>% summarise(
-            nSeg = n(), nStart = sum(start), 
-            avgLN = mean(LN), sdLN = sd(LN), avgKC = mean(KC), sdKC = sd(KC),
-            .groups = "drop"
-          ),
-        links = nrow(gfa$links)
+            nSeg = n(), avgLN = mean(LN), sdLN = sd(LN), avgKC = mean(KC), sdKC = sd(KC),
+            nStart = sum(start), avgSLN = mean(LN[start]), avgSKC = mean(KC[start]),
+            maxSLN  = max(LN[start]), .groups = "drop"
+          ) %>% mutate(pipelineId = pipelineId),
+        links = gfa$links %>% group_by(geneId) %>% summarise(
+          nLinks = n(),.groups = "drop"
+        ) %>% mutate(pipelineId = pipelineId)
       )
       #!
       
@@ -199,8 +201,10 @@ tryCatch({
             nSeg = n(), avgLN = mean(LN), sdLN = sd(LN), avgKC = mean(KC), sdKC = sd(KC),
             nStart = sum(start), avgSLN = mean(LN[start]), avgSKC = mean(KC[start]),
             .groups = "drop"
-          ),
-        links = nrow(gfa$links)
+          ) %>% mutate(pipelineId = pipelineId),
+        links = gfa$links %>% group_by(geneId) %>% summarise(
+          nLinks = n(),.groups = "drop"
+        ) %>% mutate(pipelineId = pipelineId)
       )
       #!
 
@@ -341,9 +345,9 @@ tryCatch({
         filter(start > 0) %>% 
         group_by(geneId) %>% summarise(
           nStart = sum(start > 0), 
-          avgSLN = mean(LN), avgSKC = mean(KC),
+          avgSLN = mean(LN), avgSKC = mean(KC), maxSLN  = max(LN),
           .groups = "drop"
-        )
+        ) %>% mutate(pipelineId = pipelineId)
       #!
 
 
@@ -454,7 +458,8 @@ tryCatch({
           all(type == "fragmentsOnly") ~ "fragmentsOnly",
           TRUE ~ "singleSide"
         ), .groups = "drop"
-      ) %>% group_by(type) %>% summarise(nBefore = n(), .groups = "drop")
+      ) %>% group_by(type) %>% summarise(nBefore = n(), .groups = "drop") %>% 
+        mutate(pipelineId = pipelineId)
       #!
       
       #Extract the kmercounts
@@ -515,7 +520,8 @@ tryCatch({
       #! Get the geneInfo before filter
       myStats$genesBeforeFilter = list(
         summary = genesDetected %>% summarise(
-          n = n(), avgCover = mean(cover), sdCover = sd(cover), minCover = {{minCover}}), 
+          n = n(), avgCover = mean(cover), sdCover = sd(cover), minCover = {{minCover}}) %>% 
+          mutate(pipelineId = pipelineId), 
         genes = genesDetected$geneId
       )
       #!
@@ -542,7 +548,8 @@ tryCatch({
       fragments = gfa_mergeSegments(fragments, extraSummaries = list(
         name = function(x) paste0(str_extract(x$name[1], "^\\d+"), "_fragUnitig"),
         geneId = function(x) str_extract(x$name[1], "^\\d+"),
-        old = function(x) x$name[x$start > 0][1]
+        old = function(x) x$name[x$start > 0][1],
+        start = function(x) sum(x$start * x$LN) / sum(x$LN)
       ), suffix = "_start")
       
       #Update the startConn with merged segments
@@ -557,9 +564,6 @@ tryCatch({
       
       fragments$segments = fragments$segments %>% select(-old) %>% distinct()
       
-      # test = startConn %>% filter(name %in% temp$name) %>% select(name, group)
-      
-      
       #No fragments are all other files (might contain fragments, but ignored)
       noFragments = gfa$segments %>% 
         filter(
@@ -571,7 +575,29 @@ tryCatch({
       
       #! Get the updates before fragment filtering
       myStats$removeDuplicates = list(
+        pipelineId = pipelineId,
         nFragBefore = n_distinct(fragments$segments$geneId)
+      )
+
+      myStats$fragmentsBefore = list(
+        segments = fragments$segments %>% 
+          group_by(geneId) %>% summarise(
+            nSeg = n(), avgLN = mean(LN), sdLN = sd(LN), avgKC = mean(KC), sdKC = sd(KC),
+            nStart = sum(start > 0), avgSLN = mean(LN[start > 0]), avgSKC = mean(KC[start > 0]),
+            .groups = "drop"
+          ) %>% mutate(pipelineId = pipelineId)
+      )
+      
+      myStats$noFragmentsBefore = list(
+        segments = noFragments$segments %>% 
+          group_by(geneId) %>% summarise(
+            nSeg = n(), avgLN = mean(LN), sdLN = sd(LN), avgKC = mean(KC), sdKC = sd(KC),
+            nStart = sum(start > 0), avgSLN = mean(LN[start > 0]), avgSKC = mean(KC[start > 0]),
+            .groups = "drop"
+          ) %>% mutate(pipelineId = pipelineId),
+        links = noFragments$links %>% group_by(geneId) %>% summarise(
+          nLinks = n(),.groups = "drop"
+        ) %>% mutate(pipelineId = pipelineId)
       )
       #!
       
@@ -879,7 +905,8 @@ tryCatch({
       myStats$removeDuplicates$nBranchedAfter = n_distinct(distMat$geneId)
       myStats$genesAfterFilter = list(
         summary = genesDetected %>% summarise(
-          n = n(), avgCover = mean(cover), sdCover = sd(cover), minCover = {{minCover}}), 
+          n = n(), avgCover = mean(cover), sdCover = sd(cover), 
+          minCover = {{minCover}}, pipelineId = pipelineId), 
         genes = genesDetected$geneId
       )
       #!
@@ -916,7 +943,7 @@ tryCatch({
       startConn = startConn %>% filter(geneId %in% genesDetected$geneId)
       write_csv(startConn, paste0(tempFolder, "segmentsOfInterest.csv"))
       
-      #! Get startConnInfo before filter 
+      #! Get startConnInfo after filter 
       myStats$startConn = myStats$startConn %>% left_join(
         startConn %>% group_by(geneId) %>% summarise(
         type = case_when(
@@ -938,6 +965,29 @@ tryCatch({
         segments = fragments$segments %>% filter(geneId %in% genesDetected$geneId),
         links = fragments$links 
       ) 
+      
+      #!
+      myStats$fragmentsAfter = list(
+        segments = fragments$segments %>% 
+          group_by(geneId) %>% summarise(
+            nSeg = n(), avgLN = mean(LN), sdLN = sd(LN), avgKC = mean(KC), sdKC = sd(KC),
+            nStart = sum(start > 0), avgSLN = mean(LN[start > 0]), avgSKC = mean(KC[start > 0]),
+            .groups = "drop"
+          ) %>% mutate(pipelineId = pipelineId)
+      )
+      
+      myStats$noFragmentsAfter = list(
+        segments = noFragments$segments %>% 
+          group_by(geneId) %>% summarise(
+            nSeg = n(), avgLN = mean(LN), sdLN = sd(LN), avgKC = mean(KC), sdKC = sd(KC),
+            nStart = sum(start > 0), avgSLN = mean(LN[start > 0]), avgSKC = mean(KC[start > 0]),
+            .groups = "drop"
+          ) %>% mutate(pipelineId = pipelineId),
+        links = noFragments$links %>% group_by(geneId) %>% summarise(
+          nLinks = n(),.groups = "drop"
+        ) %>% mutate(pipelineId = pipelineId)
+      )
+      #!
       
       #Write files with more than just fragments to separate gfa files 
       #for viewing in Bandage
@@ -1085,7 +1135,7 @@ tryCatch({
             gfa_write(fullGFA, sprintf("%s/genesDetected/simplifiedGFA/%s_simplified.gfa",
                                      tempFolder, myGene))
             
-            #! Get the info before simplification
+            #! Get the info after simplification
             tempStats = bind_rows(
               tempStats, fullGFA$segments %>% 
                 summarise(
@@ -1093,7 +1143,7 @@ tryCatch({
                   nSeg = n(), avgLN = mean(LN), 
                   sdLN = sd(LN), avgKC = mean(KC), sdKC = sd(KC),
                   links = nrow(fullGFA$links), .groups = "drop"
-                ))
+                )) %>% mutate(pipelineId = pipelineId)
             #!
             
             return(list(gfa = fullGFA$segments %>% 
@@ -1102,15 +1152,17 @@ tryCatch({
 
       }
 
-      #! Get the info after simplification - reductinon in cases more than 3 seg
-      myStats$simplification = bind_rows(lapply(blastSegments, "[[", 2)) %>%
-        group_by(geneId) %>% filter(nSeg[when == "before"] > 3) %>%  summarise(
-          segReduction = nSeg[when == "after"] / nSeg[when == "before"],
-          avgLNincrease = avgLN[when == "after"] / avgLN[when == "before"],
-          sdLNincrease = sdLN[when == "after"] / sdLN[when == "before"],
-          linkReduction = links[when == "after"] / links[when == "before"],
-          .groups = "drop"
-        )
+      #! Get the info after simplification - reduction in cases more than 3 seg
+      # myStats$simplification = bind_rows(lapply(blastSegments, "[[", 2)) %>%
+      #   group_by(geneId) %>% filter(nSeg[when == "before"] > 3) %>%  summarise(
+      #     segReduction = nSeg[when == "after"] / nSeg[when == "before"],
+      #     avgLNincrease = avgLN[when == "after"] / avgLN[when == "before"],
+      #     sdLNincrease = sdLN[when == "after"] / sdLN[when == "before"],
+      #     linkReduction = links[when == "after"] / links[when == "before"],
+      #     .groups = "drop"
+      #   ) %>% mutate(pipelineId = pipelineId)
+      
+      myStats$simplification = bind_rows(lapply(blastSegments, "[[", 2)) 
       #!
       
       blastSegments = bind_rows(lapply(blastSegments, "[[", 1))
@@ -1145,7 +1197,7 @@ tryCatch({
         when = "beforeCluster", n = n(), avgLN = mean(LN), sdLN = sd(LN), 
         minBlastLength = {{minBlastLength}},
         .groups = "drop"
-      )
+      ) 
       #!
 
       #Feedback and Logs
@@ -1213,13 +1265,13 @@ tryCatch({
         when = "afterCluster", n = n(), avgLN = mean(LN), sdLN = sd(LN), 
         minBlastLength = {{minBlastLength}},
         .groups = "drop"
-      ))
+      )) %>% mutate(pipelineId = pipelineId)
       #!
      
-      #FASTA to blast should not contain more than 250,000 nucleotides per file (split if needed)
+      #FASTA to blast should not contain more than 500,000 nucleotides per file (split if needed)
       x = file.remove(list.files(sprintf("%s",tempFolder),
                              pattern = "blastSegmentsClustered", full.names = T))
-      nFiles = ceiling(sum(fastaPaths$LN) / 250000)
+      nFiles = ceiling(sum(fastaPaths$LN) / 500000)
       maxPerFile = ceiling(nrow(fastaPaths) / nFiles)
 
       for(i in 1:nFiles){
