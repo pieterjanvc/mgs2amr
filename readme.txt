@@ -9,34 +9,35 @@ Arguments [h|t]
  -h Read the help documentation
  -t Run pipeline tests with dummy data (will take some time)
 
-The following software needs to be installed:
+The following software needs to be installed and available in PATH:
 - SQLite3 
   * Precompiled 32-bit version: https://www.sqlite.org/download.html
   * Precompiled 64-bit version: https://github.com/boramalper/sqlite3-x64/releases
-- R version 4.0+
+- R version 4+
   * Packages: gfaTools, RSQLite, igraph, tidyverse (with dplyr 1.0+), parallel,
-              visNetwork, rmarkdown
+              foreach, rmarkdown
   * Precompiled versions: https://www.r-project.org/ 
 - usearch
   * https://www.drive5.com/usearch/download.html
 - MetaCherchant
   * https://github.com/ctlab/metacherchant
-- BLASTn: two options available
-  * Use a local blastn tool 
-    Make sure to download the nucleotide (nt) database or a subset containing all bacteria
-   https://blast.ncbi.nlm.nih.gov/Blast.cgi?PAGE_TYPE=BlastDocs&DOC_TYPE=Download    
-  * Use a cloud instance of BLAST
-    Example: https://blast.ncbi.nlm.nih.gov/Blast.cgi
+- BLASTn (Part of the BLAST+ package): 
+  * https://blast.ncbi.nlm.nih.gov/Blast.cgi?PAGE_TYPE=BlastDocs&DOC_TYPE=Download
+  * Make sure to download and build the nucleotide (nt) database  
+  * Set the nt database folder to the BLASTDB variable and export 
+	 e.g.: `export BLASTDB=/path/to/ntDBfolder` 
+  * Download the taxid database and extact in the BLASTDB folder
+    or use: `perl update_blastdb.pl --passive --timeout 300 --force --verbose taxdb`
+	whilst in the BLASTDB folder
+
+Optional software
 - Pandoc
   * https://pandoc.org/
   * Optional but needed if HTML reports required
-
-Optional software
 - pigz
   * If installed, zipping files will be faster on multi-core machines compared to gzip
    
-IMPORTANT: Update the paths to all dependencies in the 'settings.txt' file 
- if they are not in the default PATH
+IMPORTANT: Make sure all dependencies in the PATH
 
 -- END SETUP.SH ---
 
