@@ -19,7 +19,7 @@ minBlastLength = 250
 outfmt = "6 qseqid sallacc staxids sscinames salltitles qlen slen qstart qend sstart send bitscore score length pident nident qcovs qcovhsp"
 
 
-myId = "86" #452, 845, 18
+myId = "421" #452, 845, 18
 
 # registerDoParallel(cores=5)
 # test = foreach(myId = processed[251:400]) %dopar% {
@@ -303,7 +303,8 @@ pathData = map_df(pathData, function(myGFA){
       
       #Get all semenents in path to start
       x = gfa_pathsToSegment(gfa, segmentOfInterest$name[i], returnList = T, 
-                             pathSegmentsOnly = T, verbose = F) %>% 
+                             pathSegmentsOnly = T, verbose = F, allowReverse = F,
+                             maxDistance = 2000) %>% 
         map_df(function(path){
           data.frame(
             pathId = path$id,
@@ -830,7 +831,8 @@ genomeARG = allBact %>%
   mutate(perc = path / max(path)) %>% 
   filter((plasmid & perc < 0.5) | !any(plasmid))
 
-genomeARG = allBact %>% filter(geneId %in% genomeARG$geneId)
+genomeARG = allBact %>% filter(geneId %in% genomeARG$geneId) #%>% 
+  # filter(!geneId %in%  c("5683", "253"))
 
 
 #Check if there are any, proceed accordingly
@@ -917,7 +919,7 @@ if(n_distinct(genomeARG$myClusters$geneId) < n_distinct(allBact$geneId)){
     mutate(
       #Give a slight edge to genome matches over plasmid
       fullPath = ifelse(!plasmid & !is.na(bactGroup), 
-                        fullPath * 1.01, fullPath),
+                        fullPath * 1.00, fullPath),
       #Pathscore should be at in the top range
       top = fullPath == max(fullPath)) %>% 
     ungroup()
@@ -942,7 +944,7 @@ if(n_distinct(genomeARG$myClusters$geneId) < n_distinct(allBact$geneId)){
   
   #Link genome taxid to the plasmids and asssign if match criteria
   # sapply(myPlasmids, function(x) "2518" %in%  x$geneId)
-  # x = myPlasmids[[3]]
+  # x = myPlasmids[[1]]
   temp = map_df(myPlasmids, function(x){
     
     checkPlasmid %>% filter(geneId %in% x$geneId) %>% 
@@ -963,7 +965,8 @@ if(n_distinct(genomeARG$myClusters$geneId) < n_distinct(allBact$geneId)){
     
   }, .id = "plasmidGroup") %>% 
     group_by(plasmidGroup) %>% 
-    filter((bactGroup == bactGroup[!is.na(bactGroup)][1] )| all(is.na(bactGroup)))
+    filter((bactGroup %in% bactGroup[!is.na(bactGroup)])| 
+             all(is.na(bactGroup)))
   
   #Build data frame with the annotated plasmids
   myPlasmids = map_df(myPlasmids, function(x) x, .id = "plasmidGroup") %>% 
