@@ -19,7 +19,7 @@ minBlastLength = 250
 outfmt = "6 qseqid sallacc staxids sscinames salltitles qlen slen qstart qend sstart send bitscore score length pident nident qcovs qcovhsp"
 
 
-myId = "264" #452, 845, 18
+myId = "86" #452, 845, 18
 
 # registerDoParallel(cores=5)
 # test = foreach(myId = processed[251:400]) %dopar% {
@@ -232,7 +232,17 @@ newLogs = rbind(newLogs, list(as.integer(Sys.time()), 3,
 blastSegments = 
   read.csv(paste0(sample, "/blastSegments.csv")) %>% 
   select(name, LN, KC) %>% 
-  mutate(start = ifelse(str_detect(name, "_start$"), T, F))
+  mutate(
+    start = ifelse(str_detect(name, "_start$"), T, F),
+    geneId = str_extract(name, "\\d+")) %>% 
+  #Correct KC wher depth is an outlier
+  group_by(geneId) %>% mutate(
+    depth = KC / LN,
+    z = (depth - mean(depth)) / sd(depth),
+    depth = ifelse(z > 1.96,  sum(KC[z <= 1.96 & LN >= 250]) / 
+                     sum(LN[z <= 1.96 & LN >= 250]), depth),
+    KC = depth * LN
+  ) %>% ungroup() %>% select(-geneId, -z, -depth)
 
 blastOut = blastOut %>% 
   left_join(blastSegments, by = c("segmentId" = "name")) %>% 
@@ -286,7 +296,6 @@ pathData = map_df(pathData, function(myGFA){
     
     gfa = gfa_filterSegments(fullGFA, segments = (fullGFA$segments %>% 
                                filter(group == myGroup) %>% pull(name)))
-    
     
     
     #If there are linked segments ...
@@ -384,7 +393,7 @@ if(nrow(fragments$segments) > 0){
     group_by(geneId) %>% 
     mutate(pathId = 1, orientation = 0:(n()-1),
            order = 1, type = "fragment", dist = -1,
-           geneId = as.integer(geneId))
+           geneId = as.integer(geneId), depth = KC / LN)
 } else {
   fragments = data.frame()
 }
@@ -396,9 +405,7 @@ pathData = bind_rows(pathData, fragments)  %>% group_by(geneId) %>%
 
 
 pathData = pathData %>% group_by(geneId, pathId, orientation) %>% 
-  mutate(
-    depth = KC / LN,
-    totalLN = sum(LN[dist >= 0]) - 30*sum(dist >= 1)) %>% ungroup()
+  mutate(totalLN = sum(LN[dist >= 0]) - 30*sum(dist >= 1)) %>% ungroup()
 
 if(verbose > 0){cat("done\n")}
 newLogs = rbind(newLogs, list(as.integer(Sys.time()), 5, 
@@ -620,15 +627,12 @@ allBact = allBact %>%
   group_by(geneId, accession, taxid, genus, species, plasmid, LN, KC) %>% 
   summarise(extension = sum(pathScore[!start]) + bitScore[1],
             across(c(fullPath:maxOrder1), max), .groups = "drop") %>% 
-  mutate(
-    depth = KC / LN,
-    geneId = as.integer(geneId)) %>% 
   left_join(
     genesDetected %>%
       select(geneId, gene, subtype, cover, type), 
     by = "geneId"
   ) %>% distinct() %>% 
-  mutate(pathScore = fullPath) %>% 
+  mutate(pathScore = fullPath, depth = KC / LN) %>% 
   group_by(geneId) %>% 
   filter(extension >  0 | all(extension == 0)) %>% #Remove only start hits if any have extension
   ungroup()
@@ -910,11 +914,13 @@ if(n_distinct(genomeARG$myClusters$geneId) < n_distinct(allBact$geneId)){
   #Pathscore should be at in the top range
   checkPlasmid = checkPlasmid %>% 
     group_by(geneId) %>% 
-    mutate(top = fullPath == max(fullPath)) %>% 
-    ungroup() %>% 
-    #Give a slight edge to genome matches over plasmid
-    mutate(fullPath = ifelse(!plasmid & !is.na(bactGroup), 
-                             fullPath * 1.01, fullPath))
+    mutate(
+      #Give a slight edge to genome matches over plasmid
+      fullPath = ifelse(!plasmid & !is.na(bactGroup), 
+                        fullPath * 1.01, fullPath),
+      #Pathscore should be at in the top range
+      top = fullPath == max(fullPath)) %>% 
+    ungroup()
   
   
   myPlasmids = list()
@@ -939,7 +945,7 @@ if(n_distinct(genomeARG$myClusters$geneId) < n_distinct(allBact$geneId)){
   # x = myPlasmids[[3]]
   temp = map_df(myPlasmids, function(x){
     
-    test = checkPlasmid %>% filter(geneId %in% x$geneId) %>% 
+    checkPlasmid %>% filter(geneId %in% x$geneId) %>% 
       group_by(taxid, geneId) %>% filter(fullPath == max(fullPath)) %>% 
       dplyr:: slice(1) %>% 
       group_by(taxid) %>% mutate(x = sum(fullPath)) %>% 
