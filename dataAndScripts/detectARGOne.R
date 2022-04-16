@@ -19,7 +19,7 @@ minBlastLength = 250
 outfmt = "6 qseqid sallacc staxids sscinames salltitles qlen slen qstart qend sstart send bitscore score length pident nident qcovs qcovhsp"
 
 
-myId = "421" #452, 845, 18
+myId = "86" #452, 845, 18
 
 # registerDoParallel(cores=5)
 # test = foreach(myId = processed[251:400]) %dopar% {
@@ -831,8 +831,7 @@ genomeARG = allBact %>%
   mutate(perc = path / max(path)) %>% 
   filter((plasmid & perc < 0.5) | !any(plasmid))
 
-genomeARG = allBact %>% filter(geneId %in% genomeARG$geneId) #%>% 
-  # filter(!geneId %in%  c("5683", "253"))
+genomeARG = allBact %>% filter(geneId %in% genomeARG$geneId) #
 
 
 #Check if there are any, proceed accordingly
@@ -843,7 +842,7 @@ if(nrow(genomeARG) > 0){
   
   #Get the clusters and bact list
   AMRclusters = genomeARG$myClusters %>%
-    select(-primary) %>% filter(val > 0) %>% 
+    filter(val > 0) %>% 
     left_join(allBact %>% 
                 select(taxid, geneId, pathScore), by = c("taxid", "geneId")) %>% 
     mutate(origin = "genome")
@@ -878,13 +877,14 @@ if(n_distinct(genomeARG$myClusters$geneId) < n_distinct(allBact$geneId)){
     ) %>% left_join(
       AMRclusters %>% 
         # filter(val == 1) %>%
-        select(taxid, geneId) %>% 
+        select(taxid, geneId, primary) %>% 
         left_join(genesDetected %>% 
                     # mutate(cover = ifelse(type == "fragmentsOnly", cover2, cover)) %>% 
                     select(geneId, cover, startDepth, type),
                   by = "geneId") %>% 
         group_by(taxid) %>% 
         summarise(
+          primary = all(primary),
           genomeCover = weighted.mean(cover, cover),
           genomeType = case_when(
             all(type == "noFragments") ~ "noFragments",
@@ -916,14 +916,16 @@ if(n_distinct(genomeARG$myClusters$geneId) < n_distinct(allBact$geneId)){
   #Pathscore should be at in the top range
   checkPlasmid = checkPlasmid %>% 
     group_by(geneId) %>% 
+    #Primary matches win if large enough
+    mutate(x=any(primary & fullPath > 5000)) %>% 
+    filter(fullPath <= ifelse(any(x), max(fullPath[primary & fullPath > 5000], na.rm = T), Inf)) %>% 
     mutate(
       #Give a slight edge to genome matches over plasmid
       fullPath = ifelse(!plasmid & !is.na(bactGroup), 
                         fullPath * 1.00, fullPath),
       #Pathscore should be at in the top range
       top = fullPath == max(fullPath)) %>% 
-    ungroup()
-  
+    ungroup() %>% select(-x)
   
   myPlasmids = list()
   temp = checkPlasmid
@@ -944,10 +946,10 @@ if(n_distinct(genomeARG$myClusters$geneId) < n_distinct(allBact$geneId)){
   
   #Link genome taxid to the plasmids and asssign if match criteria
   # sapply(myPlasmids, function(x) "2518" %in%  x$geneId)
-  # x = myPlasmids[[1]]
+  # x = myPlasmids[[2]]
   temp = map_df(myPlasmids, function(x){
     
-    checkPlasmid %>% filter(geneId %in% x$geneId) %>% 
+    test = checkPlasmid %>% filter(geneId %in% x$geneId) %>% 
       group_by(taxid, geneId) %>% filter(fullPath == max(fullPath)) %>% 
       dplyr:: slice(1) %>% 
       group_by(taxid) %>% mutate(x = sum(fullPath)) %>% 
@@ -959,9 +961,12 @@ if(n_distinct(genomeARG$myClusters$geneId) < n_distinct(allBact$geneId)){
       group_by(geneId) %>% 
       filter(depth >= 0.75 * genomeDepth | is.na(genomeDepth) |
                abs(depth - genomeDepth) < 10) %>%
+      #In case top is not in bactgroup, but first one in one has total score > 5000,
+      #Remove the top matches until the first one with bactgroup
+      filter(fullPath <= ifelse(max(0, fullPath[!is.na(bactGroup)]) > 5000,
+                                max(fullPath[!is.na(bactGroup)]), max(fullPath))) %>% 
       filter(fullPath == max(fullPath))
-      # arrange(desc(fullPath)) %>% dplyr::slice(1)
-    
+
     
   }, .id = "plasmidGroup") %>% 
     group_by(plasmidGroup) %>% 
