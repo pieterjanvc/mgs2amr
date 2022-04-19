@@ -1,6 +1,10 @@
 # detach("package:gfaTools", unload=TRUE)
 # library(gfaTools)
 
+myIds = readLines("../pipelineTest/after1200/rerunWithUpdates.out")
+myIds = str_extract(myIds, "(?<=Process pipelineId )\\d+")
+myIds = myIds[!is.na(myIds)]
+
 #Get all ids (temp)
 processed = readLines("/mnt/meta2amrData/pipelineTest/after1200/rerunBlastn.out") %>% 
   str_extract("(?<=pipelineId\\s)\\d+")
@@ -19,16 +23,13 @@ minBlastLength = 250
 outfmt = "6 qseqid sallacc staxids sscinames salltitles qlen slen qstart qend sstart send bitscore score length pident nident qcovs qcovhsp"
 
 
-myId = "86" #452, 845, 18
+myId = "192" #452, 845, 18, 23, 73, 192
 
 # registerDoParallel(cores=5)
-# test = foreach(myId = processed[251:400]) %dopar% {
-#   
+# test = foreach(myId = myIds[101:200]) %dopar% {
+# 
 # tryCatch({
   
-# test = map_df(as.character(2:10), function(myId){
-
-
 #FUNCTIONS
 softmax = function(vals, normalise = F, log = T){
   if(normalise) vals = vals / max(vals)
@@ -45,7 +46,7 @@ blast_readOutput = function(file, outfmt, separate = T, includeIssues = F, verbo
   #split multiple matches
   blastOut = blastOut %>% 
     mutate(x = str_count(staxids, ";"), y = str_count(sallacc, ";"), 
-           z = x == y | x == 0, plasmid = str_detect(salltitles, "plasmid|Plasmid")) 
+           z = x == y | x == 0, plasmid = str_detect(salltitles, "lasmid|ntegron")) 
   
   if(!includeIssues){
     blastOut = blastOut %>% filter(!(x > 0 & !z))
@@ -617,10 +618,9 @@ allBact = allBact %>%
          path1 = pathId[orientation == 1][1],
          maxOrder1 = max(0,order[orientation == 1]),
          LN = sum(LN), KC = sum(KC)) %>% 
-  group_by(geneId, taxid, pathId) %>% 
+  group_by(geneId, taxid, pathId, plasmid) %>% 
   filter(fullPath == max(fullPath)) %>%
   filter(accession %in% accession[rank == max(rank)][1]) %>%
-  # filter(rank == max(rank)) %>% dplyr::slice(1) %>% 
   ungroup() 
 
 
@@ -638,9 +638,18 @@ allBact = allBact %>%
   filter(extension >  0 | all(extension == 0)) %>% #Remove only start hits if any have extension
   ungroup()
 
+# Bact on the same path represent the same species
+allBact = allBact %>% group_by(geneId, path0, path1) %>% 
+  mutate(pathGroup = cur_group_id())
+allBact = allBact %>% group_by(geneId, pathGroup) %>% 
+  mutate(maxGroupScore = max(fullPath)) %>% 
+  filter(fullPath >= 0.75 * maxGroupScore | fullPath > 5000) %>% 
+  group_by(geneId) %>% filter(maxGroupScore >= 0.75 * max(maxGroupScore)) %>% 
+  group_by(geneId, taxid) %>% filter(maxGroupScore == max(maxGroupScore)) %>% 
+  ungroup()
 
 #Adjust the scored for genes by presences of other genes in the same bact
-# myData = genomeARG
+# myData = genomeARG 
 # myData$taxid = myData$accession
 
 adjustBact = function(myData, bactGroupStart = 0){
@@ -829,9 +838,11 @@ genomeARG = allBact %>%
   summarise(path = max(fullPath), .groups = "drop") %>% 
   group_by(geneId) %>% 
   mutate(perc = path / max(path)) %>% 
-  filter((plasmid & perc < 0.5) | !any(plasmid))
+  # filter((plasmid & perc < 0.5) | !any(plasmid))
+  filter(perc == max(perc) & sum(perc) < 2)
 
-genomeARG = allBact %>% filter(geneId %in% genomeARG$geneId) #
+genomeARG = allBact %>% filter(geneId %in% genomeARG$geneId) %>% 
+  filter(!plasmid)
 
 
 #Check if there are any, proceed accordingly
@@ -917,7 +928,7 @@ if(n_distinct(genomeARG$myClusters$geneId) < n_distinct(allBact$geneId)){
   checkPlasmid = checkPlasmid %>% 
     group_by(geneId) %>% 
     #Primary matches win if large enough
-    mutate(x=any(primary & fullPath > 5000)) %>% 
+    mutate(x=any(primary & fullPath > 5000, na.rm = T)) %>% 
     filter(fullPath <= ifelse(any(x), max(fullPath[primary & fullPath > 5000], na.rm = T), Inf)) %>% 
     mutate(
       #Give a slight edge to genome matches over plasmid
@@ -949,22 +960,22 @@ if(n_distinct(genomeARG$myClusters$geneId) < n_distinct(allBact$geneId)){
   # x = myPlasmids[[2]]
   temp = map_df(myPlasmids, function(x){
     
-    test = checkPlasmid %>% filter(geneId %in% x$geneId) %>% 
+    checkPlasmid %>% filter(geneId %in% x$geneId) %>% 
       group_by(taxid, geneId) %>% filter(fullPath == max(fullPath)) %>% 
       dplyr:: slice(1) %>% 
       group_by(taxid) %>% mutate(x = sum(fullPath)) %>% 
       ungroup() %>% mutate(x = x / max(x)) %>% 
       group_by(taxid, geneId) %>% 
-      summarise(fullPath = sum(fullPath), depth = mean(depth),
+      summarise(fullPath = sum(fullPath), depth = mean(depth), top = any(top),
                 across(c(bactGroup:genomeType), max), .groups = "drop") %>%
       mutate(fullPath = ifelse(is.na(bactGroup), fullPath, fullPath*1.05)) %>% 
       group_by(geneId) %>% 
       filter(depth >= 0.75 * genomeDepth | is.na(genomeDepth) |
-               abs(depth - genomeDepth) < 10) %>%
+               abs(depth - genomeDepth) < 10 | top) %>%
       #In case top is not in bactgroup, but first one in one has total score > 5000,
       #Remove the top matches until the first one with bactgroup
-      filter(fullPath <= ifelse(max(0, fullPath[!is.na(bactGroup)]) > 5000,
-                                max(fullPath[!is.na(bactGroup)]), max(fullPath))) %>% 
+      # filter(fullPath <= ifelse(max(0, fullPath[!is.na(bactGroup)]) > 5000,
+      #                           max(fullPath[!is.na(bactGroup)]), max(fullPath))) %>% 
       filter(fullPath == max(fullPath))
 
     
@@ -1023,14 +1034,20 @@ test = bind_rows(
 ) %>% left_join(pathComplexity, by = "geneId") %>% 
   select(bactGroup, genus, species, geneId, gene, subtype, type, pathCompl, 
          fullPath, everything()) %>% 
-  arrange(bactGroup, gene, subtype) %>% mutate(pipelineId = myId)
+  arrange(bactGroup, gene, subtype) %>% 
+  mutate(pipelineId = myId, plasmidGroup = as.integer(plasmidGroup))
 
 # return(test)
-
+# 
 # }, error = function(x){
 #   return(data.frame(pipelineId = myId))
 # })
 # }
 
 sample
+
+# test2 = bind_rows(test1 %>% bind_rows(), test %>% bind_rows())
+# write_csv(test2 %>% bind_rows(), "../testOutput.csv")
+
+
 
