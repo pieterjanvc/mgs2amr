@@ -23,7 +23,7 @@ minBlastLength = 250
 outfmt = "6 qseqid sallacc staxids sscinames salltitles qlen slen qstart qend sstart send bitscore score length pident nident qcovs qcovhsp"
 
 
-myId = "257" #452, 845, 18, 23, 73, 192, 122
+myId = "111" #452, 845, 18, 23, 73, 192, 122
 
 # registerDoParallel(cores=8)
 # test = foreach(myId = myIds[201:250]) %dopar% {
@@ -853,15 +853,15 @@ result = allBact %>%
             genus = genus[1], species = species[1],
             plasmid = all(plasmid), prob = mean(probPlas),
             top = sum(top), match = sum(top) / n()) %>% 
-  filter(n > 1, match == 1, extension > 0)%>% 
-  arrange(desc(match), desc(fullPath))
+  filter(n > 1, match >= 0.95, extension > 0)%>% 
+  arrange(desc(match),desc(fullPath))
 
 
 bactList = map_df(result$geneId, function(genes){
   
   myGenes = c(str_split(genes, ",") %>%unlist() %>% as.integer())
   
-  test2 = allBact %>%
+  allBact %>%
     filter(geneId %in% myGenes) %>% 
     group_by(accession, taxid, genus, species, plasmid) %>%
     summarise(fullPath = sum(fullPath), depth = sum(KC) / sum(LN), .groups = "drop")
@@ -880,12 +880,26 @@ AMRclusters = map_df(result$accession, function(acc){
 }, .id = "bactGroup") 
 
 
-mergeGroups = bactList %>%  group_by(taxid, plasmid) %>% 
+#whcih one
+mergeGroups = bactList %>% group_by(taxid, plasmid) %>% 
   summarise(bactGroup = paste(bactGroup, collapse = ","), 
             pathScore = sum(pathScore), mean = mean(depth), 
             sd = sd(depth), se = sd(depth) / sqrt(n()),
             perc = se / mean) %>% 
   filter(perc < 0.15) %>% arrange(desc(pathScore))
+
+#which one
+mergeGroups = AMRclusters %>% group_by(taxid, plasmid) %>% 
+  summarise(bactGroup = paste(bactGroup, collapse = ","), 
+            pathScore = sum(pathScore), mean = mean(depth), 
+            sd = sd(depth), se = sd(depth) / sqrt(n()),
+            perc = se / mean) %>% 
+  filter(perc < 0.15) %>% arrange(desc(pathScore))
+
+test = bactList %>% filter(bactGroup != 11) %>% 
+  filter(taxid %in% (bactList %>% filter(bactGroup == 11) %>% pull(taxid))) %>% 
+  group_by(bactGroup) %>% filter(perc == max(perc)) %>% ungroup() %>% 
+  filter(perc == 1)
 
 
 bactList$merge = ""
@@ -893,8 +907,7 @@ AMRclusters$merge = ""
 
 while(nrow(mergeGroups) > 0){
   
-  toMerge = mergeGroups$bactGroup[1] %>% str_split(",") %>% unlist() %>%
-    as.integer()
+  toMerge = mergeGroups$bactGroup[1] %>% str_split(",") %>% unlist() 
   
   # bactList = bactList %>% mutate(merge = ifelse(
   #     bactGroup %in% toMerge, paste(merge, paste(toMerge, collapse = " ")), 
@@ -993,7 +1006,7 @@ temp = checkPlasmid
 #FInd the best matching plasmids
 while(nrow(temp > 0)){
   x = temp %>%
-    filter(top) %>% 
+    filter(top >= 0.95) %>% 
     group_by(accession, genus, species) %>% 
     mutate(x = sum(fullPath)) %>% ungroup() %>% 
     filter(x == max(x))
@@ -1039,6 +1052,8 @@ result = bind_rows(AMRclusters, temp) %>%
 
 result[is.na(result$bactGroup),] = result[is.na(result$bactGroup),] %>% 
   group_by(taxid) %>% mutate(bactGroup = cur_group_id() + max(result$bactGroup, na.rm = T))
+
+result = result %>% select(-c(accession:KC, rank)) %>% distinct()
 
 #Make sure to link plasmid and genome if needed
 sample
