@@ -182,9 +182,7 @@ blastOut = blastOut %>%
           regex = "(\\w+)\\s+(\\w+)($|\\s+.*)") %>% 
   #Sp. will be pasted with taxid to make it unique
   mutate(species = ifelse(species == "sp", paste0(species, taxid), species)) %>% 
-  filter(!genus %in% c("uncultured", "Uncultured", "mixed", "Bacterium"),
-         !species %in% c("bacterium", "Bacterium") & 
-           !is.na(species)) %>% 
+  filter(!genus %in% c("uncultured", "Uncultured", "mixed"), !is.na(species)) %>%
   #Extract subspecies, strain and plasmid info
   mutate(
     subspecies = str_extract(extra, "(?<=subsp\\s)[^\\s]+"),
@@ -206,7 +204,7 @@ blastOut = clusterOut %>%
   rowwise() %>% 
   mutate(
     ident = identity / align_len,
-    coverage = min(align_len / query_len, 1),
+    coverage = min(align_len / query_len, 1), #In case of gap can be > 1
   ) %>% ungroup() 
 
 #Fix some known issues with naming
@@ -233,7 +231,7 @@ blastSegments =
   mutate(
     start = ifelse(str_detect(name, "_start$"), T, F),
     geneId = as.integer(str_extract(name, "\\d+"))) %>% 
-  #Correct KC wher depth is an outlier
+  #Correct KC where depth is an outlier
   group_by(geneId) %>% mutate(
     depth = KC / LN,
     z = (depth - mean(depth)) / sd(depth),
@@ -245,7 +243,7 @@ blastSegments =
 
 blastOut = blastOut %>% 
   left_join(blastSegments, by = c("segmentId" = "name")) %>% 
-  mutate(KC = KC * coverage * ident)
+  mutate(KC = KC * coverage * ident) #Lower coverage is lower KC score
 
 # test = blastSegments %>% mutate(
 #   found = blastSegments$name %in% blastOut$segmentId) %>% 
@@ -363,24 +361,39 @@ pathData = map_df(pathData, function(myGFA){
 }) %>% mutate(geneId = as.integer(geneId))
 
 
+#Interpolate bit_score FOR non-blasted < 250 pieces
 #Calculate the score to bit_score conversion factor for each gene
 extraBits = blastOut %>% filter(ident == 1, coverage == 1) %>% 
   group_by(geneId) %>% 
   summarise(bitConst = mean(bit_score / score), .groups = "drop")
 
 extraBits = pathData %>% 
-  filter((LN < minBlastLength & dist >= 0 ) | (dist < 0 & LN < 75)) %>% 
-  group_by(geneId, pathId) %>% 
-  summarise(score = sum(LN) - 30*n(), .groups = "drop") %>% 
+  mutate(LN = ifelse((LN < minBlastLength & dist >= 0 ) | (dist < 0 & LN < 75),
+                     LN, 0)) %>% 
+  group_by(geneId, orientation, pathId) %>% 
+  transmute(order, score = cumsum(LN) - 30*(1:n()),
+            score = ifelse(score < 0 , 0, score)) %>% 
+  ungroup() %>% 
   left_join(extraBits, by = "geneId") %>% 
   mutate(bitScore = bitConst * score)
+
+# extraBits = blastOut %>% filter(ident == 1, coverage == 1) %>% 
+#   group_by(geneId) %>% 
+#   summarise(bitConst = mean(bit_score / score), .groups = "drop")
+# 
+# extraBits = pathData %>% 
+#   filter((LN < minBlastLength & dist >= 0 ) | (dist < 0 & LN < 75)) %>% 
+#   group_by(geneId, orientation, pathId) %>% 
+#   summarise(score = sum(LN) - 30*n(), .groups = "drop") %>% 
+#   left_join(extraBits, by = "geneId") %>% 
+#   mutate(bitScore = bitConst * score)
 
 #Only work with segments >= 250 in paths
 pathData = pathData %>% 
   filter(LN >= minBlastLength | (dist < 0 & LN > 74)) %>% 
   group_by(geneId, pathId) %>% 
   arrange(geneId, pathId, desc(order)) %>% 
-  mutate(order = n():1) %>% 
+  mutate(oldOrder = order, order = n():1) %>% 
   ungroup()
 
 #Also add the fragment data to the paths
@@ -439,7 +452,7 @@ blastOut = blastOut %>%
   mutate(myCount = n()) %>% 
   group_by(genus, species) %>% 
   mutate(taxid = taxid[myCount == max(myCount)][1]) %>% 
-  ungroup()
+  ungroup() %>% select(-bact, -myCount)
 
 blastOut$start[blastOut$start & ! blastOut$segmentId %in% 
                  segmentsOfInterest$name[segmentsOfInterest$type != "fragmentsOnly"]] = F
@@ -500,7 +513,9 @@ addSeedHit = addSeedHit %>% select(geneId:accession, hit_from, hit_to) %>%
   )
 
 addSeedHit = otherSeedHits %>% filter(geneId %in% addSeedHit$geneId) %>% 
-  left_join(addSeedHit %>% select(geneId, accession, hit_from, hit_to, group)) %>% 
+  left_join(addSeedHit %>% 
+              select(geneId, accession, hit_from, hit_to, group),
+            by = "geneId") %>% 
   left_join(
     blastOut %>% 
       select(accession, taxid, genus, species, extra, 
@@ -510,58 +525,96 @@ addSeedHit = otherSeedHits %>% filter(geneId %in% addSeedHit$geneId) %>%
 #Add the new start 'matches' to the blast output
 blastOut = bind_rows(blastOut, addSeedHit)
 
-#Only consider segments in the graph that are also the same distance
-#in the actual genome alignments
+#GENOME DIST START CHECK
 
-#  IDEA : 3083_unitig229_start. If accession is present on both sides,
-# it automatically passes the test, even if not in start (slightly lower match)
-#
+#Order the min - max positino of match in target genome
 tempVar = blastOut %>% 
-  # filter(geneId == "5166") %>%
   group_by(geneId, accession, group) %>% 
   filter(any(start)) %>% 
   mutate(sMin = ifelse(hit_from < hit_to, hit_from, hit_to),
-         sMax = ifelse(hit_from >= hit_to, hit_from, hit_to),
-         after = ifelse(sMin > sMin[start], T, F),
-         dist = ifelse(after, sMin - sMax[start], sMin[start] - sMax) + 29) %>%
+         sMax = ifelse(hit_from >= hit_to, hit_from, hit_to))
+
+#Get the locations of all start matches in same genome
+tempVar2 = tempVar %>% filter(start) %>% 
+  select(geneId, accession, group, sMin) %>% 
+  mutate(startGroup = 1:n()) %>% 
+  pivot_wider(names_from = startGroup, values_from = sMin) %>% 
+  ungroup()
+
+#Add them to the data frame
+tempVar  = tempVar %>% ungroup() %>% 
+  left_join(tempVar2, by = c("geneId", "accession", "group"))
+
+#For each segment, pick the closest start segment for comparison
+tempVar$startGroup = 
+  apply(tempVar %>% select(sMin, 29:ncol(tempVar)), 1, function(x){
+    x = abs(x[-1] - x[1])
+    which(x == min(x, na.rm = T))
+  })
+
+#Only keep a segment if it is the correct distance from the start segment
+tempVar = tempVar %>% 
+  group_by(geneId, accession, group, startGroup) %>% 
+  filter(any(start)) %>% 
+  mutate(
+    after = ifelse(sMin > sMin[start], T, F),
+    dist = ifelse(after, sMin - sMax[start], sMin[start] - sMax) + 29) %>%
   ungroup() %>% 
   left_join(pathData %>% select(segmentId, dist1 = dist) %>% 
               distinct(), by = "segmentId") %>% 
   rowwise() %>% 
   #Repeats can make segments shorter because loop is cut off, so provide some slack
   mutate(correct = between(dist, dist1 -500, dist1 + 500) | start) %>% 
-  filter(correct)
+  filter(correct) %>% 
+  group_by(geneId, accession, group, startGroup) %>% 
+  mutate(bestMatch = sum(bit_score)) %>% 
+  group_by(geneId, accession, group) %>% 
+  filter(bestMatch == max(bestMatch)) %>% 
+  group_by(segmentId, accession) %>% 
+  filter(bit_score == max(bit_score)) %>% 
+  slice(1) %>% ungroup()
 
 wrongLocation = blastOut %>% filter(!segmentId %in% tempVar$segmentId)
-# tempVar = blastOut %>% filter(!segmentId %in% wrongLocation$segmentId)
+
 blastOut = bind_rows(
-  tempVar,
+  tempVar %>% select(matches(colnames(blastOut))),
+  
   blastOut %>% 
     filter(geneId %in% (genesDetected %>% 
                           filter(!geneId %in% segmentsOfInterest$geneId) %>% 
-                          pull(geneId))),
+                          pull(geneId))) %>% 
+    group_by(segmentId, accession) %>% filter(bit_score == max(bit_score,0)) %>% 
+    slice(1) %>% ungroup(),
+  
   blastOut %>% 
-    filter(segmentId %in% fragments$segmentId[str_detect(fragments$segmentId, "_start$")])
+    filter(segmentId %in% 
+             fragments$segmentId[str_detect(fragments$segmentId, "_start$")]) %>% 
+    group_by(segmentId, accession) %>% filter(bit_score == max(bit_score,0)) %>% 
+    slice(1) %>% ungroup()
   )
 
 blastOut$start[blastOut$segmentId %in% 
                  fragments$segmentId[str_detect(fragments$segmentId, "_start$")]] = T
 
-rm(tempVar)
+rm(tempVar, tempVar2)
 
 allBact = blastOut %>%
-  # filter(geneId %in% c("5349")) %>%
+  # filter(accession %in% "AM261760") %>%
   select(segmentId, geneId, bit_score, coverage,
          accession, taxid, genus, species, extra, plasmid, KC, LN, start) %>%
+  
+  #Only keep best match per segmentId per accession
   group_by(segmentId, geneId, accession) %>%
   filter(bit_score == max(bit_score)) %>% 
   dplyr::slice(1) %>% ungroup() %>%
+  
+  #Adjust path score based on coverage (???)
   mutate(pathScore = bit_score * coverage) %>%
   # mutate(pathScore = bit_score) %>% 
-  group_by(segmentId, accession, plasmid) %>% 
-  filter(pathScore == max(pathScore)) %>% dplyr::slice(1) %>% ungroup() %>% 
+  
+  #Add the path data and only keep consecutive segments (ignore < 250)
   left_join(pathData %>% 
-              select(pathId, segmentId, order, orientation) %>% 
+              select(pathId, segmentId, order, oldOrder, orientation) %>% 
               mutate(orientation = ifelse(str_detect(segmentId, "_start$"),
                                           -1, orientation)) %>% 
               distinct(), by = "segmentId") %>% 
@@ -569,44 +622,52 @@ allBact = blastOut %>%
   arrange(geneId, pathId, accession, plasmid, order) %>% 
   group_by(geneId, pathId, accession, plasmid) %>% 
   filter(order == 1:n() | orientation == -1) %>% 
-  
-  
-  # group_by(geneId, pathId, accession, plasmid, orientation) %>% 
-  # filter(all(2:max(order) %in% order) | all(order == 1)) %>% 
-  
-  
-  # group_by(segmentId, accession) %>% filter(pathScore == max(pathScore)) %>% 
-  # dplyr::slice(1) %>% group_by(geneId, accession, pathId) %>% 
-  # mutate(fullPath = sum(pathScore))  
-  
-  #Calculate path score
+
+  #Calculate the total path score
   group_by(geneId, accession, plasmid, orientation, pathId) %>%
-  mutate(fullPath = sum(pathScore)) %>%
+  mutate(fullPath = sum(pathScore)) %>% ungroup()
+
+#Add the extra bits to each fullPath score
+tempVar = allBact %>% filter(orientation != -1) %>% 
+  select(geneId, pathId, oldOrder, accession) %>% distinct() %>% 
+  left_join(extraBits, by = c("geneId", "pathId", "oldOrder" = "order")) %>% 
+  select(geneId, accession, pathId, oldOrder, extraBits = bitScore)
+
+allBact = allBact %>% left_join(
+  tempVar, by = c("geneId", "pathId", "oldOrder", "accession")
+) %>% group_by(geneId, accession, pathId, orientation) %>% 
+  mutate(extraBits = max(extraBits, 0, na.rm = T),
+         fullPath = fullPath + extraBits,
+         extraBits = c(rep(0, n() - 1), extraBits[n()])) %>% ungroup()
+
+allBact = allBact %>%
+  
   #Pick best path for each orientation
   group_by(geneId, accession, plasmid, orientation) %>%
   filter(pathId == pathId[fullPath == max(fullPath)][1]) %>%
+  
   #Sum the 3 orientations to get full path score
   group_by(geneId, accession, plasmid) %>%
-  mutate(fullPath = sum(pathScore)) %>%
+  mutate(fullPath = sum(pathScore) + sum(extraBits)) %>%
   group_by(geneId, accession) %>%
   filter(plasmid == plasmid[fullPath == max(fullPath)][1]) %>% 
   ungroup()
 
-#Calculate the exta bits to add to the total path score
-test = allBact %>% filter(orientation != -1) %>% 
-  select(geneId, pathId, accession) %>% distinct() %>% 
-  left_join(extraBits, by = c("geneId", "pathId")) %>%
-  group_by(geneId, accession) %>% 
-  mutate(score = sum(score, na.rm = T),
-         bitScore = sum(bitScore, na.rm = T)) %>% 
-  group_by(geneId, accession) %>% 
-  summarise(score = max(score), bitConst = max(0, bitConst, na.rm = T),
-                        bitScore = max(bitScore), .groups = "drop")
-#Add the extra bits
-allBact = allBact %>% 
-  left_join(test, by = c("geneId", "accession")) %>%
-  mutate(score = replace_na(score, 0), bitScore = replace_na(bitScore, 0)) %>% 
-  mutate(fullPath = fullPath + bitScore)
+# #Calculate the extra bits to add to the total path score
+# tempVar = allBact %>% filter(orientation != -1) %>% 
+#   select(geneId, pathId, oldOrder, accession) %>% distinct() %>% 
+#   left_join(extraBits, by = c("geneId", "pathId", "oldOrder" = "order")) %>%
+#   group_by(geneId, accession) %>% 
+#   mutate(score = sum(score, na.rm = T),
+#          bitScore = sum(bitScore, na.rm = T)) %>% 
+#   group_by(geneId, accession) %>% 
+#   summarise(score = max(score), bitConst = max(0, bitConst, na.rm = T),
+#                         bitScore = max(bitScore), .groups = "drop")
+# #Add the extra bits
+# allBact = allBact %>% 
+#   left_join(tempVar, by = c("geneId", "accession")) %>%
+#   mutate(score = replace_na(score, 0), bitScore = replace_na(bitScore, 0)) %>% 
+#   mutate(fullPath = fullPath + bitScore)
   
 allBact = allBact %>% 
   left_join(
@@ -631,7 +692,7 @@ allBact = allBact %>%
 
 allBact = allBact %>% 
   group_by(geneId, accession, taxid, genus, species, plasmid, LN, KC) %>% 
-  summarise(extension = sum(pathScore[!start]) + bitScore[1],
+  summarise(extension = sum(pathScore[!start]) + sum(extraBits),
             across(c(fullPath:maxOrder1), max), .groups = "drop") %>% 
   left_join(
     genesDetected %>%
