@@ -23,7 +23,8 @@ minBlastLength = 250
 outfmt = "6 qseqid sallacc staxids sscinames salltitles qlen slen qstart qend sstart send bitscore score length pident nident qcovs qcovhsp"
 
 
-myId = "111" #452, 845, 18, 23, 73, 192, 122
+"133,272,60,115,235,161,97,151,249,254"
+myId = "270" #452, 845, 18, 23, 73, 192, 122, 111, 66
 
 # registerDoParallel(cores=8)
 # test = foreach(myId = myIds[201:250]) %dopar% {
@@ -46,7 +47,13 @@ blast_readOutput = function(file, outfmt, separate = T, includeIssues = F, verbo
   #split multiple matches
   blastOut = blastOut %>% 
     mutate(x = str_count(staxids, ";"), y = str_count(sallacc, ";"), 
-           z = x == y | x == 0, plasmid = str_detect(salltitles, "lasmid|ntegron")) 
+           z = x == y | x == 0, plasmid = str_detect(salltitles, "lasmid |ntegron |ransposon ")) 
+  
+  # case_when(
+  #   str_detect(salltitles, "lasmid ") ~ 1,
+  #   str_detect(salltitles, "ntegron ") ~ 2,
+  #   TRUE ~ 0
+  # )
   
   if(!includeIssues){
     blastOut = blastOut %>% filter(!(x > 0 & !z))
@@ -704,19 +711,22 @@ allBact = allBact %>%
   filter(extension >  0 | all(extension == 0)) %>% #Remove only start hits if any have extension
   ungroup()
 
+
+#FILTERS
+
 # Bact on the same path represent the same species
 allBact = allBact %>% group_by(geneId, path0, path1) %>% 
   mutate(pathGroup = cur_group_id())
 allBact = allBact %>% group_by(geneId, pathGroup) %>% 
   mutate(maxGroupScore = max(fullPath)) %>% 
-  filter(fullPath >= 0.75 * maxGroupScore | fullPath > 5000) %>% 
-  group_by(geneId) %>% filter(maxGroupScore >= 0.75 * max(maxGroupScore)) %>% 
-  group_by(geneId, taxid) %>% filter(maxGroupScore == max(maxGroupScore)) %>% 
+  # filter(fullPath >= 0.75 * maxGroupScore | fullPath > 5000) %>% 
+  # group_by(geneId) %>% filter(maxGroupScore >= 0.75 * max(maxGroupScore)) %>% 
+  # group_by(geneId, taxid) %>% filter(maxGroupScore == max(maxGroupScore)) %>% 
   ungroup()
 
 #add plasmid prob per gene
 allBact = allBact %>% 
-  group_by(geneId) %>% mutate(top = fullPath == max(fullPath)) %>% ungroup() %>% 
+  group_by(geneId) %>% mutate(top = fullPath  / maxGroupScore) %>% ungroup() %>% 
   left_join(
     allBact %>% group_by(geneId, plasmid) %>% 
       summarise(val = max(fullPath), .groups = "drop") %>% 
@@ -724,400 +734,544 @@ allBact = allBact %>%
         probPlas = max(0, val[plasmid]) / sum(val), .groups = "drop"
       ), by  = "geneId")
 
+
+#--
+
+#Find perfect genome matches
+test = allBact %>% 
+  filter(!plasmid) %>% 
+  group_by(accession, genus, species) %>% 
+  summarise(
+    x = sum(fullPath),
+    genes = paste(sort(unique(gene)), collapse = ","),
+    top = sum(top) / n(),
+    n = n_distinct(gene),
+    probPlas = mean(probPlas), .groups = "drop") %>% filter(n > 1)
+
+allBact = allBact %>% 
+  group_by(geneId, taxid) %>% 
+  mutate(probPlas = max(pathScore[plasmid],0) / 
+           sum(max(pathScore[!plasmid], 0), max(pathScore[plasmid],0))) %>% 
+  group_by(geneId) %>% 
+  mutate(probPlasGlobal = max(pathScore[plasmid],0) / 
+           sum(max(pathScore[!plasmid], 0), max(pathScore[plasmid],0))) %>% 
+  ungroup()
+
+#Find perfect genome matches
+result = data.frame(geneId = integer())
+i = 1
+test = allBact[1,]
+while(nrow(test) > 0){
+  test = allBact %>% filter(probPlasGlobal == 0) %>% 
+    filter(!geneId %in% result$geneId) %>%
+    mutate(depth = KC / LN) %>% 
+    group_by(accession, taxid) %>% 
+    summarise(geneId = paste(sort(gene), collapse = ","), n = n(), 
+              extension = sum(extension), fullPath = sum(fullPath),
+              genus = genus[1], species = species[1],
+              plasmid = all(plasmid), prob = mean(probPlas),
+              match = sum(top) / n(), top = sum(top), .groups = "drop") %>% 
+    arrange(desc(fullPath))
+  
+  test1 = allBact %>% 
+    filter(geneId %in% geneId[accession == test$accession[1]]) %>% 
+    group_by(geneId) %>% 
+    filter(pathGroup %in% pathGroup[accession == test$accession[1]]) %>% 
+    ungroup()
+  
+  result = bind_rows(result, test1 %>% mutate(bactGroup = i))
+  i = i + 1
+}
+
+bactList = result %>% 
+  group_by(bactGroup, accession, taxid, genus, species, plasmid) %>% 
+  summarise(across(c(LN:extraBits), sum),
+            top = mean(top),.groups = "drop") %>% 
+  arrange(bactGroup, desc(fullPath)) %>% 
+  group_by(bactGroup) %>% 
+  mutate(prob = softmax(fullPath), perc = fullPath / max(fullPath)) %>% 
+  ungroup()
+
+mergeGroup = bactList %>% filter(perc == 1) %>% 
+  group_by(taxid, genus, species, plasmid) %>% 
+  mutate(newGroup = cur_group_id()) %>% 
+  group_by(newGroup) %>% mutate(x = min(bactGroup)) %>% 
+  group_by(bactGroup) %>% 
+  mutate(x = min(x)) %>% ungroup() %>% 
+  mutate(newGroup = as.integer(as.factor(x)))
+
+bactList = bactList %>% 
+  left_join(mergeGroup %>% select(bactGroup, x), by = "bactGroup") %>% 
+  mutate(bactGroup = x) %>% 
+  group_by(bactGroup, taxid, plasmid, genus, species) %>% 
+  summarise(across(c(LN:extraBits), sum),
+            top = mean(top), .groups = "drop"
+  ) %>% arrange(bactGroup, desc(fullPath)) %>% 
+  mutate(depth = KC / LN) %>% 
+  group_by(bactGroup) %>% 
+  mutate(prob = softmax(fullPath), perc = fullPath / max(fullPath)) %>% 
+  ungroup()
+
+result = result %>% 
+  left_join(mergeGroup %>% select(bactGroup, x), by = "bactGroup") %>% 
+  mutate(bactGroup = x) %>% select(-x)
+
+# test = result %>% group_by(taxid, genus, species, plasmid) %>% 
+#   summarise(val = sum(perc), n = n(), perc = val / n)
+
+#Get the other genes
+other = allBact %>% filter(!geneId %in% result$geneId) %>% 
+  group_by(accession) %>% mutate(totalScore = sum(fullPath)) %>% 
+  left_join(bactList %>% group_by(bactGroup, taxid) %>% 
+              summarise(bactPerc = max(perc), bactDepth = max(depth),
+                        .groups = "drop"),
+            by = "taxid") 
+other[is.na(other$bactGroup),] = other[is.na(other$bactGroup),] %>% 
+  group_by(accession) %>% 
+  mutate(bactGroup = cur_group_id() + max(0, other$bactGroup, na.rm = T)) %>% 
+  ungroup() %>% mutate(bactPerc = 1, bactDepth = sum(KC) / sum(LN))
+
+other = other %>% 
+  group_by(accession) %>% 
+  filter(bactGroup == bactGroup[bactPerc == max(bactPerc)]) %>% 
+  mutate(depthDiff = abs(bactDepth - depth)) %>% 
+  arrange(desc(totalScore), accession, desc(bactPerc)) %>% 
+  select(gene, bactGroup, genus, species, bactPerc,
+         fullPath, totalScore, depthDiff, everything())
+
+# test = other %>% filter(bactGroup %in% c(1,5)) %>% 
+#   group_by(geneId, bactGroup) %>% filter(totalScore == max(totalScore)) %>% 
+#   group_by(bactGroup, accession) %>% summarise(x = sum(fullPath))
+
+result2 = data.frame(geneId = integer())
+
+while(nrow(other) > 0){
+  
+  bactGroup = allBact %>% group_by(geneId) %>% 
+    filter(any(accession ==  other$accession[1])) %>% 
+    filter(pathGroup == pathGroup[accession ==  other$accession[1]]) %>% 
+    group_by(accession, taxid, genus, species) %>% 
+    summarise(fullPath = sum(fullPath), .groups = "drop")
+  
+  bactGroup = bactGroup %>% left_join(
+    bactList %>% select(taxid, prob, perc, bactGroup)) %>% 
+    rowwise() %>% 
+    mutate(val = fullPath * weighted.mean(c(prob, perc), c(0.5,0.5))) %>% 
+    arrange(desc(val)) %>% slice(1) %>% pull(bactGroup)
+  
+  bactGroup = ifelse(length(bactGroup) == 0, NA, bactGroup)
+  
+  test1 = allBact %>% 
+    filter(accession == other$accession[1]) %>% 
+    mutate(bactGroup = {{bactGroup}})
+  
+  result2 = bind_rows(result2, test1)
+  
+  other = other %>% filter(!geneId %in% test1$geneId) %>% 
+    group_by(accession) %>% mutate(totalScore = sum(totalScore)) %>% 
+    ungroup() %>% arrange(desc(totalScore), accession, desc(bactPerc))
+  
+}
+
+#CHECK PLASMID per pathGroup!! DQ522239
+
+result = bind_rows(result, result2)
+
+sample
 #Adjust the scored for genes by presences of other genes in the same bact
 # myData = genomeARG 
 # myData$taxid = myData$accession
 
-adjustBact = function(myData, bactGroupStart = 0){
-  
-  if(nrow(myData) == 0) {
-    return(list(myClusters = data.frame(), bactList = data.frame()))
-  }
-  
-  if(n_distinct(myData$geneId) == 1 | n_distinct(myData$taxid) == 1){
-    if(n_distinct(myData$taxid) == 1){
-      
-      #There is only one taxid
-      bactList = myData %>% 
-        select(taxid, genus, species, depth, pathScore) %>% 
-        mutate(bactGroup = 1 + bactGroupStart, prob = 1, val = NA,
-               runId, pipelineId = myPipelineId) %>% 
-        filter(depth == max(depth)) %>% dplyr::slice(1) %>% 
-        left_join(bactGenomeSize %>% select(genus, species, size) %>% distinct(),
-                  by = c("genus", 'species')) 
-      
-      return(list(
-        myClusters = data.frame(
-          bactGroup = 1 + bactGroupStart,
-          geneId = myData$geneId[1]),
-        bactList = bactList))
-    } else {
-      
-      #There is only one gene but multiple taxid
-      geneMatrix = matrix(myData$pathScore / max(myData$pathScore), ncol = 1)
-      colnames(geneMatrix) = unique(myData$geneId)
-      rownames(geneMatrix) = myData$taxid
-      myClusters = data.frame(
-        taxid =  myData$taxid,
-        bactGroup = 1 + bactGroupStart,
-        primary = geneMatrix[,1] == 1,
-        geneId = as.integer(unique(myData$geneId)),
-        val = geneMatrix[,1])
-    }
-    
-    
-  } else {
-    
-    #There are multiple genes
-    geneMatrix = myData %>%
-      mutate(geneId = as.integer(geneId)) %>% 
-      group_by(geneId, bact = taxid) %>%
-      summarise(pathScore = round(max(pathScore),2), 
-                extension = round(max(extension),2), 
-                .groups = "drop") %>%
-      left_join(genesDetected %>%
-                  select(geneId, ARGgroup), by = "geneId")
-    
-    geneMatrix = geneMatrix %>%
-      select(bact, geneId, pathScore) %>%
-      pivot_wider(bact,
-                  names_from = "geneId", values_from = "pathScore",
-                  values_fill = 0) %>%
-      column_to_rownames("bact") %>% as.matrix()
-    
-    #Normalise the matrix per column
-    geneMatrix = apply(geneMatrix, 2, function(x) x / max(x))
-    
-    # Adjust by cover
-    myAdjustment = data.frame(
-      geneId = as.integer(colnames(geneMatrix))
-    ) %>% left_join(
-      genesDetected %>% select(geneId, cover), by = "geneId")
-    
-    #-----------
-    # During adjustment make sure to weigh the influence of other ARG based
-    # on the similarity in coverage. If the coverage is very different, the
-    # weight of adjustment in lower (prevents FP association of low cover to high)
-    ncols = ncol(geneMatrix)
-    myAdjustment = (1 - abs(matrix(myAdjustment$cover, nrow = ncols, ncol = ncols) -
-                              matrix(myAdjustment$cover, nrow = ncols, ncol = ncols, byrow = T)))
-    
-    
-    myAdjustment = sapply(1:ncols, function(col){
-      t(t(geneMatrix[,-col]) * myAdjustment[col,-col]) %>% rowSums() / 
-        (ncols - 1)
-    }) + 1
-    
-    #---------------
-    ##Old adjustment techinique
-    # geneMatrix = t(t(geneMatrix) * myAdjustment$cover)
-    # 
-    # #Calulcate the adjustment for each cell based on other scores in the row
-    # # the higher the scores (e.g. other gened detected), the more scaled up
-    # myAdjustment = (matrix(rowSums(geneMatrix), nrow = nrow(geneMatrix), 
-    #                        ncol = ncol(geneMatrix)) - geneMatrix) /
-    #   (ncol(geneMatrix) - 1) + 1
-    
-    #----------------
-    
-    geneMatrix = geneMatrix * myAdjustment
-    geneMatrix = apply(geneMatrix, 2, function(x) x / max(x))
-    
-    
-    myClusters = as_tibble(geneMatrix > 0, rownames = "taxid") %>%
-      group_by(across(c(-taxid))) %>% 
-      mutate(bactGroup = cur_group_id()) %>% ungroup()
-    
-    myClusters = as_tibble(geneMatrix, rownames = "taxid") %>% 
-      left_join(myClusters %>% select(taxid, bactGroup), by = "taxid") 
-    myClusters$primary = apply(myClusters[,!colnames(myClusters) %in% c("taxid", "bactGroup")], 1,
-                               function(x) any(x == 1))
-    
-    #new ---
-    x = myClusters %>% group_by(bactGroup) %>% filter(!all(!primary)) %>% 
-      ungroup() 
-    
-    
-    y = myClusters %>% group_by(bactGroup) %>% filter(all(!primary)) %>% 
-      ungroup()
-    # mutate(across(c(-taxid, -bactGroup, -primary), function(x) x > 0))
-    
-    
-    a = apply(x %>% select(-taxid, -bactGroup, -primary), 1, function(z){
-      
-      apply(y %>% select(-taxid, -bactGroup, -primary), 1, function(a) cor(z,a))
-      
-    })
-    
-    colnames(a) = x$bactGroup
-    
-    y = cbind(a,y)
-    y = y[,1:which(colnames(y) == "taxid")]
-    
-    y = y %>% pivot_longer(-taxid, names_to = "cluster") %>% 
-      group_by(taxid) %>% filter(value == max(value)) %>% ungroup() %>% 
-      mutate(cluster = str_remove(cluster, "\\.\\d+$"))
-    
-    myClusters = myClusters %>% left_join(y, by = "taxid") %>% 
-      mutate(bactGroup = ifelse(is.na(cluster), bactGroup, cluster)) %>% 
-      select(-cluster)
-    #-----
-    
-    myClusters = myClusters %>% group_by(bactGroup) %>% filter(!all(!primary)) %>% 
-      ungroup() %>% mutate(bactGroup = bactGroupStart + as.factor(bactGroup) %>% as.integer()) %>% 
-      pivot_longer(c(-taxid, -bactGroup, -primary, -value), names_to = "geneId", values_to = "val") %>% 
-      mutate(geneId = as.integer(geneId), taxid = as.integer(taxid)) %>% 
-      filter(val > 0 | primary)
-    
-  }
-  
-  bactList = myClusters %>% group_by(bactGroup, taxid) %>% 
-    summarise(prob = sum(val), .groups = "drop") %>% 
-    group_by(bactGroup) %>% 
-    mutate(prob = softmax(prob)) %>% ungroup() %>%
-    mutate(taxid = as.integer(taxid), bactGroup = as.integer(bactGroup)) %>% 
-    left_join(allBact %>% select(taxid, genus, species) %>% 
-                distinct(), by = "taxid") %>% 
-    group_by(bactGroup) %>% 
-    filter(prob >= min(
-      sort(unique(prob), decreasing = T)[1:(min(11, n_distinct(prob)))])
-    ) %>% 
-    mutate(val = prob / max(c(-Inf, prob), na.rm = T)) %>% 
-    ungroup() %>% 
-    arrange(bactGroup, desc(prob)) %>% ungroup() %>% 
-    mutate(species = str_replace(species, "sp\\d+", "sp.")) %>% 
-    left_join(bactGenomeSize %>% select(genus, species, size) %>% distinct(),
-              by = c("genus", 'species')) %>% 
-    mutate(runId = {{runId}},
-           pipelineId = toProcess$pipelineId[sampleIndex]) %>% 
-    left_join(
-      myData %>% group_by(taxid, geneId) %>% 
-        filter(fullPath == max(fullPath)) %>% dplyr::slice(1) %>% 
-        group_by(taxid) %>% 
-        summarise(
-          depth = sum(KC)/sum(LN),
-          pathScore = sum(pathScore), 
-          .groups = "drop"
-        ),
-      by = "taxid"
-    ) 
-  
-  return(list(myClusters = myClusters, bactList = bactList))
-}
-
-
-#---
-result = allBact %>% 
-  group_by(accession) %>% 
-  summarise(geneId = paste(geneId, collapse = ","), n = n(), 
-            extension = sum(extension), fullPath = sum(fullPath),
-            genus = genus[1], species = species[1],
-            plasmid = all(plasmid), prob = mean(probPlas),
-            top = sum(top), match = sum(top) / n()) %>% 
-  filter(n > 1, match >= 0.95, extension > 0)%>% 
-  arrange(desc(match),desc(fullPath))
-
-
-bactList = map_df(result$geneId, function(genes){
-  
-  myGenes = c(str_split(genes, ",") %>%unlist() %>% as.integer())
-  
-  allBact %>%
-    filter(geneId %in% myGenes) %>% 
-    group_by(accession, taxid, genus, species, plasmid) %>%
-    summarise(fullPath = sum(fullPath), depth = sum(KC) / sum(LN), .groups = "drop")
-  
-}, .id = "bactGroup") %>% 
-  group_by(bactGroup) %>% 
-  mutate(prob = softmax(fullPath), perc = fullPath / max(fullPath),
-         pathScore = fullPath, val = 1) %>% arrange(desc(fullPath)) %>% 
-  ungroup() %>% arrange(bactGroup, desc(prob))
-
-
-AMRclusters = map_df(result$accession, function(acc){
-  
-  allBact %>% filter(accession == acc) %>% mutate(primary = T)
-  
-}, .id = "bactGroup") 
-
-
-#whcih one
-mergeGroups = bactList %>% group_by(taxid, plasmid) %>% 
-  summarise(bactGroup = paste(bactGroup, collapse = ","), 
-            pathScore = sum(pathScore), mean = mean(depth), 
-            sd = sd(depth), se = sd(depth) / sqrt(n()),
-            perc = se / mean) %>% 
-  filter(perc < 0.15) %>% arrange(desc(pathScore))
-
-#which one
-mergeGroups = AMRclusters %>% group_by(taxid, plasmid) %>% 
-  summarise(bactGroup = paste(bactGroup, collapse = ","), 
-            pathScore = sum(pathScore), mean = mean(depth), 
-            sd = sd(depth), se = sd(depth) / sqrt(n()),
-            perc = se / mean) %>% 
-  filter(perc < 0.15) %>% arrange(desc(pathScore))
-
-test = bactList %>% filter(bactGroup != 11) %>% 
-  filter(taxid %in% (bactList %>% filter(bactGroup == 11) %>% pull(taxid))) %>% 
-  group_by(bactGroup) %>% filter(perc == max(perc)) %>% ungroup() %>% 
-  filter(perc == 1)
-
-
-bactList$merge = ""
-AMRclusters$merge = ""
-
-while(nrow(mergeGroups) > 0){
-  
-  toMerge = mergeGroups$bactGroup[1] %>% str_split(",") %>% unlist() 
-  
-  # bactList = bactList %>% mutate(merge = ifelse(
-  #     bactGroup %in% toMerge, paste(merge, paste(toMerge, collapse = " ")), 
-  #     merge
-  #   ))
-  # 
-  # AMRclusters = AMRclusters %>% mutate(merge = ifelse(
-  #   bactGroup %in% toMerge, paste(merge, paste(toMerge, collapse = " ")), 
-  #   merge
-  # ))
-  # 
-  # mergeGroups = mergeGroups[-1,]
-  
-  bactList = bactList %>% mutate(bactGroup = ifelse(
-    bactGroup %in% toMerge, toMerge[1], bactGroup
-  ))
-  
-  AMRclusters = AMRclusters %>% mutate(bactGroup = ifelse(
-    bactGroup %in% toMerge, toMerge[1], bactGroup
-  ))
-  
-  mergeGroups$bactGroup = str_remove_all(
-    mergeGroups$bactGroup, sprintf("(%s)(,|\\b)", paste(toMerge, collapse = "|")))
-  mergeGroups = mergeGroups[mergeGroups$bactGroup != "",]
-  
-}
-
-bactList = bactList %>% rowwise() %>% 
-  mutate(merge = str_trim(merge) %>% str_split(" ") %>% unlist() %>% 
-           unique() %>% sort() %>% paste(collapse = ","),
-         merge = ifelse(merge == "", bactGroup, merge)) %>% 
-  arrange(merge) %>% group_by(merge) %>% mutate(bactGroup = cur_group_id()) %>% 
-  group_by(bactGroup) %>% mutate(
-    prob = softmax(fullPath), perc = fullPath / max(fullPath),
-    pathScore = fullPath, val = 1) %>% ungroup() %>% 
-  arrange(bactGroup, desc(fullPath)) %>% select(-merge)
-
-
-# bactList = bactList %>% group_by(bactGroup, taxid, genus, species) %>% summarise(
-#   fullPath = sum(fullPath), depth = mean(depth), .groups = "drop"
-# ) %>% mutate(
-#   prob = softmax(fullPath), perc = fullPath / max(fullPath),
-#   pathScore = fullPath, val = 1) %>% 
-#   arrange(bactGroup, desc(fullPath))
-
-AMRclusters = AMRclusters %>% rowwise() %>% 
-  mutate(merge = str_trim(merge) %>% str_split(" ") %>% unlist() %>% 
-           unique() %>% sort() %>% paste(collapse = ","),
-         merge = ifelse(merge == "", bactGroup, merge)) %>% 
-  arrange(merge) %>% group_by(merge) %>% mutate(bactGroup = cur_group_id()) %>% 
-  ungroup() %>% arrange(bactGroup, genus, species) %>% select(-merge)
-
-
-#Check if any of the remaining ARG match a genome ARG species
-checkPlasmid = allBact %>% 
-  filter(!geneId %in% AMRclusters$geneId) %>% 
-  # filter(!geneId %in% genomeARG$myClusters$geneId) %>% 
-  left_join(
-    bactList %>% 
-      group_by(bactGroup, taxid) %>% filter(prob == max(prob)) %>% ungroup() %>% 
-      # filter(val == 1) %>% #maybe remove?
-      select(taxid, bactGroup, prob, perc, genomeDepth = depth, isPlasmid  = plasmid,
-             genomePathscore = pathScore, val),
-    by = "taxid"
-  ) %>% left_join(
-    AMRclusters %>% 
-      # filter(val == 1) %>%
-      select(taxid, geneId, primary) %>% 
-      left_join(genesDetected %>% 
-                  # mutate(cover = ifelse(type == "fragmentsOnly", cover2, cover)) %>% 
-                  select(geneId, cover, startDepth, type),
-                by = "geneId") %>% 
-      group_by(taxid) %>% 
-      summarise(
-        primary = all(primary),
-        genomeCover = weighted.mean(cover, cover),
-        genomeType = case_when(
-          all(type == "noFragments") ~ "noFragments",
-          all(type == "fragmentsOnly") ~ "fragmentsOnly",
-          TRUE ~ "mixed"
-        ), .groups = "drop"),
-    by = "taxid"
-  ) 
-
-checkPlasmid =  checkPlasmid %>% left_join(
-  checkPlasmid%>% 
-    group_by(geneId, pathScore) %>% summarise(contenders = n(), .groups = "drop") %>% 
-    group_by(geneId) %>% 
-    arrange(desc(pathScore)) %>% 
-    mutate(contenders = cumsum(contenders)) %>% ungroup(),
-  by = c("geneId", "pathScore")
-) 
-
-myPlasmids = list()
-temp = checkPlasmid
-#FInd the best matching plasmids
-while(nrow(temp > 0)){
-  x = temp %>%
-    filter(top >= 0.95) %>% 
-    group_by(accession, genus, species) %>% 
-    mutate(x = sum(fullPath)) %>% ungroup() %>% 
-    filter(x == max(x))
-  
-  
-  myPlasmids[[length(myPlasmids)+1]] = x
-  
-  
-  temp = temp %>% filter(!geneId %in% x$geneId) 
-}
-
-test = myPlasmids %>% bind_rows()
-
-# x = myPlasmids[[11]]
-temp = map_df(myPlasmids, function(x){
-  
-  test1 = checkPlasmid %>% filter(geneId %in% x$geneId) %>% 
-    group_by(accession, bactGroup) %>% 
-    summarise(
-      extension = sum(extension), fullPath = sum(fullPath), 
-      depth = sum(KC) / sum(LN), bactDepth = mean(genomeDepth), 
-      plasmid = all(plasmid), isPlasmid = all(isPlasmid),
-      perc = mean(perc), .groups = "drop") %>% 
-    group_by(bactGroup) %>% filter(fullPath == max(fullPath))
-  
-  test1 = allBact %>% 
-    filter(geneId %in% x$geneId, accession %in% test1$accession) %>% 
-    left_join(test1 %>% select(accession, bactGroup, bactDepth, 
-                               isPlasmid, perc),
-              by = "accession")
-})
-
-
-temp = temp %>% group_by(geneId) %>% 
-  filter(plasmid == isPlasmid | is.na(isPlasmid)) %>% 
-  filter(fullPath == max(fullPath)) %>% 
-  filter(perc == max(perc) | is.na(perc)) %>% ungroup()
-
-
-result = bind_rows(AMRclusters, temp) %>% 
-  arrange(bactGroup, gene)
-
-
-result[is.na(result$bactGroup),] = result[is.na(result$bactGroup),] %>% 
-  group_by(taxid) %>% mutate(bactGroup = cur_group_id() + max(result$bactGroup, na.rm = T))
-
-result = result %>% select(-c(accession:KC, rank)) %>% distinct()
+# adjustBact = function(myData, bactGroupStart = 0){
+#   
+#   if(nrow(myData) == 0) {
+#     return(list(myClusters = data.frame(), bactList = data.frame()))
+#   }
+#   
+#   if(n_distinct(myData$geneId) == 1 | n_distinct(myData$taxid) == 1){
+#     if(n_distinct(myData$taxid) == 1){
+#       
+#       #There is only one taxid
+#       bactList = myData %>% 
+#         select(taxid, genus, species, depth, pathScore) %>% 
+#         mutate(bactGroup = 1 + bactGroupStart, prob = 1, val = NA,
+#                runId, pipelineId = myPipelineId) %>% 
+#         filter(depth == max(depth)) %>% dplyr::slice(1) %>% 
+#         left_join(bactGenomeSize %>% select(genus, species, size) %>% distinct(),
+#                   by = c("genus", 'species')) 
+#       
+#       return(list(
+#         myClusters = data.frame(
+#           bactGroup = 1 + bactGroupStart,
+#           geneId = myData$geneId[1]),
+#         bactList = bactList))
+#     } else {
+#       
+#       #There is only one gene but multiple taxid
+#       geneMatrix = matrix(myData$pathScore / max(myData$pathScore), ncol = 1)
+#       colnames(geneMatrix) = unique(myData$geneId)
+#       rownames(geneMatrix) = myData$taxid
+#       myClusters = data.frame(
+#         taxid =  myData$taxid,
+#         bactGroup = 1 + bactGroupStart,
+#         primary = geneMatrix[,1] == 1,
+#         geneId = as.integer(unique(myData$geneId)),
+#         val = geneMatrix[,1])
+#     }
+#     
+#     
+#   } else {
+#     
+#     #There are multiple genes
+#     geneMatrix = myData %>%
+#       mutate(geneId = as.integer(geneId)) %>% 
+#       group_by(geneId, bact = taxid) %>%
+#       summarise(pathScore = round(max(pathScore),2), 
+#                 extension = round(max(extension),2), 
+#                 .groups = "drop") %>%
+#       left_join(genesDetected %>%
+#                   select(geneId, ARGgroup), by = "geneId")
+#     
+#     geneMatrix = geneMatrix %>%
+#       select(bact, geneId, pathScore) %>%
+#       pivot_wider(bact,
+#                   names_from = "geneId", values_from = "pathScore",
+#                   values_fill = 0) %>%
+#       column_to_rownames("bact") %>% as.matrix()
+#     
+#     #Normalise the matrix per column
+#     geneMatrix = apply(geneMatrix, 2, function(x) x / max(x))
+#     
+#     # Adjust by cover
+#     myAdjustment = data.frame(
+#       geneId = as.integer(colnames(geneMatrix))
+#     ) %>% left_join(
+#       genesDetected %>% select(geneId, cover), by = "geneId")
+#     
+#     #-----------
+#     # During adjustment make sure to weigh the influence of other ARG based
+#     # on the similarity in coverage. If the coverage is very different, the
+#     # weight of adjustment in lower (prevents FP association of low cover to high)
+#     ncols = ncol(geneMatrix)
+#     myAdjustment = (1 - abs(matrix(myAdjustment$cover, nrow = ncols, ncol = ncols) -
+#                               matrix(myAdjustment$cover, nrow = ncols, ncol = ncols, byrow = T)))
+#     
+#     
+#     myAdjustment = sapply(1:ncols, function(col){
+#       t(t(geneMatrix[,-col]) * myAdjustment[col,-col]) %>% rowSums() / 
+#         (ncols - 1)
+#     }) + 1
+#     
+#     #---------------
+#     ##Old adjustment techinique
+#     # geneMatrix = t(t(geneMatrix) * myAdjustment$cover)
+#     # 
+#     # #Calulcate the adjustment for each cell based on other scores in the row
+#     # # the higher the scores (e.g. other gened detected), the more scaled up
+#     # myAdjustment = (matrix(rowSums(geneMatrix), nrow = nrow(geneMatrix), 
+#     #                        ncol = ncol(geneMatrix)) - geneMatrix) /
+#     #   (ncol(geneMatrix) - 1) + 1
+#     
+#     #----------------
+#     
+#     geneMatrix = geneMatrix * myAdjustment
+#     geneMatrix = apply(geneMatrix, 2, function(x) x / max(x))
+#     
+#     
+#     myClusters = as_tibble(geneMatrix > 0, rownames = "taxid") %>%
+#       group_by(across(c(-taxid))) %>% 
+#       mutate(bactGroup = cur_group_id()) %>% ungroup()
+#     
+#     myClusters = as_tibble(geneMatrix, rownames = "taxid") %>% 
+#       left_join(myClusters %>% select(taxid, bactGroup), by = "taxid") 
+#     myClusters$primary = apply(myClusters[,!colnames(myClusters) %in% c("taxid", "bactGroup")], 1,
+#                                function(x) any(x == 1))
+#     
+#     #new ---
+#     x = myClusters %>% group_by(bactGroup) %>% filter(!all(!primary)) %>% 
+#       ungroup() 
+#     
+#     
+#     y = myClusters %>% group_by(bactGroup) %>% filter(all(!primary)) %>% 
+#       ungroup()
+#     # mutate(across(c(-taxid, -bactGroup, -primary), function(x) x > 0))
+#     
+#     
+#     a = apply(x %>% select(-taxid, -bactGroup, -primary), 1, function(z){
+#       
+#       apply(y %>% select(-taxid, -bactGroup, -primary), 1, function(a) cor(z,a))
+#       
+#     })
+#     
+#     colnames(a) = x$bactGroup
+#     
+#     y = cbind(a,y)
+#     y = y[,1:which(colnames(y) == "taxid")]
+#     
+#     y = y %>% pivot_longer(-taxid, names_to = "cluster") %>% 
+#       group_by(taxid) %>% filter(value == max(value)) %>% ungroup() %>% 
+#       mutate(cluster = str_remove(cluster, "\\.\\d+$"))
+#     
+#     myClusters = myClusters %>% left_join(y, by = "taxid") %>% 
+#       mutate(bactGroup = ifelse(is.na(cluster), bactGroup, cluster)) %>% 
+#       select(-cluster)
+#     #-----
+#     
+#     myClusters = myClusters %>% group_by(bactGroup) %>% filter(!all(!primary)) %>% 
+#       ungroup() %>% mutate(bactGroup = bactGroupStart + as.factor(bactGroup) %>% as.integer()) %>% 
+#       pivot_longer(c(-taxid, -bactGroup, -primary, -value), names_to = "geneId", values_to = "val") %>% 
+#       mutate(geneId = as.integer(geneId), taxid = as.integer(taxid)) %>% 
+#       filter(val > 0 | primary)
+#     
+#   }
+#   
+#   bactList = myClusters %>% group_by(bactGroup, taxid) %>% 
+#     summarise(prob = sum(val), .groups = "drop") %>% 
+#     group_by(bactGroup) %>% 
+#     mutate(prob = softmax(prob)) %>% ungroup() %>%
+#     mutate(taxid = as.integer(taxid), bactGroup = as.integer(bactGroup)) %>% 
+#     left_join(allBact %>% select(taxid, genus, species) %>% 
+#                 distinct(), by = "taxid") %>% 
+#     group_by(bactGroup) %>% 
+#     filter(prob >= min(
+#       sort(unique(prob), decreasing = T)[1:(min(11, n_distinct(prob)))])
+#     ) %>% 
+#     mutate(val = prob / max(c(-Inf, prob), na.rm = T)) %>% 
+#     ungroup() %>% 
+#     arrange(bactGroup, desc(prob)) %>% ungroup() %>% 
+#     mutate(species = str_replace(species, "sp\\d+", "sp.")) %>% 
+#     left_join(bactGenomeSize %>% select(genus, species, size) %>% distinct(),
+#               by = c("genus", 'species')) %>% 
+#     mutate(runId = {{runId}},
+#            pipelineId = toProcess$pipelineId[sampleIndex]) %>% 
+#     left_join(
+#       myData %>% group_by(taxid, geneId) %>% 
+#         filter(fullPath == max(fullPath)) %>% dplyr::slice(1) %>% 
+#         group_by(taxid) %>% 
+#         summarise(
+#           depth = sum(KC)/sum(LN),
+#           pathScore = sum(pathScore), 
+#           .groups = "drop"
+#         ),
+#       by = "taxid"
+#     ) 
+#   
+#   return(list(myClusters = myClusters, bactList = bactList))
+# }
+# 
+# 
+# #---
+# result = allBact %>% 
+#   group_by(accession) %>% 
+#   summarise(geneId = paste(geneId, collapse = ","), n = n(), 
+#             extension = sum(extension), fullPath = sum(fullPath),
+#             genus = genus[1], species = species[1],
+#             plasmid = all(plasmid), prob = mean(probPlas),
+#             top = sum(top), match = sum(top) / n()) %>% 
+#   filter(n > 1, match >= 0.95, extension > 0)%>% 
+#   arrange(desc(match),desc(fullPath))
+# 
+# 
+# bactList = map_df(result$geneId, function(genes){
+#   
+#   myGenes = c(str_split(genes, ",") %>%unlist() %>% as.integer())
+#   
+#   allBact %>%
+#     filter(geneId %in% myGenes) %>% 
+#     group_by(accession, taxid, genus, species, plasmid) %>%
+#     summarise(fullPath = sum(fullPath), depth = sum(KC) / sum(LN), .groups = "drop")
+#   
+# }, .id = "bactGroup") %>% 
+#   group_by(bactGroup) %>% 
+#   mutate(prob = softmax(fullPath), perc = fullPath / max(fullPath),
+#          pathScore = fullPath, val = 1) %>% arrange(desc(fullPath)) %>% 
+#   ungroup() %>% arrange(bactGroup, desc(prob))
+# 
+# 
+# AMRclusters = map_df(result$accession, function(acc){
+#   
+#   allBact %>% filter(accession == acc) %>% mutate(primary = T)
+#   
+# }, .id = "bactGroup") 
+# 
+# 
+# #whcih one
+# mergeGroups = bactList %>% group_by(taxid, plasmid) %>% 
+#   summarise(bactGroup = paste(bactGroup, collapse = ","), 
+#             pathScore = sum(pathScore), mean = mean(depth), 
+#             sd = sd(depth), se = sd(depth) / sqrt(n()),
+#             perc = se / mean) %>% 
+#   filter(perc < 0.15) %>% arrange(desc(pathScore))
+# 
+# #which one
+# mergeGroups = AMRclusters %>% group_by(taxid, plasmid) %>% 
+#   summarise(bactGroup = paste(bactGroup, collapse = ","), 
+#             pathScore = sum(pathScore), mean = mean(depth), 
+#             sd = sd(depth), se = sd(depth) / sqrt(n()),
+#             perc = se / mean) %>% 
+#   filter(perc < 0.15) %>% arrange(desc(pathScore))
+# 
+# test = bactList %>% filter(bactGroup != 11) %>% 
+#   filter(taxid %in% (bactList %>% filter(bactGroup == 11) %>% pull(taxid))) %>% 
+#   group_by(bactGroup) %>% filter(perc == max(perc)) %>% ungroup() %>% 
+#   filter(perc == 1)
+# 
+# 
+# bactList$merge = ""
+# AMRclusters$merge = ""
+# 
+# while(nrow(mergeGroups) > 0){
+#   
+#   toMerge = mergeGroups$bactGroup[1] %>% str_split(",") %>% unlist() 
+#   
+#   # bactList = bactList %>% mutate(merge = ifelse(
+#   #     bactGroup %in% toMerge, paste(merge, paste(toMerge, collapse = " ")), 
+#   #     merge
+#   #   ))
+#   # 
+#   # AMRclusters = AMRclusters %>% mutate(merge = ifelse(
+#   #   bactGroup %in% toMerge, paste(merge, paste(toMerge, collapse = " ")), 
+#   #   merge
+#   # ))
+#   # 
+#   # mergeGroups = mergeGroups[-1,]
+#   
+#   bactList = bactList %>% mutate(bactGroup = ifelse(
+#     bactGroup %in% toMerge, toMerge[1], bactGroup
+#   ))
+#   
+#   AMRclusters = AMRclusters %>% mutate(bactGroup = ifelse(
+#     bactGroup %in% toMerge, toMerge[1], bactGroup
+#   ))
+#   
+#   mergeGroups$bactGroup = str_remove_all(
+#     mergeGroups$bactGroup, sprintf("(%s)(,|\\b)", paste(toMerge, collapse = "|")))
+#   mergeGroups = mergeGroups[mergeGroups$bactGroup != "",]
+#   
+# }
+# 
+# bactList = bactList %>% rowwise() %>% 
+#   mutate(merge = str_trim(merge) %>% str_split(" ") %>% unlist() %>% 
+#            unique() %>% sort() %>% paste(collapse = ","),
+#          merge = ifelse(merge == "", bactGroup, merge)) %>% 
+#   arrange(merge) %>% group_by(merge) %>% mutate(bactGroup = cur_group_id()) %>% 
+#   group_by(bactGroup) %>% mutate(
+#     prob = softmax(fullPath), perc = fullPath / max(fullPath),
+#     pathScore = fullPath, val = 1) %>% ungroup() %>% 
+#   arrange(bactGroup, desc(fullPath)) %>% select(-merge)
+# 
+# 
+# # bactList = bactList %>% group_by(bactGroup, taxid, genus, species) %>% summarise(
+# #   fullPath = sum(fullPath), depth = mean(depth), .groups = "drop"
+# # ) %>% mutate(
+# #   prob = softmax(fullPath), perc = fullPath / max(fullPath),
+# #   pathScore = fullPath, val = 1) %>% 
+# #   arrange(bactGroup, desc(fullPath))
+# 
+# AMRclusters = AMRclusters %>% rowwise() %>% 
+#   mutate(merge = str_trim(merge) %>% str_split(" ") %>% unlist() %>% 
+#            unique() %>% sort() %>% paste(collapse = ","),
+#          merge = ifelse(merge == "", bactGroup, merge)) %>% 
+#   arrange(merge) %>% group_by(merge) %>% mutate(bactGroup = cur_group_id()) %>% 
+#   ungroup() %>% arrange(bactGroup, genus, species) %>% select(-merge)
+# 
+# 
+# #Check if any of the remaining ARG match a genome ARG species
+# checkPlasmid = allBact %>% 
+#   filter(!geneId %in% AMRclusters$geneId) %>% 
+#   # filter(!geneId %in% genomeARG$myClusters$geneId) %>% 
+#   left_join(
+#     bactList %>% 
+#       group_by(bactGroup, taxid) %>% filter(prob == max(prob)) %>% ungroup() %>% 
+#       # filter(val == 1) %>% #maybe remove?
+#       select(taxid, bactGroup, prob, perc, genomeDepth = depth, isPlasmid  = plasmid,
+#              genomePathscore = pathScore, val),
+#     by = "taxid"
+#   ) %>% left_join(
+#     AMRclusters %>% 
+#       # filter(val == 1) %>%
+#       select(taxid, geneId, primary) %>% 
+#       left_join(genesDetected %>% 
+#                   # mutate(cover = ifelse(type == "fragmentsOnly", cover2, cover)) %>% 
+#                   select(geneId, cover, startDepth, type),
+#                 by = "geneId") %>% 
+#       group_by(taxid) %>% 
+#       summarise(
+#         primary = all(primary),
+#         genomeCover = weighted.mean(cover, cover),
+#         genomeType = case_when(
+#           all(type == "noFragments") ~ "noFragments",
+#           all(type == "fragmentsOnly") ~ "fragmentsOnly",
+#           TRUE ~ "mixed"
+#         ), .groups = "drop"),
+#     by = "taxid"
+#   ) 
+# 
+# checkPlasmid =  checkPlasmid %>% left_join(
+#   checkPlasmid%>% 
+#     group_by(geneId, pathScore) %>% summarise(contenders = n(), .groups = "drop") %>% 
+#     group_by(geneId) %>% 
+#     arrange(desc(pathScore)) %>% 
+#     mutate(contenders = cumsum(contenders)) %>% ungroup(),
+#   by = c("geneId", "pathScore")
+# ) 
+# 
+# myPlasmids = list()
+# temp = checkPlasmid
+# #FInd the best matching plasmids
+# while(nrow(temp > 0)){
+#   x = temp %>%
+#     filter(top >= 0.95) %>% 
+#     group_by(accession, genus, species) %>% 
+#     mutate(x = sum(fullPath)) %>% ungroup() %>% 
+#     filter(x == max(x))
+#   
+#   
+#   myPlasmids[[length(myPlasmids)+1]] = x
+#   
+#   
+#   temp = temp %>% filter(!geneId %in% x$geneId) 
+# }
+# 
+# test = myPlasmids %>% bind_rows()
+# 
+# # x = myPlasmids[[11]]
+# temp = map_df(myPlasmids, function(x){
+#   
+#   test1 = checkPlasmid %>% filter(geneId %in% x$geneId) %>% 
+#     group_by(accession, bactGroup) %>% 
+#     summarise(
+#       extension = sum(extension), fullPath = sum(fullPath), 
+#       depth = sum(KC) / sum(LN), bactDepth = mean(genomeDepth), 
+#       plasmid = all(plasmid), isPlasmid = all(isPlasmid),
+#       perc = mean(perc), .groups = "drop") %>% 
+#     group_by(bactGroup) %>% filter(fullPath == max(fullPath))
+#   
+#   test1 = allBact %>% 
+#     filter(geneId %in% x$geneId, accession %in% test1$accession) %>% 
+#     left_join(test1 %>% select(accession, bactGroup, bactDepth, 
+#                                isPlasmid, perc),
+#               by = "accession")
+# })
+# 
+# 
+# temp = temp %>% group_by(geneId) %>% 
+#   filter(plasmid == isPlasmid | is.na(isPlasmid)) %>% 
+#   filter(fullPath == max(fullPath)) %>% 
+#   filter(perc == max(perc) | is.na(perc)) %>% ungroup()
+# 
+# 
+# result = bind_rows(AMRclusters, temp) %>% 
+#   arrange(bactGroup, gene)
+# 
+# 
+# result[is.na(result$bactGroup),] = result[is.na(result$bactGroup),] %>% 
+#   group_by(taxid) %>% mutate(bactGroup = cur_group_id() + max(result$bactGroup, na.rm = T))
+# 
+# result = result %>% select(-c(accession:KC, rank)) %>% distinct()
 
 #Make sure to link plasmid and genome if needed
-sample
+
 
 
 
