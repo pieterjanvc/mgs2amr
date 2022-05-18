@@ -24,12 +24,12 @@ outfmt = "6 qseqid sallacc staxids sscinames salltitles qlen slen qstart qend ss
 
 
 "133,272,60,115,235,161,97,151,249,254"
-myId = "270" #452, 845, 18, 23, 73, 192, 122, 111, 66
+myId = "17" #452, 845, 18, 23, 73, 192, 122, 111, 66, 97
 
-# registerDoParallel(cores=8)
-# test = foreach(myId = myIds[201:250]) %dopar% {
-# 
-# tryCatch({
+registerDoParallel(cores=15)
+test = foreach(myId = myIds[801:1191]) %dopar% {
+
+tryCatch({
   
 #FUNCTIONS
 softmax = function(vals, normalise = F, log = T){
@@ -47,7 +47,8 @@ blast_readOutput = function(file, outfmt, separate = T, includeIssues = F, verbo
   #split multiple matches
   blastOut = blastOut %>% 
     mutate(x = str_count(staxids, ";"), y = str_count(sallacc, ";"), 
-           z = x == y | x == 0, plasmid = str_detect(salltitles, "lasmid |ntegron |ransposon ")) 
+           z = x == y | x == 0, 
+           plasmid = str_detect(salltitles, "lasmid |ntegron |ransposon |ransposase ")) 
   
   # case_when(
   #   str_detect(salltitles, "lasmid ") ~ 1,
@@ -154,6 +155,10 @@ blastOut = lapply(
              pattern = "blastSegmentsClustered\\d+.csv.gz"),
   blast_readOutput, outfmt = outfmt) %>% bind_rows() 
 
+if(nrow(blastOut) == 0) {
+  allBact = data.frame()
+  stop()
+}
 
 expandBlast = list.files(sample, full.names = T, pattern = "expand_\\d+.csv.gz")
 
@@ -448,18 +453,18 @@ newLogs = rbind(newLogs, list(as.integer(Sys.time()), 8,
 
 
 #Make sure that taxid always has the same genus / species name and vice versa
-blastOut = blastOut %>% 
-  mutate(bact = paste(genus, species)) %>%
-  group_by(taxid, genus, species) %>% 
-  mutate(myCount = n()) %>% 
-  group_by(taxid) %>% 
-  mutate(genus = genus[myCount == max(myCount)][1],
-         species = species[myCount == max(myCount)][1]) %>% 
-  group_by(taxid, genus, species) %>% 
-  mutate(myCount = n()) %>% 
-  group_by(genus, species) %>% 
-  mutate(taxid = taxid[myCount == max(myCount)][1]) %>% 
-  ungroup() %>% select(-bact, -myCount)
+# blastOut = blastOut %>% 
+#   mutate(bact = paste(genus, species)) %>%
+#   group_by(taxid, genus, species) %>% 
+#   mutate(myCount = n()) %>% 
+#   group_by(taxid) %>% 
+#   mutate(genus = genus[myCount == max(myCount)][1],
+#          species = species[myCount == max(myCount)][1]) %>% 
+#   group_by(taxid, genus, species) %>% 
+#   mutate(myCount = n()) %>% 
+#   group_by(genus, species) %>% 
+#   mutate(taxid = taxid[myCount == max(myCount)][1]) %>% 
+#   ungroup() %>% select(-bact, -myCount)
 
 blastOut$start[blastOut$start & ! blastOut$segmentId %in% 
                  segmentsOfInterest$name[segmentsOfInterest$type != "fragmentsOnly"]] = F
@@ -657,7 +662,7 @@ allBact = allBact %>%
   group_by(geneId, accession, plasmid) %>%
   mutate(fullPath = sum(pathScore) + sum(extraBits)) %>%
   group_by(geneId, accession) %>%
-  filter(plasmid == plasmid[fullPath == max(fullPath)][1]) %>% 
+  filter(plasmid == plasmid[fullPath == max(fullPath)][1]) %>%
   ungroup()
 
 # #Calculate the extra bits to add to the total path score
@@ -691,9 +696,9 @@ allBact = allBact %>%
          path1 = pathId[orientation == 1][1],
          maxOrder1 = max(0,order[orientation == 1]),
          LN = sum(LN), KC = sum(KC)) %>% 
-  group_by(geneId, taxid, pathId, plasmid) %>% 
-  filter(fullPath == max(fullPath)) %>%
-  filter(accession %in% accession[rank == max(rank)][1]) %>%
+  # group_by(geneId, taxid, pathId, plasmid) %>% 
+  # filter(fullPath == max(fullPath)) %>%
+  # filter(accession %in% accession[rank == max(rank)][1]) %>%
   ungroup() 
 
 
@@ -734,7 +739,29 @@ allBact = allBact %>%
         probPlas = max(0, val[plasmid]) / sum(val), .groups = "drop"
       ), by  = "geneId")
 
+allBact = allBact %>% mutate(pipelineId = myId) %>% 
+  select(-c(gene:type, maxGroupScore:probPlas))
 
+},
+error = function(x){
+  allBact = data.frame()
+
+},
+
+finally = {
+
+  return(list(allBact = allBact,
+              genesDetected = genesDetected))
+})
+  
+}
+
+stopImplicitCluster()
+
+allBact = lapply(test, "[[", 1) %>% bind_rows()
+genesDetected = lapply(test, "[[", 2) %>% bind_rows()
+
+write_rds(list(allBact, genesDetected), "../test3.rds", compress = "gz")
 #--
 
 #Find perfect genome matches
