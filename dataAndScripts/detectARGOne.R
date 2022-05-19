@@ -27,7 +27,7 @@ outfmt = "6 qseqid sallacc staxids sscinames salltitles qlen slen qstart qend ss
 myId = "8" #452, 845, 18, 23, 73, 192, 122, 111, 66, 97
 
 registerDoParallel(cores=15)
-test = foreach(myId = myIds[801:1191]) %dopar% {
+test = foreach(myId = myIds[801:1192]) %dopar% {
 
 tryCatch({
   
@@ -532,9 +532,20 @@ while(nrow(toCheck) > 0){
     arrange(desc(n), accession, pos)
 }
 
-duplicates = duplicates %>% mutate(cluster = as.factor(cluster) %>% as.integer()) %>% 
-  left_join(ARG)
+duplicates = duplicates %>% 
+  transmute(geneId, duplicated = as.factor(cluster) %>% as.integer()) 
 
+#Add the clusters to detected ARG and fill in blanks
+genesDetected = genesDetected %>% 
+  left_join(duplicates, by = "geneId") 
+
+if(any(is.na(genesDetected$duplicated))){
+  newIdx = max(genesDetected$duplicated, 0, na.rm = T) + 1
+  genesDetected$duplicated[is.na(genesDetected$duplicated)] = 
+    newIdx:(sum(is.na(genesDetected$duplicated))+newIdx-1)
+}
+
+  
 #----------
 blastOut$start[blastOut$start & ! blastOut$segmentId %in% 
                  segmentsOfInterest$name[segmentsOfInterest$type != "fragmentsOnly"]] = F
@@ -805,7 +816,7 @@ allBact = allBact %>%
       ), by  = "geneId")
 
 allBact = allBact %>% mutate(pipelineId = myId) %>% 
-  select(-c(gene:type, maxGroupScore:probPlas))
+  select(-c(gene:type, maxGroupScore:probPlas)) 
 
 },
 error = function(x){
@@ -815,8 +826,7 @@ error = function(x){
 
 finally = {
 
-  return(list(allBact = allBact,
-              genesDetected = genesDetected))
+  return(list(allBact = allBact, genesDetected = genesDetected))
 })
   
 }
