@@ -24,7 +24,7 @@ outfmt = "6 qseqid sallacc staxids sscinames salltitles qlen slen qstart qend ss
 
 
 "133,272,60,115,235,161,97,151,249,254"
-myId = "17" #452, 845, 18, 23, 73, 192, 122, 111, 66, 97
+myId = "8" #452, 845, 18, 23, 73, 192, 122, 111, 66, 97
 
 registerDoParallel(cores=15)
 test = foreach(myId = myIds[801:1191]) %dopar% {
@@ -466,14 +466,79 @@ newLogs = rbind(newLogs, list(as.integer(Sys.time()), 8,
 #   mutate(taxid = taxid[myCount == max(myCount)][1]) %>% 
 #   ungroup() %>% select(-bact, -myCount)
 
-blastOut$start[blastOut$start & ! blastOut$segmentId %in% 
-                 segmentsOfInterest$name[segmentsOfInterest$type != "fragmentsOnly"]] = F
-
-
 #Add the group (membership of subgraphs)
 blastOut = blastOut %>% left_join(
   pathData %>% select(segmentId, group) %>% distinct(), by = "segmentId") %>% 
   mutate(geneId = as.integer(geneId))
+
+test = blastOut %>% 
+  filter(geneId %in% c(3086, 5686), start)
+
+#Find duplicate genes if they lie on same pos in genome
+
+toCheck = blastOut %>% 
+  # filter(geneId %in% c(3086, 5686), start) %>% 
+  group_by(geneId, accession, group) %>% 
+  filter(any(start)) %>% 
+  mutate(sMin = ifelse(hit_from < hit_to, hit_from, hit_to),
+         sMax = ifelse(hit_from >= hit_to, hit_from, hit_to)) %>% 
+  ungroup()
+
+toCheck = bind_rows(
+  toCheck %>% filter(start) %>% 
+    select(accession, geneId, pos = sMin, clusterId) %>% 
+    group_by(accession, pos) %>% filter(n() > 1) %>% 
+    ungroup(),
+  toCheck %>% filter(start) %>% 
+    select(accession, geneId, pos = sMax, clusterId) %>% 
+    group_by(accession, pos) %>% filter(n() > 1) %>% 
+    ungroup()
+) %>%
+  group_by(accession) %>% 
+  mutate(n = n()) %>% ungroup() %>% 
+  # group_by(pos) %>% filter(n_distinct(clusterId) == 1) %>% ungroup() %>% 
+  select(accession, geneId, pos, n, clusterId) %>% 
+  left_join(ARG %>% select(geneId, gene, subtype), by = "geneId") %>% 
+  arrange(desc(n), accession, pos)
+
+duplicates = data.frame(geneId = integer(), cluster = double())
+
+while(nrow(toCheck) > 0){
+  nextCheck = toCheck %>% 
+    filter(accession == accession[1]) 
+  
+  lastgroup = nextCheck$pos
+  nextCheck = nextCheck %>% 
+    group_by(geneId) %>% mutate(group = min(pos)) %>% 
+    group_by(pos) %>% mutate(group = min(group)) %>% ungroup()
+  
+  while(any(lastgroup != nextCheck$group)){
+    lastgroup = nextCheck$group
+    nextCheck = nextCheck %>% 
+      group_by(geneId) %>% mutate(group = min(group)) %>% 
+      group_by(pos) %>% mutate(group = min(group)) %>% ungroup()
+  }
+  
+  nextCheck = nextCheck %>% select(geneId, group) %>% distinct() %>% 
+    left_join(duplicates, by = "geneId") %>% 
+    group_by(group) %>% 
+    mutate(cluster = ifelse(any(!is.na(cluster)), min(cluster, na.rm = T), group[1])) %>% 
+    ungroup() %>% select(-group)
+  
+  duplicates = bind_rows(duplicates, nextCheck) %>% distinct()
+  
+  toCheck = toCheck %>% group_by(accession) %>% 
+    filter(!all(geneId %in% duplicates$geneId)) %>% ungroup() %>% 
+    arrange(desc(n), accession, pos)
+}
+
+duplicates = duplicates %>% mutate(cluster = as.factor(cluster) %>% as.integer()) %>% 
+  left_join(ARG)
+
+#----------
+blastOut$start[blastOut$start & ! blastOut$segmentId %in% 
+                 segmentsOfInterest$name[segmentsOfInterest$type != "fragmentsOnly"]] = F
+
 
 # When a strain flanks both sides of a the start segment, but the segment itself has no match,
 # this likely results from too strict cutoffs by BLASTn. Add a start match with 99%
@@ -559,7 +624,7 @@ tempVar  = tempVar %>% ungroup() %>%
 
 #For each segment, pick the closest start segment for comparison
 tempVar$startGroup = 
-  apply(tempVar %>% select(sMin, 29:ncol(tempVar)), 1, function(x){
+  apply(tempVar %>% select(sMin, matches(c("1", "2", "3"))), 1, function(x){
     x = abs(x[-1] - x[1])
     which(x == min(x, na.rm = T))
   })
