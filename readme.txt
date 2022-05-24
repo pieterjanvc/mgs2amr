@@ -17,8 +17,9 @@ The following software needs to be installed and available in PATH:
   * Packages: gfaTools, RSQLite, igraph, tidyverse (with dplyr 1.0+), parallel,
               foreach, rmarkdown
   * Precompiled versions: https://www.r-project.org/ 
-- usearch
+- usearch (v11+)
   * https://www.drive5.com/usearch/download.html
+  * ! Make sure to rename the file 'usearch' if version info is attached 
 - MetaCherchant
   * https://github.com/ctlab/metacherchant
 - BLASTn (Part of the BLAST+ package): 
@@ -37,7 +38,12 @@ Optional software
 - pigz
   * If installed, zipping files will be faster on multi-core machines compared to gzip
    
-IMPORTANT: Make sure all dependencies in the PATH
+IMPORTANT: Make sure all dependencies are in the $PATH variable
+(sqlite3, Rscript, usearch, metacherchant.sh, blastn)
+
+Command: 
+export PATH=/pathToDependencyFolder:$PATH  
+	e.g.: export PATH=/opt/ncbi-blast-2.13.0+/bin:$PATH
 
 -- END SETUP.SH ---
 

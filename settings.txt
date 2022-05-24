@@ -3,13 +3,6 @@
 #-----------------------------------------------------------
 # NOTE: Do NOT quote values unless quotation is part of it
 #  ex.1: var=test 1; NOT var="test 1"
-#  ex.2: var=test "test" test; NOT "test \"test\" test"
-
---- GENERAL DEPENDENCIES
-sqlite3=/opt/sqlite-tools/sqlite3
-rscript=/opt/R/4.0.2/bin/Rscript
-metacherchant=/opt/metacherchant.sh
-usearch=/opt/usearch11.0.667
 
 --- mgs2amr.sh
 mgs2amrTemp=
@@ -17,10 +10,10 @@ mgs2amrVerbose=1
 mgs2amrForceOverwrite=FALSE
 mgs2amrStep=4
 
---- LOCALBLAST.SH
+--- localBlast.sh
 localBlastVerbose=1
 localBlastDB=/mnt/meta2amrData/ncbi/blastdb
 
---- ANNOTATION.SH
+--- annotation.sh
 annotationHTMLreport=true
 annotationVerbose=1

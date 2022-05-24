@@ -27,7 +27,7 @@ trap 'err_report ${LINENO}' ERR
 
 updateDBwhenError() {
 	#Update the DB
-    $sqlite3 "$database" \
+    sqlite3 "$database" \
 	"UPDATE scriptUse
 	SET end = '$(date '+%F %T')', status = 'error',
 	info = '$2'
@@ -63,10 +63,8 @@ if [ ! -f "$baseFolder/settings.txt" ]; then
 fi
 
 #Check if sqlite3 is installed
-sqlite3=`grep -oP "sqlite3\s*=\s*\K(.*)" $baseFolder/settings.txt`
-testTool=`command -v $sqlite3`
-if [ -z "$testTool" ]; then 
-    message="SQLite 3 does not seem to be installed.\n If it is, set the path to 'sqlite3' in the settings file"
+if [ -z `command -v sqlite3` ]; then 
+    message="SQLite 3 does not seem to be installed.\n If it is, add 'sqlite3' folder to $PATH"
 	echo -e "\e[91m$message\n" $baseFolder/settings.txt"\e[0m"
 	exit 1;
 fi;
@@ -78,63 +76,59 @@ if [ -z ${database+x} ]; then
 fi
 
 if [ ! -f "$database" ]; then
-	$sqlite3 "$database" -cmd \
-	".read $baseFolder/dataAndScripts/createMgs2amrDB.sql" \
-	".mode csv" ".import $baseFolder/dataAndScripts/argTable.csv ARG"
+	sqlite3 "$database" -cmd \
+	".read $baseFolder/dataAndScripts/createMgs2amrDB.sql"
 	echo -e " - No existing mgs2amr database found, a new database was created"
 else 
 	echo -e " - The mgs2amr database is present"
 fi
 
 #Register the start of the script in the DB
-runId=$($sqlite3 "$database" \
+runId=$(sqlite3 "$database" \
 	"INSERT INTO scriptUse (pipelineId,scriptName,start,status) \
 	values(0,'checkSetup.sh','$(date '+%F %T')','running'); \
 	SELECT runId FROM scriptUse WHERE runId = last_insert_rowid()")
 	
 #Check if R is installed
-Rscript=`grep -oP "rscript\s*=\s*\K(.*)" $baseFolder/settings.txt`
-if [ -z `command -v $Rscript` ]; then 
-    message="R does not seem to be installed.\n If it is, set the path to 'Rscript' in the settings file"
+if [ -z `command -v Rscript` ]; then 
+    message="R does not seem to be installed.\n If it is, add the 'Rscript' folder to $PATH"
 	echo -e "\e[91m$message\n" $baseFolder/settings.txt"\e[0m"
 	updateDBwhenError "$runId" "R does not seem to be installed"
 	exit 1;
 fi;
-$sqlite3 "$database" \
+sqlite3 "$database" \
 	"INSERT INTO logs (runId,tool,timeStamp,actionId,actionName)
 	VALUES($runId,'setup.sh',$(date '+%s'),1,'R installed')"
 
 #Check if the correct R packages are installed
-$Rscript $baseFolder/dataAndScripts/setup.R
-$sqlite3 "$database" \
+Rscript $baseFolder/dataAndScripts/setup.R
+sqlite3 "$database" \
 	"INSERT INTO logs (runId,tool,timeStamp,actionId,actionName)
 	VALUES($runId,'setup.R',$(date '+%s'),2,'R packages installed')"
 echo -e " - R and dependent packages are present"
 
 #Check if usearch is installed or the reformat.sh script can be reached
-testTool=`grep -oP "usearch\s*=\s*\K(.*)" $baseFolder/settings.txt`
-if [ -z `command -v $testTool` ]; then 
-	echo -e "\e[91mThe usearch package does not seem to be installed as a system application\n"\
-	"If you installed it in a custom folder,\n update the path to the usearch script in the settings file\n"\
+if [ -z `command -v usearch` ]; then 
+	echo -e "\e[91mThe 'usearch' command cannot be found\n"\
+	"Set 'alias usearch=/pathToFolder/usearch<version>' to allow MGS2AMR to find the tool\n"\
 	$baseFolder/settings.txt"\e[0m"
 	updateDBwhenError "$runId" "The usearch package does not seem to be installed"
 	exit 1;
 fi;
-$sqlite3 "$database" \
+sqlite3 "$database" \
 	"INSERT INTO logs (runId,tool,timeStamp,actionId,actionName)
 	VALUES($runId,'setup.sh',$(date '+%s'),4,'usearch installed')"
 echo -e " - usearch is present"
 
 #Check if MetaCherchant.sh can be reached
-testTool=`grep -oP "metacherchant\s*=\s*\K(.*)" $baseFolder/settings.txt`
-if [ -z `command -v $testTool` ]; then 
+if [ -z `command -v metacherchant.sh` ]; then 
 	echo -e "\e[91mThe MetaCherchant script cannot be found\n"\
-	"Update the path to the script in the settings file\n"\
+	"Add the 'metacherchant.sh' folder to $PATH or create and alias\n"\
 	$baseFolder/settings.txt"\e[0m"
 	updateDBwhenError "$runId" "MetaCherchant script not found"
 	exit 1;
 fi;
-$sqlite3 "$database" \
+sqlite3 "$database" \
 	"INSERT INTO logs (runId,tool,timeStamp,actionId,actionName)
 	VALUES($runId,'setup.sh',$(date '+%s'),5,'MetaCherchant present')"
 echo -e " - MetaCherchant is present"
@@ -143,7 +137,7 @@ echo -e " - MetaCherchant is present"
 if [ -z `command -v blastn` ]; then 
 	message="local BLASTn NOT present, "
 	echo -e " - BLASTn not found\n"\
-	"   Make sure blastn is installed and in the PATH (see documentation)"
+	"   Make sure blastn is installed and setup correctly (run setup.sh -h for details)"
 else
 	message="local BLASTn present, "
 	echo -e " - Local BLASTn instance present"
@@ -163,32 +157,21 @@ else
 	"   Set by: export BLASTDB=/path/to/ntDBfolder"
 fi
 
-$sqlite3 "$database" \
+sqlite3 "$database" \
 	"INSERT INTO logs (runId,tool,timeStamp,actionId,actionName)
 	VALUES($runId,'setup.sh',$(date '+%s'),6,'$message')"
 
 #Check if pigz is installed else use gzip (slower but same result)
 if [ -z `command -v pigz` ]; then 
-	message="pigz not installed. gzip used instead"
+	message="pigz not found. gzip used instead"
 else
 	message="pigz present"
 fi;
-$sqlite3 "$database" \
+sqlite3 "$database" \
 	"INSERT INTO logs (runId,tool,timeStamp,actionId,actionName)
 	VALUES($runId,'setup.sh',$(date '+%s'),7,'$message')"
 echo -e " - $message"
 
-
-#Check if pandoc version 1.12.3+ is present
-if [ -z `command -v pandoc` ]; then 
-	message="(!) pandoc is NOT present. HTML reports cannot be generated"
-else
-	message="pandoc present"
-fi;
-$sqlite3 "$database" \
-	"INSERT INTO logs (runId,tool,timeStamp,actionId,actionName)
-	VALUES($runId,'setup.sh',$(date '+%s'),7,'$message')"
-echo -e " - $message"
 
 echo -e "   ... finished\n"
 finalMessage=" All dependencies seem to be present\n"
@@ -203,7 +186,7 @@ if [ "$runTests" == "true" ]; then
 	#Run mgs2amr.sh
 	# $baseFolder/mgs2amr.sh -f ...
 
-	$sqlite3 "$database" \
+	sqlite3 "$database" \
 		"INSERT INTO logs (runId,tool,timeStamp,actionId,actionName)
 		VALUES($runId,'setup.sh',$(date '+%s'),8,'pipeline test succesful')"
 	printf "done\n\n"
@@ -212,7 +195,7 @@ if [ "$runTests" == "true" ]; then
 fi
 
 #Finish script
-$sqlite3 "$database" \
+sqlite3 "$database" \
 	"UPDATE scriptUse
 	SET end = '$(date '+%F %T')', status = 'finished'
 	WHERE runId = $runId"
