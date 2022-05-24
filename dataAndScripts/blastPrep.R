@@ -17,27 +17,25 @@ args = commandArgs(trailingOnly = TRUE) #arguments specified in the shell file
 
 baseFolder = formatPath(args[[1]], endWithSlash = T)
 database = args[[2]]
-tempFolder = formatPath(args[[3]], endWithSlash = T)
-tempName = args[[4]]
+outputFolder = formatPath(args[[3]], endWithSlash = T)
+outputName = args[[4]]
 verbose = abs(as.integer(args[[5]]))
 runId = as.integer(args[[6]])
 pipelineId = as.integer(args[[7]])
-keepAllMetacherchantData = as.logical(args[[8]])
-maxPathDist = as.integer(args[[9]]) #Distance from ARG to crop the GFA file (reduces blast search)
-minBlastLength = as.integer(args[[10]]) #Min segment length to submit to blast
-trimLength = as.integer(args[[11]]) #Loose segments smaller than this will be cut from thr GFA
-clusterIdentidy  = as.numeric(args[[12]]) #The cluster identity percent used in usearch
-forceRedo = as.logical(args[[13]]) #If parts of the code have successfully run before a crash, do not repeat unless forceRedo = T
-maxStep = as.integer(args[[14]]) #Which parts of the script to run? If NA all is run
+maxCPU = as.integer(args[[8]])
+usearch = args[[9]]
+keepAllMetacherchantData = as.logical(args[[10]])
+maxPathDist = as.integer(args[[11]]) #Distance from ARG to crop the GFA file (reduces blast search)
+minBlastLength = as.integer(args[[12]]) #Min segment length to submit to blast
+trimLength = as.integer(args[[13]]) #Loose segments smaller than this will be cut from thr GFA
+clusterIdentidy  = as.numeric(args[[14]]) #The cluster identity percent used in usearch
+forceRedo = as.logical(args[[15]]) #If parts of the code have successfully run before a crash, do not repeat unless forceRedo = T
+maxStep = as.integer(args[[16]]) #Which parts of the script to run? If NA all is run
 
-maxCPU = 4
 maxStep = ifelse(maxStep == 0, 5, maxStep)
 maxStartGap = 800
 minCover = 0.25 #The minimum coverage to conksider a ARG being present
 maxPathIter = 8000
-
-# database = sprintf("%sdataAndScripts/mgs2amr.db", baseFolder)
-# database = "/mnt/meta2amrData/pipelineTest/after1200/mgs2amr.db"
 
 #Generate a list out of the settings file
 settings = readLines(paste0(baseFolder, "settings.txt"))
@@ -50,8 +48,8 @@ zipMethod = ifelse(length(suppressWarnings(
   system("command -v pigz", intern = T))) == 0,
   "gzip", "pigz")
 
-tempFolder = formatPath(paste0(tempFolder, tempName), endWithSlash = T)
-logPath = sprintf("%s%s_log.csv", tempFolder,tempName)
+outputFolder = formatPath(paste0(outputFolder, "/", outputName), endWithSlash = T)
+logPath = sprintf("%s%s_log.csv", outputFolder, outputName)
 
 #Check the log file to see if there was a previous run of the code
 myConn = dbConnect(SQLite(), database, synchronous = NULL)
@@ -82,27 +80,27 @@ switchLinks = function(links){
 #! Added only for benchmarking
 myStats = list(info = data.frame(
   pipelineId = pipelineId, runId = runId, 
-  timeStamp = as.integer(Sys.time()), tempFolder = tempFolder))
+  timeStamp = as.integer(Sys.time()), outputFolder = outputFolder))
 #!
 
 tryCatch({
   
-  #Check if data exists
-  if(length(list.files(tempFolder, pattern = "masterGFA.db")) == 0){
-    cat("\nMGS2AMR cannot locate the data needed associated with this pipelineId",
-        "\n Expected temp folder:", tempFolder, "\n\nPipeline halted\n")
-    
-    newLogs = rbind(newLogs, list(as.integer(Sys.time()), 23,
-                                  "Data not found, halt pipeline"))
-    maxStep = 0
-    genesDetected = data.frame()
-  }
-
   if(maxStep > 0){
 
     # ---- 1. Clean up files and folders ----
     #****************************************
     if(nrow(logs %>% filter(actionId %in% c(2, 6))) > 0){
+      
+      #Check if data exists
+      if(length(list.files(outputFolder, pattern = "masterGFA.db")) == 0){
+        cat("\nMGS2AMR cannot locate the data needed associated with this pipelineId",
+            "\n Expected temp folder:", outputFolder, "\n\nPipeline halted\n")
+        
+        newLogs = rbind(newLogs, list(as.integer(Sys.time()), 23,
+                                      "Data not found, halt pipeline"))
+        maxStep = 0
+        genesDetected = data.frame()
+      }
 
       if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S -"),
                           "Skip MetaCherchant cleanup, already done\n")}
@@ -115,11 +113,11 @@ tryCatch({
                             "Load master GFA file for processing ... ")}
         
       #! Get the database size 
-      myStats$DBzipped = file.info(paste0(tempFolder, "masterGFA.db.gz"))$size
+      myStats$DBzipped = file.info(paste0(outputFolder, "masterGFA.db.gz"))$size
       #!
     
-      system(sprintf("%s -d %s", zipMethod, paste0(tempFolder, "masterGFA.db.gz")))
-      myConn = dbConnect(SQLite(), sprintf("%smasterGFA.db", tempFolder))
+      system(sprintf("%s -d %s", zipMethod, paste0(outputFolder, "masterGFA.db.gz")))
+      myConn = dbConnect(SQLite(), sprintf("%smasterGFA.db", outputFolder))
       gfa = list(
         segments = dbReadTable(myConn, "segments"),
         links = dbReadTable(myConn, "links")
@@ -150,7 +148,7 @@ tryCatch({
       if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S -"), "Filter and merge MetaCherchant output ... ")}
       newLogs = rbind(newLogs, list(as.integer(Sys.time()), 3, "Start filtering and merging MetaCherchant output"))
 
-      myFiles = list.files(sprintf("%s", tempFolder),
+      myFiles = list.files(sprintf("%s", outputFolder),
                            ".gfa", recursive = T, full.names = T)
       myFiles = myFiles[!str_detect(myFiles, "masterGFA")]
 
@@ -212,14 +210,14 @@ tryCatch({
       if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S -"), "Write master GFA ... ")}
       newLogs = rbind(newLogs, list(as.integer(Sys.time()), 5, "Start writing master GFA"))
 
-      myConn = dbConnect(SQLite(), sprintf("%smasterGFA.db", tempFolder))
+      myConn = dbConnect(SQLite(), sprintf("%smasterGFA.db", outputFolder))
       dbWriteTable(myConn, "segments", gfa$segments, overwrite = T)
       dbWriteTable(myConn, "links", gfa$links, overwrite = T)
       dbDisconnect(myConn)
 
       #Remove Metacherchant Data if set
       if(keepAllMetacherchantData == F & (nrow(logs %>% filter(actionId == 4)) == 0)){
-        system(sprintf("ls -d %s/* | grep -P \"/\\d+$\" | xargs rm -R", tempFolder))
+        system(sprintf("ls -d %s/* | grep -P \"/\\d+$\" | xargs rm -R", outputFolder))
       }
 
       if(verbose > 0){cat("done\n")}
@@ -240,9 +238,9 @@ tryCatch({
       if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S -"), "Skip ARG detection, already done\n")}
       newLogs = rbind(newLogs, list(as.integer(Sys.time()), 9, "Skip ARG detection, already done"))
 
-      genesDetected = read.csv(paste0(tempFolder, "genesDetected/genesDetected.csv"))
-      fragments = gfa_read(paste0(tempFolder, "fragmentGFA.gfa"))
-      segmentsOfInterest = read_csv(paste0(tempFolder, "segmentsOfInterest.csv"))
+      genesDetected = read.csv(paste0(outputFolder, "genesDetected/genesDetected.csv"))
+      fragments = gfa_read(paste0(outputFolder, "fragmentGFA.gfa"))
+      segmentsOfInterest = read_csv(paste0(outputFolder, "segmentsOfInterest.csv"))
 
 
     } else {
@@ -278,7 +276,7 @@ tryCatch({
 
         myGenes = myGroups$geneId[myGroups$group == myGroup]
 
-        myConn = dbConnect(SQLite(), sprintf("%smasterGFA.db", tempFolder))
+        myConn = dbConnect(SQLite(), sprintf("%smasterGFA.db", outputFolder))
         gfaGroup = list(
           segments = dbGetQuery(
             myConn,
@@ -372,12 +370,14 @@ tryCatch({
         row.names = NULL
       )
       
-      membership = bind_rows(
-        membership,
-        gfa$segments %>% select(name) %>% 
-          filter(!name %in% c(membership$name)) %>% 
-          mutate(group = (max(membership$group)+1):(max(membership$group)+n()))
-      )
+      if(any(!gfa$segments$name %in% c(membership$name))){
+        membership = bind_rows(
+          membership,
+          gfa$segments %>% select(name) %>% 
+            filter(!name %in% c(membership$name)) %>% 
+            mutate(group = (max(membership$group)+1):(max(membership$group)+n()))
+        )
+      }
       
       gfa$segments = gfa$segments %>% select(-matches("group"))
       gfa$segments = gfa$segments %>% left_join(membership, by = "name") 
@@ -476,7 +476,7 @@ tryCatch({
       #Get the ARG list
       myConn = dbConnect(SQLite(), database, synchronous = NULL)
       sqliteSetBusyHandler(myConn, 30000)
-      argGenes = dbGetQuery(myConn, "SELECT geneId, clusterNr, gene, subtype, nBases FROM ARG") %>%
+      argGenes = dbGetQuery(myConn, "SELECT geneId, nBases FROM ARG") %>%
         mutate(geneId = as.character(geneId))
       dbDisconnect(myConn)
       
@@ -494,7 +494,7 @@ tryCatch({
         filter(start, maxLN > 0) %>% 
         filter(LN == max(LN)) %>% dplyr::slice(1) %>% ungroup() %>%
         left_join(argGenes, by = "geneId") %>%
-        select(geneId, clusterNr, nBases, gene, subtype, LN, KC, fileDepth,
+        select(geneId, nBases, LN, KC, fileDepth,
                nSeg, LNsum, KCsum, startPerc) %>%
         mutate(startDepth = KC / LN) %>% rowwise() %>%
         mutate(
@@ -662,12 +662,12 @@ tryCatch({
           
           #Add the reverse complement (usearch does not do that when calc_distmx)
           system(sprintf("%s -fastx_revcomp %s -label_suffix _RC -fastaout %s -quiet",
-                         settings["usearch"], myFile, myFile_RC))
+                         usearch, myFile, myFile_RC))
           invisible(file.append(myFile, myFile_RC))
           
           #Use cluster_fast to reduce number of segments by grouping in identity clusters
           system(sprintf("%s -calc_distmx %s -tabbedout %s -termdist 0.5 -quiet",
-                         settings["usearch"], myFile, myFile))
+                         usearch, myFile, myFile))
           
           clusters = read.delim(myFile, header = F) %>% 
             mutate(id1 = str_extract(V1, "^\\d+"), id2 = str_extract(V2, "^\\d+")) %>% 
@@ -831,12 +831,12 @@ tryCatch({
           
           #Add the reverse complement (usearch does not do that when calc_distmx)
           system(sprintf("%s -fastx_revcomp %s -label_suffix _RC -fastaout %s -quiet",
-                         settings["usearch"], myFile, myFile_RC))
+                         usearch, myFile, myFile_RC))
           file.append(myFile, myFile_RC)
           
           #Use cluster_fast to reduce number of segments by grouping in identity clusters
           system(sprintf("%s -calc_distmx %s -tabbedout %s -termdist 0.5 -quiet",
-                         settings["usearch"], myFile, myFile))
+                         usearch, myFile, myFile))
           
           read.delim(myFile, header = F) %>% mutate(pos = i)
           
@@ -879,14 +879,14 @@ tryCatch({
             .groups = "drop"
           ) %>% left_join(
             new %>%
-              select(geneId, gene, subtype, val), by = c("id2" = "geneId")
+              select(geneId, val), by = c("id2" = "geneId")
           )
         
         #Filter and group for similarities
         distMat = distMat %>% group_by(id1) %>%
           filter(sim > 0.9, sim0 > 0.9) %>%
           filter(val == max(val)) %>% ungroup() %>%
-          select(geneId = id2, gene, subtype) %>% distinct()
+          select(geneId = id2) %>% distinct()
         
         # #Update the fragments GFA
         # noFragments = list(
@@ -931,17 +931,17 @@ tryCatch({
       dbClearResult(q)
       dbDisconnect(myConn)
 
-      myDir = sprintf("%sgenesDetected", tempFolder)
+      myDir = sprintf("%sgenesDetected", outputFolder)
       if(dir.exists(myDir)){
         unlink(myDir, recursive = T)
       }
       dir.create(myDir, showWarnings = F)
       write_csv(genesDetected,
-                paste0(tempFolder, "genesDetected/genesDetected.csv"))
+                paste0(outputFolder, "genesDetected/genesDetected.csv"))
 
       #Write the startConn table
       startConn = startConn %>% filter(geneId %in% genesDetected$geneId)
-      write_csv(startConn, paste0(tempFolder, "segmentsOfInterest.csv"))
+      write_csv(startConn, paste0(outputFolder, "segmentsOfInterest.csv"))
       
       #! Get startConnInfo after filter 
       myStats$startConn = myStats$startConn %>% left_join(
@@ -995,11 +995,11 @@ tryCatch({
         myGFA = list()
         myGFA$segments = gfa$segments %>% filter(geneId == myGene) %>% select(-geneId)
         myGFA$links = gfa$links %>% filter(geneId == myGene) %>% select(-geneId)
-        gfa_write(myGFA, sprintf("%sgenesDetected/%s.gfa", tempFolder, myGene))
+        gfa_write(myGFA, sprintf("%sgenesDetected/%s.gfa", outputFolder, myGene))
       }
 
       #Write the fragmented ones as one GFA and fasta
-      gfa_write(fragments, paste0(tempFolder, "fragmentGFA.gfa"), verbose = 0)
+      gfa_write(fragments, paste0(outputFolder, "fragmentGFA.gfa"), verbose = 0)
 
       #Feedback and Logs
       if(verbose > 0){cat("done\n")}
@@ -1021,7 +1021,7 @@ tryCatch({
       newLogs = rbind(newLogs, list(as.integer(Sys.time()), 12,
                                     "Skip GFA simplification, already done"))
 
-      blastSegments = read.csv(sprintf("%sblastSegments.csv", tempFolder))
+      blastSegments = read.csv(sprintf("%sblastSegments.csv", outputFolder))
 
     } else {
 
@@ -1029,7 +1029,7 @@ tryCatch({
       if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S -"), "Simplify GFA files ... ")}
       newLogs = rbind(newLogs, list(as.integer(Sys.time()), 13, "Start simplifying GFA files"))
 
-      dir.create(sprintf("%sgenesDetected/simplifiedGFA", tempFolder), showWarnings = F)
+      dir.create(sprintf("%sgenesDetected/simplifiedGFA", outputFolder), showWarnings = F)
       
       registerDoParallel(cores=maxCPU)
 
@@ -1037,7 +1037,7 @@ tryCatch({
       #! add .combine = "bind_rows" when removed and chage below too!!
       blastSegments = foreach(myGene = unique(noFragments$segments$geneId)) %dopar% {
                 
-            fullGFA = gfa_read(sprintf("%sgenesDetected/%s.gfa", tempFolder, myGene))
+            fullGFA = gfa_read(sprintf("%sgenesDetected/%s.gfa", outputFolder, myGene))
             
             #! Get the info before simplification
             tempStats = fullGFA$segments %>% 
@@ -1133,7 +1133,7 @@ tryCatch({
             }
             
             gfa_write(fullGFA, sprintf("%s/genesDetected/simplifiedGFA/%s_simplified.gfa",
-                                     tempFolder, myGene))
+                                     outputFolder, myGene))
             
             #! Get the info after simplification
             tempStats = bind_rows(
@@ -1187,10 +1187,10 @@ tryCatch({
 
       }
 
-      fasta_write(blastSegments$sequence, sprintf("%sblastSegments.fasta", tempFolder),
+      fasta_write(blastSegments$sequence, sprintf("%sblastSegments.fasta", outputFolder),
                   blastSegments$blastId, type = "nucleotide")
       
-      write.csv(blastSegments, sprintf("%sblastSegments.csv", tempFolder), row.names = F)
+      write.csv(blastSegments, sprintf("%sblastSegments.csv", outputFolder), row.names = F)
       
       #! Blast segments 
       myStats$blastSeg = blastSegments %>% summarise(
@@ -1236,7 +1236,7 @@ tryCatch({
       newLogs = rbind(newLogs, list(as.integer(Sys.time()), 16,
                                     "Skip clustering segments and fasta generation, already done"))
 
-      nFiles = length(list.files(tempFolder, pattern = "blastSegmentsClustered\\d+.fasta"))
+      nFiles = length(list.files(outputFolder, pattern = "blastSegmentsClustered\\d+.fasta"))
 
     } else {
 
@@ -1247,17 +1247,17 @@ tryCatch({
                                     "Start clustering segments and generate FASTA for BLAST"))
       
       #Remove old blast data
-      unlink(list.files(tempFolder, ".csv.gz|expand_", full.names = T))
+      unlink(list.files(outputFolder, ".csv.gz|expand_", full.names = T))
 
       #Use cluster_fast to reduce number of segments by grouping in identity clusters
       system(sprintf("%s -cluster_fast %s -sort length -query_cov 0.975 -target_cov 0.975 -id %f -uc %s%s -quiet",
-                     settings["usearch"],
-                     sprintf("%sblastSegments.fasta", tempFolder),
+                     usearch,
+                     sprintf("%sblastSegments.fasta", outputFolder),
                      clusterIdentidy,
-                     sprintf("%sblastSegments.out", tempFolder),
+                     sprintf("%sblastSegments.out", outputFolder),
                      ifelse(verbose < 2, " >/dev/null 2>&1", " 2>&1")))
 
-      fastaPaths = read.table(sprintf("%sblastSegments.out", tempFolder))
+      fastaPaths = read.table(sprintf("%sblastSegments.out", outputFolder))
       fastaPaths = blastSegments %>% filter(blastId %in% (fastaPaths %>% filter(V10 == "*") %>% pull("V9")))
       
       #! Blast segments after cluster
@@ -1269,7 +1269,7 @@ tryCatch({
       #!
      
       #FASTA to blast should not contain more than 500,000 nucleotides per file (split if needed)
-      x = file.remove(list.files(sprintf("%s",tempFolder),
+      x = file.remove(list.files(sprintf("%s",outputFolder),
                              pattern = "blastSegmentsClustered", full.names = T))
       nFiles = ceiling(sum(fastaPaths$LN) / 500000)
       maxPerFile = ceiling(nrow(fastaPaths) / nFiles)
@@ -1277,7 +1277,7 @@ tryCatch({
       for(i in 1:nFiles){
         subSet = (1 + maxPerFile*(i-1)):min((i*maxPerFile), nrow(fastaPaths))
         fasta_write(fastaPaths$sequence[subSet],
-                    sprintf("%sblastSegmentsClustered%i.fasta", tempFolder, i),
+                    sprintf("%sblastSegmentsClustered%i.fasta", outputFolder, i),
                     fastaPaths$blastId[subSet], type = "n")
       }
       
@@ -1317,18 +1317,18 @@ tryCatch({
           blastSubmissions,
           list(RID = "",
                timeStamp = as.integer(Sys.time()),
-               tempName = tempName,
+               outputName = outputName,
                fastaFile = sprintf("blastSegmentsClustered%i.fasta", i),
                statusCode = 0,
                statusMessage = "Awaiting submission",
-               folder = tempFolder))
+               folder = outputFolder))
       }
 
       #Update DB
       blastSubmissions$pipelineId = pipelineId
       blastSubmissions$runId = runId
       blastSubmissions = blastSubmissions %>%
-        select(pipelineId,runId,RID,timeStamp,tempName,fastaFile,statusCode,statusMessage,folder)
+        select(pipelineId,runId,timeStamp,outputName,fastaFile,statusCode,statusMessage,folder)
 
       #Delete old ones fist in case of a redo
       myConn = dbConnect(SQLite(), database, synchronous = NULL)
@@ -1342,8 +1342,8 @@ tryCatch({
       q = dbSendStatement(
         myConn,
         paste("INSERT INTO blastSubmissions",
-              "(pipelineId,runId,RID,timeStamp,tempName,fastaFile,statusCode,statusMessage,folder)",
-              "VALUES (?,?,?,?,?,?,?,?,?)"),
+              "(pipelineId,runId,timeStamp,outputName,fastaFile,statusCode,statusMessage,folder)",
+              "VALUES (?,?,?,?,?,?,?,?)"),
         params = unname(as.list(blastSubmissions)))
       dbClearResult(q)
 
@@ -1392,8 +1392,8 @@ finally = {
   dbClearResult(q)
   dbDisconnect(myConn)
 
-  if(file.exists(sprintf("%smasterGFA.db", tempFolder))){
-    system(sprintf("%s -f %s", zipMethod, sprintf("%smasterGFA.db", tempFolder)))
+  if(file.exists(sprintf("%smasterGFA.db", outputFolder))){
+    system(sprintf("%s -f %s", zipMethod, sprintf("%smasterGFA.db", outputFolder)))
   }
   
   #! Wrap up and save 

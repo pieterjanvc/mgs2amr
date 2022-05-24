@@ -68,6 +68,7 @@ Arguments [h|i|j|o|n|t|s|m|v]
  -m (optional) Default = 32G; Memory available (important for MetaCherchant)
     Input files of > 2Gb easily need 32+Gb of RAM. 
 	If the pipeline fails at the first step, consider increasing the memory 
+ -c (optional) Default = 4 (or lower if not available); Number of processors to use
  -v (optional) Default can be changed in the settings file
     0: Nothing is written to stdout
     1: General progress is posted to stdout

@@ -56,7 +56,7 @@ CREATE TABLE IF NOT EXISTS "blastSubmissions" (
 	"pipelineId"	integer NOT NULL,
 	"runId"	integer NOT NULL,
 	"timeStamp" integer,
-	"tempName" text,
+	"outputName" text,
 	"fastaFile" text,
 	"statusCode" integer,
 	"statusMessage" text,

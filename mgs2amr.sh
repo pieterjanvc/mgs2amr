@@ -36,7 +36,7 @@ updateDBwhenError() {
 }
 
 #Options when script is run
-while getopts ":hi:j:o:n:fs:v:p:m:d:" opt; do
+while getopts ":hi:j:o:n:fs:v:p:m:c:d:" opt; do
   case $opt in
 	h) echo -e "\n"
 	   awk '/--- mgs2amr.sh ---/,/-- END mgs2amr.sh ---/' $baseFolder/readme.txt  
@@ -60,6 +60,8 @@ while getopts ":hi:j:o:n:fs:v:p:m:d:" opt; do
 	p) pipelineId="${OPTARG}"
     ;;
 	m) memory="${OPTARG}"
+    ;;
+	c) cpu="${OPTARG}"
     ;;
     d) database="${OPTARG}"
     ;;
@@ -87,6 +89,15 @@ if [ -z ${memory+x} ]; then
 	memory="32G"
 fi
 
+if [ -z ${cpu+x} ]; then 
+	default=4
+	available=`nproc --all`
+	cpu=$(( available > default ? default : available ))
+elif [ ! $(grep -E "^[0-9]+$" <<< $cpu) ] ; then
+	echo -e "\n\e[91mThe number of processors to use needs to be a postive integer \n" \ 
+	"Read the help file (-h) for more info\e[0m"; exit 1;
+fi
+
 if [ -z ${step+x} ]; then 
 	step=`grep -oP "mgs2amrStep\s*=\s*\K(.*)" $baseFolder/settings.txt`
 elif [ ! $(grep -E "^(1|2|3|4)$" <<< $step) ] ; then
@@ -97,6 +108,16 @@ if [ ! $(grep -E "^(1|2|3|4)$" <<< $step) ]; then
 	echo -e "\n\e[91mThe step value (-s) must be between 1 - 4\e[0m"; exit 1;
 fi
 
+#Check if usearch is installed 
+if [ -z `command -v usearch` ]; then 
+	echo -e "\e[91mThe 'usearch' command cannot be found\n"\
+	"Check the documentation and run setup.sh to verify\e[0m"
+	exit 1;
+else
+	usearch=`which usearch`
+fi;
+
+#Check if to create new pipelineId or check provided one
 if [ -z ${pipelineId+x} ]; then 	
 
 	if [ ! -f "$inputFile1" ]; then 
@@ -339,7 +360,7 @@ if [ $step -gt 1 ]; then
 		"INSERT INTO blastPrepOptions (runId,option,value) VALUES $values"
 
 	Rscript $baseFolder/dataAndScripts/blastPrep.R \
-		"$baseFolder" "$database" "$outputFolder"	"$outputName" "$verbose" "$runId" "$pipelineId" \
+		"$baseFolder" "$database" "$outputFolder" "$outputName" "$verbose" "$runId" "$pipelineId" "$cpu" "$usearch" \
 		${scriptValues[@]}
 
 	if [ "$verbose" -ne 0 ]; then echo -e `date "+%T"`" - Finished BLAST preparations"; fi;

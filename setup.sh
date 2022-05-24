@@ -106,7 +106,7 @@ sqlite3 "$database" \
 	VALUES($runId,'setup.R',$(date '+%s'),2,'R packages installed')"
 echo -e " - R and dependent packages are present"
 
-#Check if usearch is installed or the reformat.sh script can be reached
+#Check if usearch is installed 
 if [ -z `command -v usearch` ]; then 
 	echo -e "\e[91mThe 'usearch' command cannot be found\n"\
 	"Set 'alias usearch=/pathToFolder/usearch<version>' to allow MGS2AMR to find the tool\n"\
