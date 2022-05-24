@@ -28,7 +28,7 @@ trap 'err_report ${LINENO}' ERR
 
 updateDBwhenError() {
 	#Update the DB
-    $sqlite3 -cmd ".timeout 30000" $database \
+    sqlite3 -cmd ".timeout 30000" $database \
 	"UPDATE scriptUse
 	SET end = '$(date '+%F %T')', status = 'error',
 	info = '$2'
@@ -36,7 +36,7 @@ updateDBwhenError() {
 }
 
 #Options when script is run
-while getopts ":hi:j:o:n:t:fv:p:m:s:d:" opt; do
+while getopts ":hi:j:o:n:fs:v:p:m:d:" opt; do
   case $opt in
 	h) echo -e "\n"
 	   awk '/--- mgs2amr.sh ---/,/-- END mgs2amr.sh ---/' $baseFolder/readme.txt  
@@ -51,8 +51,6 @@ while getopts ":hi:j:o:n:t:fv:p:m:s:d:" opt; do
     ;;
 	n) outputName="${OPTARG}"
     ;;
-	t) tempFolder=`realpath "${OPTARG%/}"`
-    ;;
 	f) forceOverwrite=TRUE
     ;;
 	s) step="${OPTARG}"
@@ -63,7 +61,7 @@ while getopts ":hi:j:o:n:t:fv:p:m:s:d:" opt; do
     ;;
 	m) memory="${OPTARG}"
     ;;
-  d) database="${OPTARG}"
+    d) database="${OPTARG}"
     ;;
     \?) echo "Unknown argument provided"
 	    exit
@@ -112,48 +110,30 @@ if [ -z ${pipelineId+x} ]; then
 	elif [ ! -d $outputFolder ]; then	
 		echo -e "\n\e[91mThe output directory does not exist\e[0m"; exit 1;
 	fi
-
-	if [ -z ${tempFolder+x} ]; then 
-		tempFolder=`grep -oP "mgs2amrTemp\s*=\s*\K(.*)" $baseFolder/settings.txt`
-		tempFolder=${tempFolder%/}
-		if [ -z ${tempFolder} ]; then
-			tempFolder=$baseFolder/temp #Use default temp if none assigned
-		elif [ ! -d `dirname $tempFolder` ]; then	
-			echo -e "\n\e[91mThe default temp directory set in the settings file does not exist\e[0m"; exit 1;
-		fi
-	elif [ ! -d `dirname $tempFolder` ]; then	
-		echo -e "\n\e[91mThe temp directory does not exist\e[0m"; exit 1;
-	fi
-	
-	# if [ $forceOverwrite == FALSE ] &  [ -d `dirname $outputFolder` ]; then 
-		# echo -e "\n\e[91mThe temp directory does not exist\e[0m"; exit 1;
-	# fi
 	
 	if [ -z ${outputName+x} ]; then 
 		rand=`shuf -zer -n5  {A..Z} {a..z} {0..9}`
-		outputName=mgs2amrPipeline
+		outputName=mgs2amr_
 		
 		while [ -d $outputFolder/$outputName$rand ]; do
 			rand=`shuf -zer -n5  {A..Z} {a..z} {0..9}`
 		done
 		
-		outputName=$outputName\_$rand	
+		outputName=$outputName$rand	
     elif [ ! $(grep -iP "^[a-z][\w+\-\.]*\w$" <<< $outputName) ]; then
 		echo -e "\n\e[91mThe (-n) outputName must be as follows:\n"\
 				" - start with letter\n"\
 				" - zero or more alphanumeric, '.', '_' or '-' characters\n"\
 		        " - end with alphanumeric character\e[0m"; exit 1;
 	elif [ -d $outputFolder/$outputName ]; then
-		echo -e "\n\e[91mA folder with name $outputName already exists in the output folder." \
-		"Use -n to specifiy a unique name or read the help file (-h)\e[0m"; exit 1;
+		echo -e "\n\e[91mThe chosen output folder $outputFolder/$outputName already exists." \
+		"Set -n to a unique name or read the help file (-h)\e[0m"; exit 1;
 	fi
-	
-	tempName=$outputName\_`date '+%s'`
 	
 else
 
 	#Get the first runId
-    firstRunId=$($sqlite3 -cmd ".timeout 30000" $database \
+    firstRunId=$(sqlite3 -cmd ".timeout 30000" $database \
 	"SELECT s.runId 
 	FROM scriptArguments as s, scriptUse as p \
 	WHERE p.pipelineId = $pipelineId AND p.runId = s.runId AND \
@@ -163,33 +143,33 @@ else
 		firstRunId=0
 	fi
 	
-	tempFolder=$($sqlite3 -cmd ".timeout 30000" $database \
+	outputFolder=$(sqlite3 -cmd ".timeout 30000" $database \
 	"SELECT value FROM scriptArguments \
-	WHERE scriptName = 'mgs2amr.sh' AND argument = 'tempFolder' AND runId = $firstRunId;")
+	WHERE scriptName = 'mgs2amr.sh' AND argument = 'outputFolder' AND runId = $firstRunId;")
 	
-	tempName=$($sqlite3 -cmd ".timeout 30000" $database \
+	outputName=$(sqlite3 -cmd ".timeout 30000" $database \
 	"SELECT value FROM scriptArguments \
-	WHERE scriptName = 'mgs2amr.sh' AND argument = 'tempName' AND runId = $firstRunId;")
+	WHERE scriptName = 'mgs2amr.sh' AND argument = 'outputName' AND runId = $firstRunId;")
 	
-	if [ ! -f "$tempFolder/$tempName/pipelineId" ]; then
-	  echo "$tempFolder/$tempName"
+	if [ ! -f "$outputFolder/$outputName/pipelineId" ]; then
+	  echo "$outputFolder/$outputName"
 		echo -e "\n\e[91mThe the pipelineId provided does not point to a valid folder \e[0m"; exit 1; 
 	fi
 	
     #In case of a previous runId, load all the arguments from the database
-  inputFile1=$($sqlite3 -cmd ".timeout 30000" $database \
+  inputFile1=$(sqlite3 -cmd ".timeout 30000" $database \
 	"SELECT value FROM scriptArguments \
 	WHERE scriptName = 'mgs2amr.sh' AND argument = 'inputFile1' AND runId = $firstRunId;")
 	
-	inputFile2=$($sqlite3 -cmd ".timeout 30000" $database \
+	inputFile2=$(sqlite3 -cmd ".timeout 30000" $database \
 	"SELECT value FROM scriptArguments \
 	WHERE scriptName = 'mgs2amr.sh' AND argument = 'inputFile2' AND runId = $firstRunId;")
 	
-	outputFolder=$($sqlite3 -cmd ".timeout 30000" $database \
+	outputFolder=$(sqlite3 -cmd ".timeout 30000" $database \
 	"SELECT value FROM scriptArguments \
 	WHERE scriptName = 'mgs2amr.sh' AND argument = 'outputFolder' AND runId = $firstRunId;")
 
-	MCsuccess=$($sqlite3 -cmd ".timeout 30000" $database \
+	MCsuccess=$(sqlite3 -cmd ".timeout 30000" $database \
 	"SELECT logId FROM logs
 	WHERE runId IN (SELECT runId FROM scriptUse WHERE pipelineId == $pipelineId) AND \
 	actionId = 2;")
@@ -208,12 +188,12 @@ verbose=-$verbose
 #Register the start of the script in the DB
 if [ -z ${pipelineId+x} ]; then
 	#Generate the next pipelineId
-	pipelineId=$($sqlite3 -cmd ".timeout 30000" $database \
-	"INSERT INTO pipeline (name,tempFolder,outputFolder,statusCode,statusMessage,startTimestamp,modifiedTimestamp) \
-	values('$outputName','$tempFolder/$tempName','$outputFolder/$outputName',1,'Pipeline started','$(date '+%F %T')','$(date '+%F %T')'); \
+	pipelineId=$(sqlite3 -cmd ".timeout 30000" $database \
+	"INSERT INTO pipeline (name,outputFolder,statusCode,statusMessage,startTimestamp,modifiedTimestamp) \
+	values('$outputName','$outputFolder/$outputName',1,'Pipeline started','$(date '+%F %T')','$(date '+%F %T')'); \
 	SELECT pipelineId FROM pipeline WHERE pipelineId = last_insert_rowid();")
 	
-  runId=$($sqlite3 -cmd ".timeout 30000" $database \
+  runId=$(sqlite3 -cmd ".timeout 30000" $database \
 	"INSERT INTO scriptUse (pipelineId,scriptName,start,status) \
 	values($pipelineId,'mgs2amr.sh','$(date '+%F %T')','running'); \
 	SELECT runId FROM scriptUse WHERE runId = last_insert_rowid();")
@@ -221,16 +201,14 @@ if [ -z ${pipelineId+x} ]; then
 	scriptArgs="($runId,'mgs2amr.sh','inputFile1', '$inputFile1'),
 	($runId,'mgs2amr.sh','inputFile2', '$inputFile2'),
 	($runId,'mgs2amr.sh','outputFolder', '$outputFolder'),
-	($runId,'mgs2amr.sh','outputName', '$outputName'),
-	($runId,'mgs2amr.sh','tempFolder', '$tempFolder'),
-	($runId,'mgs2amr.sh','tempName', '$tempName'),"	
+	($runId,'mgs2amr.sh','outputName', '$outputName'),"	
 else
-	$sqlite3 -cmd ".timeout 30000" $database \
+	sqlite3 -cmd ".timeout 30000" $database \
 	"UPDATE pipeline \
 	SET modifiedTimestamp = '$(date '+%F %T')' \
 	WHERE pipelineId == $pipelineId;"
 	
-	runId=$($sqlite3 -cmd ".timeout 30000" $database \
+	runId=$(sqlite3 -cmd ".timeout 30000" $database \
 	"INSERT INTO scriptUse (pipelineId,scriptName,start,status) \
 	values($pipelineId, 'mgs2amr.sh','$(date '+%F %T')','running'); \
 	SELECT runId FROM scriptUse WHERE runId = last_insert_rowid();")
@@ -240,7 +218,7 @@ else
 fi
 
 #Save the arguments with which the script was run
-$sqlite3 -cmd ".timeout 30000" $database \
+sqlite3 -cmd ".timeout 30000" $database \
 	"INSERT INTO scriptArguments (runId,scriptName,argument,value)
 	VALUES $pointerTopipelineId $scriptArgs
 	($runId,'mgs2amr.sh','forceOverwrite', '$forceOverwrite'),
@@ -261,7 +239,7 @@ fi
 #--- PART 1 METACHERCHANT (MC) ---
 #---------------------------------
 	
-#Only run if MetaCherchant has not been run before for this sample (i.e. the temp folder has MC data)
+#Only run if MetaCherchant has not been run before for this sample (i.e. the output folder has MC data)
 if [ "$verbose" -ne 0 ]; then
 	echo "*****************************"
 	echo "--- STEP 1: MetaCherchant ---"
@@ -272,44 +250,42 @@ if [ -z "$MCsuccess" ]; then
 	
 	if [ "$verbose" -ne 0 ]; then echo -e `date "+%T"`" - Start MetaCherchant ..."; fi;
 	
-	#Generate temp folders
-    mkdir -p $tempFolder/$tempName
-	mkdir -p $tempFolder/$tempName/metacherchant_logs
-	rm -rf $tempFolder/$tempName/metacherchant_logs/*
-	echo $pipelineId > $tempFolder/$tempName/pipelineId
+	#Generate output folders
+    mkdir -p $outputFolder/$outputName
+	mkdir -p $outputFolder/$outputName/metacherchant_logs
+	rm -rf $outputFolder/$outputName/metacherchant_logs/*
+	echo $pipelineId > $outputFolder/$outputName/pipelineId
     
 	#MC generates a lot of output, we ignore this but when verbose = 2
 	if [ $verbose != 2 ] ; then
 		exec 2>/dev/null #Ignore error stream (info) of metacherchant
 	else
-		exec 2>&1 #Rederect stream to stdout
+		exec 2>&1 #Redirect stream to stdout
     fi
 	
-	metacherchant=`grep -oP "metacherchant\s*=\s*\K(.*)" $baseFolder/settings.txt`
-	
-	$sqlite3 -cmd ".timeout 30000" $database \
+	sqlite3 -cmd ".timeout 30000" $database \
 	"INSERT INTO logs (runId,tool,timeStamp,actionId,actionName)
 	VALUES($runId,'metacherchant.sh',$(date '+%s'),1,'Start MetaCherchant');"
 	
 	inputFile="$inputFile1 $inputFile2"
-	$metacherchant --tool environment-finder \
+	metacherchant.sh --tool environment-finder \
 		--k 31 \
 		--coverage=5 \
 		--reads $inputFile \
 		--seq $baseFolder/dataAndScripts/ARG.fasta \
 		--maxradius 2000 \
-		--output $tempFolder/$tempName \
-		--work-dir $tempFolder/$tempName/metacherchant_logs \
+		--output $outputFolder/$outputName \
+		--work-dir $outputFolder/$outputName/metacherchant_logs \
 		--maxkmers=100000 \
 		--bothdirs=False \
 		--chunklength=250 \
 		-m $memory
 		
-    $sqlite3 -cmd ".timeout 30000" $database \
+    sqlite3 -cmd ".timeout 30000" $database \
 	"INSERT INTO logs (runId,tool,timeStamp,actionId,actionName)
 	VALUES($runId,'metacherchant.sh',$(date '+%s'),2,'Finished MetaCherchant');"	
 	
-	$sqlite3 -cmd ".timeout 30000" $database \
+	sqlite3 -cmd ".timeout 30000" $database \
 	"UPDATE pipeline 
 	SET statusCode = 2, statusMessage = 'Finished MetaCherchant', modifiedTimestamp = '$(date '+%F %T')'
 	WHERE pipelineId == $pipelineId;"
@@ -322,11 +298,11 @@ if [ -z "$MCsuccess" ]; then
 else
 
 	if [ "$verbose" -ne 0 ]; then echo -e `date "+%T"`" - Skip MetaCherchant, already done"; fi;
-	$sqlite3 -cmd ".timeout 30000" $database \
+	sqlite3 -cmd ".timeout 30000" $database \
 	"INSERT INTO logs (runId,tool,timeStamp,actionId,actionName)
 	VALUES($runId,'metacherchant.sh',$(date '+%s'),3,'Skip MetaCherchant, already done');"
 	
-	touch $tempFolder/$tempName/pipelineId
+	touch $outputFolder/$outputName/pipelineId
 	
 fi
 
@@ -344,9 +320,6 @@ if [ $step -gt 1 ]; then
 	
 	# if [ "$verbose" -ne 0 ]; then echo -e `date "+%T"`" - Start BLAST preparations  ..."; fi;
 
-	#Get paths from the settings
-	Rscript=`grep -oP "rscript\s*=\s*\K(.*)" $baseFolder/settings.txt`
-
 	#Set any option to modify the script
 	scriptOptions=(keepAllMetacherchantData maxPathDist minBlastLength trimLength clusterIdentidy forceRedo, maxStep)
 	scriptValues=(FALSE 2000 250 250 0.99 "$forceOverwrite" 0)
@@ -355,14 +328,6 @@ if [ $step -gt 1 ]; then
 		echo "  WARNING: the blast prep is limited to step ${scriptValues[6]}" 
 	fi
 
-	# declare -A scriptOptions
-	# scriptOptions[keepAllMetacherchantData]=FALSE #keepAllMetacherchantData, if FALSE, only the GFA data is kept after merging (folders are removed)
-	# scriptOptions[maxPathDist]=5000 #maxPathDist: Distance from ARG to crop the GFA file (reduces blast search)
-	# scriptOptions[minBlastLength]=250 #minBlastLength: Min segment length to submit to blast
-	# scriptOptions[trimLength]=100 #trimLength: Loose segments smaller than this will be cut from thr GFA
-	# scriptOptions[clusterIdentidy]=0.95 #clusterIdentidy: The cluster identity percent used in usearch
-	# scriptOptions[forceRedo]=FALSE #forceRedo: if TRUE, all code is run again, even is intermediate files are available
-
 	for i in "${!scriptOptions[@]}"; 
 	do 
 		# values=$values",('$runId','$i','${scriptOptions[$i]}')" 
@@ -370,16 +335,15 @@ if [ $step -gt 1 ]; then
 	done
 	values=`echo $values | sed -e 's/^,//g'`
 
-	$sqlite3 -cmd ".timeout 30000" $database \
+	sqlite3 -cmd ".timeout 30000" $database \
 		"INSERT INTO blastPrepOptions (runId,option,value) VALUES $values"
 
-	$Rscript $baseFolder/dataAndScripts/blastPrep.R \
-		"$baseFolder" "$database" "$tempFolder"	"$tempName" "$verbose" "$runId" "$pipelineId" \
+	Rscript $baseFolder/dataAndScripts/blastPrep.R \
+		"$baseFolder" "$database" "$outputFolder"	"$outputName" "$verbose" "$runId" "$pipelineId" \
 		${scriptValues[@]}
 
 	if [ "$verbose" -ne 0 ]; then echo -e `date "+%T"`" - Finished BLAST preparations"; fi;
 fi
-
 
 if [ $step -gt 2 ]; then
 
@@ -393,7 +357,6 @@ if [ $step -gt 2 ]; then
 	if [ `command -v "blastn"` ]; then 
 		$baseFolder/localBlast.sh -v "$verbose" -p "$pipelineId" -d "$database"
 	else
-		# $baseFolder/remoteBlast.sh -v $verbose -p "$pipelineId"
 		echo -e "\e[91mRemote BLASTn has not been implemented yet.\n Please setup local version for now...\e[0m"
 		step=2
 	fi
@@ -415,7 +378,7 @@ fi
 
 
 #Update the DB
-$sqlite3 -cmd ".timeout 30000" $database \
+sqlite3 -cmd ".timeout 30000" $database \
 	"UPDATE scriptUse
 	SET end = '$(date '+%F %T')', status = 'finished'
 	WHERE runId = $runId"

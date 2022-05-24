@@ -59,25 +59,25 @@ Arguments [h|i|j|o|n|t|s|m|v]
  -j (optional) The secondary input file in case of pair-end reads
  -o The folder to save the results. A sub-folder will be created
  -n (optional) The name of the output sub-folder and prefix for other filenames
- -t (optional) The location of the temp folder (files removed once completed). 
-     Default = mgs2amr/temp unless 'mgs2amrTemp' is set in the settings file
+    If not set, a random name will be generated
  -s (optional) Set the step to which the pipeline must be run
     * 1: Step 1 - MetaCherchant
 	* 2: previous + Step 2 - BlastPreparations
 	* 3: previous + Step 3 - Blastn
 	* 4: previous + Step 4 - Annotation
- -m (optional) Default = 16G; Memory available (important for MetaCherchant)
-    Input files of > 2Gb easily need 32+Gb of RAM
+ -m (optional) Default = 32G; Memory available (important for MetaCherchant)
+    Input files of > 2Gb easily need 32+Gb of RAM. 
+	If the pipeline fails at the first step, consider increasing the memory 
  -v (optional) Default can be changed in the settings file
     0: Nothing is written to stdout
     1: General progress is posted to stdout
     2: All available details are posted to stdout    
 
 Special case when resuming an existing pipeline
- -p Provide only a pipelineId (found in file called pipelineId in temp/output folder). 
+ -p Provide only a pipelineId (found in file called pipelineId in output folder). 
      Use if an error occurred and you like to resume from a specific temp file
 	 All other parameters but step (-s) and verbose (-v) will be ignored
-	
+
 -- END mgs2amr.sh ---
 
 

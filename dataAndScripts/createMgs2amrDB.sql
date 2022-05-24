@@ -9,7 +9,6 @@ CREATE TABLE IF NOT EXISTS "pipeline" (
 	"modifiedTimestamp" text,	
 	"inputfile" text,
 	"inputfileBP" integer,
-	"tempFolder" text NOT NULL,
 	"outputFolder" text NOT NULL,	
 	"info" text
 );
