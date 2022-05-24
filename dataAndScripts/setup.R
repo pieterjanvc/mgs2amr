@@ -7,7 +7,7 @@ if(as.integer(R.version$major) < 4){
   warning(paste0("R version 4.0 or higher is recommended.\n",
       "Currently ", R.version$version.string, " is the default.\n",
       " If your system has multiple R versions and the default < 4.0,\n",
-      " set the path to the 'Rscript' in version 4+ in the settings file.\n",
+      " set the default 'Rscript' in $PATH to version 4+.\n",
       " In case of unexpected errors, update R to the latest version\n"))
 }
 
