@@ -4,6 +4,8 @@ baseFolder=$(realpath -- "$(dirname -- "$0")")
 sqlite3=`grep -oP "sqlite3\s*=\s*\K(.*)" $baseFolder/settings.txt`
 Rscript=`grep -oP "rscript\s*=\s*\K(.*)" $baseFolder/settings.txt`
 
+#export PATH=/opt/ncbi-blast-2.13.0+/bin:$PATH
+
 #Save error to temp file to it can be both displayed to user and put in DB
 touch $baseFolder/dataAndScripts/lastError
 exec 2>$baseFolder/dataAndScripts/lastError
@@ -37,7 +39,7 @@ updateDBwhenError() {
 }
 
 #Options when script is run
-while getopts ":hn:b:p:v:d:" opt; do
+while getopts ":hp:v:d:f" opt; do
   case $opt in
 	h) echo -e "\n"
 	   awk '/--- LOCALBLAST.SH ---/,/-- END LOCALBLAST.SH ---/' $baseFolder/readme.txt
@@ -49,6 +51,8 @@ while getopts ":hn:b:p:v:d:" opt; do
 	v) verbose="${OPTARG}"
     ;;
 	d) database="${OPTARG}"
+    ;;
+	f) forceRedo=TRUE
     ;;
     \?) echo "Unknown argument provided"
 	    exit
@@ -75,6 +79,10 @@ if [ -z ${verbose+x} ]; then
 	verbose=`grep -oP "localBlastVerbose\s*=\s*\K(.*)" $baseFolder/settings.txt`
 elif ! grep -qP "^-?(0|1|2)$" <<< $verbose; then	
 	echo -e "\n\e[91mThe verbose option (-v) needs to be either 0 or 1\e[0m"; exit;
+fi
+
+if [ -z ${forceRedo+x} ]; then 
+	forceRedo=FALSE
 fi
 
 #Check if BLASTn is present
@@ -113,7 +121,7 @@ fi
 
 #Run BLASTn for all in the queue (unless runId specified)
 $Rscript $baseFolder/dataAndScripts/localBlast.R \
-	"$baseFolder" "$database" "$runId" "$verbose" "$blastn" "$BLASTDB" "$pipelineId"
+	"$baseFolder" "$database" "$runId" "$verbose" "$blastn" "$BLASTDB" "$pipelineId" "$forceRedo"
 
 
 #Update the DB
