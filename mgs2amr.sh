@@ -39,7 +39,7 @@ updateDBwhenError() {
 while getopts ":hi:j:o:n:t:fv:p:m:s:d:" opt; do
   case $opt in
 	h) echo -e "\n"
-	   awk '/--- META2AMR.SH ---/,/-- END META2AMR.SH ---/' $baseFolder/readme.txt  
+	   awk '/--- mgs2amr.sh ---/,/-- END mgs2amr.sh ---/' $baseFolder/readme.txt  
 	   echo -e "\n"
 	   exit
     ;;	
@@ -75,13 +75,13 @@ exec 2>$baseFolder/dataAndScripts/lastError
 
 #Check the arguments
 if [ -z ${database+x} ]; then 
-	database="$baseFolder/dataAndScripts/meta2amr.db"
+	database="$baseFolder/dataAndScripts/mgs2amr.db"
 elif [ ! -f $database ]; then	
 		echo -e "\n\e[91mThe database provided does not exist\e[0m"; exit;
 fi
 
 if [ -z ${forceOverwrite+x} ]; then 
-	forceOverwrite=`grep -oP "meta2amrForceOverwrite\s*=\s*\K(.*)" $baseFolder/settings.txt`
+	forceOverwrite=`grep -oP "mgs2amrForceOverwrite\s*=\s*\K(.*)" $baseFolder/settings.txt`
 fi
 
 if [ -z ${memory+x} ]; then 
@@ -90,7 +90,7 @@ if [ -z ${memory+x} ]; then
 fi
 
 if [ -z ${step+x} ]; then 
-	step=`grep -oP "meta2amrStep\s*=\s*\K(.*)" $baseFolder/settings.txt`
+	step=`grep -oP "mgs2amrStep\s*=\s*\K(.*)" $baseFolder/settings.txt`
 elif [ ! $(grep -E "^(1|2|3|4)$" <<< $step) ] ; then
 	echo -e "\n\e[91mThe step option (-s) needs to be between 1-4\n Read the help file (-h) for more info\e[0m"; exit 1;
 fi
@@ -114,7 +114,7 @@ if [ -z ${pipelineId+x} ]; then
 	fi
 
 	if [ -z ${tempFolder+x} ]; then 
-		tempFolder=`grep -oP "meta2amrTemp\s*=\s*\K(.*)" $baseFolder/settings.txt`
+		tempFolder=`grep -oP "mgs2amrTemp\s*=\s*\K(.*)" $baseFolder/settings.txt`
 		tempFolder=${tempFolder%/}
 		if [ -z ${tempFolder} ]; then
 			tempFolder=$baseFolder/temp #Use default temp if none assigned
@@ -131,7 +131,7 @@ if [ -z ${pipelineId+x} ]; then
 	
 	if [ -z ${outputName+x} ]; then 
 		rand=`shuf -zer -n5  {A..Z} {a..z} {0..9}`
-		outputName=meta2amrPipeline
+		outputName=mgs2amrPipeline
 		
 		while [ -d $outputFolder/$outputName$rand ]; do
 			rand=`shuf -zer -n5  {A..Z} {a..z} {0..9}`
@@ -157,7 +157,7 @@ else
 	"SELECT s.runId 
 	FROM scriptArguments as s, scriptUse as p \
 	WHERE p.pipelineId = $pipelineId AND p.runId = s.runId AND \
-	      s.scriptName = 'meta2amr.sh' AND argument = 'inputFile1';")
+	      s.scriptName = 'mgs2amr.sh' AND argument = 'inputFile1';")
 	
 	if [ -z "$firstRunId" ]; then
 		firstRunId=0
@@ -165,11 +165,11 @@ else
 	
 	tempFolder=$($sqlite3 -cmd ".timeout 30000" $database \
 	"SELECT value FROM scriptArguments \
-	WHERE scriptName = 'meta2amr.sh' AND argument = 'tempFolder' AND runId = $firstRunId;")
+	WHERE scriptName = 'mgs2amr.sh' AND argument = 'tempFolder' AND runId = $firstRunId;")
 	
 	tempName=$($sqlite3 -cmd ".timeout 30000" $database \
 	"SELECT value FROM scriptArguments \
-	WHERE scriptName = 'meta2amr.sh' AND argument = 'tempName' AND runId = $firstRunId;")
+	WHERE scriptName = 'mgs2amr.sh' AND argument = 'tempName' AND runId = $firstRunId;")
 	
 	if [ ! -f "$tempFolder/$tempName/pipelineId" ]; then
 	  echo "$tempFolder/$tempName"
@@ -179,15 +179,15 @@ else
     #In case of a previous runId, load all the arguments from the database
   inputFile1=$($sqlite3 -cmd ".timeout 30000" $database \
 	"SELECT value FROM scriptArguments \
-	WHERE scriptName = 'meta2amr.sh' AND argument = 'inputFile1' AND runId = $firstRunId;")
+	WHERE scriptName = 'mgs2amr.sh' AND argument = 'inputFile1' AND runId = $firstRunId;")
 	
 	inputFile2=$($sqlite3 -cmd ".timeout 30000" $database \
 	"SELECT value FROM scriptArguments \
-	WHERE scriptName = 'meta2amr.sh' AND argument = 'inputFile2' AND runId = $firstRunId;")
+	WHERE scriptName = 'mgs2amr.sh' AND argument = 'inputFile2' AND runId = $firstRunId;")
 	
 	outputFolder=$($sqlite3 -cmd ".timeout 30000" $database \
 	"SELECT value FROM scriptArguments \
-	WHERE scriptName = 'meta2amr.sh' AND argument = 'outputFolder' AND runId = $firstRunId;")
+	WHERE scriptName = 'mgs2amr.sh' AND argument = 'outputFolder' AND runId = $firstRunId;")
 
 	MCsuccess=$($sqlite3 -cmd ".timeout 30000" $database \
 	"SELECT logId FROM logs
@@ -197,7 +197,7 @@ else
 fi
 
 if [ -z ${verbose+x} ]; then 
-	verbose=`grep -oP "meta2amrVerbose\s*=\s*\K(.*)" $baseFolder/settings.txt`
+	verbose=`grep -oP "mgs2amrVerbose\s*=\s*\K(.*)" $baseFolder/settings.txt`
 elif [ ! $(grep -E "^(0|1|2)$" <<< $verbose) ] ; then
 	echo -e "\n\e[91mThe verbose option (-v) needs to be 0, 1 or 2\n Read the help file (-h) for more info\e[0m"; exit 1; 
 fi
@@ -215,15 +215,15 @@ if [ -z ${pipelineId+x} ]; then
 	
   runId=$($sqlite3 -cmd ".timeout 30000" $database \
 	"INSERT INTO scriptUse (pipelineId,scriptName,start,status) \
-	values($pipelineId,'meta2amr.sh','$(date '+%F %T')','running'); \
+	values($pipelineId,'mgs2amr.sh','$(date '+%F %T')','running'); \
 	SELECT runId FROM scriptUse WHERE runId = last_insert_rowid();")
 	
-	scriptArgs="($runId,'meta2amr.sh','inputFile1', '$inputFile1'),
-	($runId,'meta2amr.sh','inputFile2', '$inputFile2'),
-	($runId,'meta2amr.sh','outputFolder', '$outputFolder'),
-	($runId,'meta2amr.sh','outputName', '$outputName'),
-	($runId,'meta2amr.sh','tempFolder', '$tempFolder'),
-	($runId,'meta2amr.sh','tempName', '$tempName'),"	
+	scriptArgs="($runId,'mgs2amr.sh','inputFile1', '$inputFile1'),
+	($runId,'mgs2amr.sh','inputFile2', '$inputFile2'),
+	($runId,'mgs2amr.sh','outputFolder', '$outputFolder'),
+	($runId,'mgs2amr.sh','outputName', '$outputName'),
+	($runId,'mgs2amr.sh','tempFolder', '$tempFolder'),
+	($runId,'mgs2amr.sh','tempName', '$tempName'),"	
 else
 	$sqlite3 -cmd ".timeout 30000" $database \
 	"UPDATE pipeline \
@@ -232,10 +232,10 @@ else
 	
 	runId=$($sqlite3 -cmd ".timeout 30000" $database \
 	"INSERT INTO scriptUse (pipelineId,scriptName,start,status) \
-	values($pipelineId, 'meta2amr.sh','$(date '+%F %T')','running'); \
+	values($pipelineId, 'mgs2amr.sh','$(date '+%F %T')','running'); \
 	SELECT runId FROM scriptUse WHERE runId = last_insert_rowid();")
 	
-	pointerTopipelineId="($runId,'meta2amr.sh','pipelineId', '$pipelineId'),"
+	pointerTopipelineId="($runId,'mgs2amr.sh','pipelineId', '$pipelineId'),"
 	
 fi
 
@@ -243,14 +243,14 @@ fi
 $sqlite3 -cmd ".timeout 30000" $database \
 	"INSERT INTO scriptArguments (runId,scriptName,argument,value)
 	VALUES $pointerTopipelineId $scriptArgs
-	($runId,'meta2amr.sh','forceOverwrite', '$forceOverwrite'),
-	($runId,'meta2amr.sh','verbose', '$verbose');"
+	($runId,'mgs2amr.sh','forceOverwrite', '$forceOverwrite'),
+	($runId,'mgs2amr.sh','verbose', '$verbose');"
 
 SECONDS=0
 
 if [ "$verbose" -ne 0 ]; then
 	echo -e "\n\e[32m##################################"
-	echo -e "\e[32m--- META2AMR PIPELINE - ID $pipelineId ---"
+	echo -e "\e[32m--- MGS2AMR PIPELINE - ID $pipelineId ---"
 	echo -e "\e[32m##################################\e[0m\n"
 fi
 
@@ -424,6 +424,6 @@ duration=$SECONDS
 
 if [ $step != 4 ]; then step="at step $step"; else step=""; fi
 if [ "$verbose" -ne 0 ]; then 
-	echo -e "\n\e[32m--- The META2AMR pipeline finished successfully $step ---\n"\
+	echo -e "\n\e[32m--- The MGS2AMR pipeline finished successfully $step ---\n"\
 						"                Time elapsed: $(($duration / 60)) minutes \e[0m"
 fi

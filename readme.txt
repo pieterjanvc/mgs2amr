@@ -1,5 +1,5 @@
-########## META2AMR ##########
-##############################
+########## MGS2AMR ##########
+#############################
    Developed by PJ Van Camp
 
 --- SETUP.SH ---
@@ -42,7 +42,7 @@ IMPORTANT: Make sure all dependencies in the PATH
 -- END SETUP.SH ---
 
 
---- META2AMR.SH ---
+--- mgs2amr.sh ---
 Evaluate a metagenome for pathogenic bacterial species and their AMR
 The ARG tested obtained from https://www.ncbi.nlm.nih.gov/bioproject/PRJNA313047
  Last update of this list: 2021-06-04
@@ -54,7 +54,7 @@ Arguments [h|i|j|o|n|t|s|m|v]
  -o The folder to save the results. A sub-folder will be created
  -n (optional) The name of the output sub-folder and prefix for other filenames
  -t (optional) The location of the temp folder (files removed once completed). 
-     Default = meta2amr/temp unless 'meta2amrTemp' is set in the settings file
+     Default = mgs2amr/temp unless 'mgs2amrTemp' is set in the settings file
  -s (optional) Set the step to which the pipeline must be run
     * 1: Step 1 - MetaCherchant
 	* 2: previous + Step 2 - BlastPreparations
@@ -72,11 +72,11 @@ Special case when resuming an existing pipeline
      Use if an error occurred and you like to resume from a specific temp file
 	 All other parameters but step (-s) and verbose (-v) will be ignored
 	
--- END META2AMR.SH ---
+-- END mgs2amr.sh ---
 
 
 --- LOCALBLAST.SH ---
-Run local BLASTn for files in the meta2amr database awaiting alignment.
+Run local BLASTn for files in the mgs2amr database awaiting alignment.
 
 This script is separate from the main pipeline as local BLASTn searches require
 a large amount of memory and thus can be run in a separate process
@@ -88,7 +88,7 @@ Arguments [b|d|h|r|v]
  -d (optional) Set the BLAST database to use (should be nt or custom set of bacteria)
 	 Default = value from 'localBlastDB' in the settings file
  -p (optional) Run the BLAST search only for these pipelineIds (e.g. "1,5,20")
-     Default = all pipelineIds in the blastSubmissions table of the meta2amr database 
+     Default = all pipelineIds in the blastSubmissions table of the mgs2amr database 
 	 that have not been blasted yet
  -v (optional) Default can be changed in the settings file
     0: Nothing is written to stdout (except errors)
@@ -98,7 +98,7 @@ Arguments [b|d|h|r|v]
 
 
 --- REMOTEBLAST.SH ---
-Run a remote BLASTn service for files in the meta2amr database awaiting alignment
+Run a remote BLASTn service for files in the mgs2amr database awaiting alignment
 The script will keep running until all searches have been completed or
 a timeout has been reached.
 
@@ -112,7 +112,7 @@ Arguments [b|e|f|r|t|v]
  -f (optional) The frequency (sec) with which the the script looks for updates on searches 
 	 Default = value from 'remoteBlastCheckFreq' in the settings file
  -p (optional) Run the BLAST search only for these pipelineIds (e.g. "1,5,20")
-     Default = all pipelineIds in the blastSubmissions table of the meta2amr database 
+     Default = all pipelineIds in the blastSubmissions table of the mgs2amr database 
 	 that have not been blasted yet
  -t (optional) The timeout (sec) after which the the script stops looking new results
 	 The script will end before the timeout if all searches have been completed

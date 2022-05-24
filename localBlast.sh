@@ -64,7 +64,7 @@ exec 2>$baseFolder/dataAndScripts/lastError
 
 #Check all the input arguments
 if [ -z ${database+x} ]; then 
-	database="$baseFolder/dataAndScripts/meta2amr.db"
+	database="$baseFolder/dataAndScripts/mgs2amr.db"
 elif [ ! -f $database ]; then	
 		echo -e "\n\e[91mThe database provided does not exist\e[0m"; exit;
 fi
@@ -115,7 +115,7 @@ SECONDS=0
 if [ $verbose -gt 0 ]; then
 	echo -e "\n"
 	echo "********************************"
-	echo "--- META2AMR: BLASTn (local) ---"
+	echo "--- MGS2AMR: BLASTn (local) ---"
 	echo "********************************"
 fi
 

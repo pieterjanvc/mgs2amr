@@ -36,8 +36,8 @@ maxStartGap = 800
 minCover = 0.25 #The minimum coverage to conksider a ARG being present
 maxPathIter = 8000
 
-# database = sprintf("%sdataAndScripts/meta2amr.db", baseFolder)
-# database = "/mnt/meta2amrData/pipelineTest/after1200/meta2amr.db"
+# database = sprintf("%sdataAndScripts/mgs2amr.db", baseFolder)
+# database = "/mnt/meta2amrData/pipelineTest/after1200/mgs2amr.db"
 
 #Generate a list out of the settings file
 settings = readLines(paste0(baseFolder, "settings.txt"))

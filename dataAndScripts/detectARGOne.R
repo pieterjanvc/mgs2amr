@@ -11,8 +11,8 @@ processed = readLines("/mnt/meta2amrData/pipelineTest/after1200/rerunBlastn.out"
 processed = processed[!is.na(processed)]
 processed = c(2:10, processed)
 
-baseFolder = "/mnt/meta2amrData/meta2amr/"
-database = "/mnt/meta2amrData/pipelineTest/after1200/meta2amr.db"
+baseFolder = "/mnt/meta2amrData/mgs2amr/"
+database = "/mnt/meta2amrData/pipelineTest/after1200/mgs2amr.db"
 # database = "/mnt/meta2amrData/pipelineTest/extraTests/extraTests.db"
 runId = 0
 verbose = 1

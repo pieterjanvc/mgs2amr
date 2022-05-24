@@ -72,18 +72,18 @@ if [ -z "$testTool" ]; then
 fi;
 echo -e " - SQLite 3 is present"
 
-#Check the meta2amr database and create if needed
+#Check the mgs2amr database and create if needed
 if [ -z ${database+x} ]; then 
-	database="$baseFolder/dataAndScripts/meta2amr.db"
+	database="$baseFolder/dataAndScripts/mgs2amr.db"
 fi
 
 if [ ! -f "$database" ]; then
 	$sqlite3 "$database" -cmd \
-	".read $baseFolder/dataAndScripts/createMeta2amrDB.sql" \
+	".read $baseFolder/dataAndScripts/createMgs2amrDB.sql" \
 	".mode csv" ".import $baseFolder/dataAndScripts/argTable.csv ARG"
-	echo -e " - No existing meta2amr database found, a new database was created"
+	echo -e " - No existing mgs2amr database found, a new database was created"
 else 
-	echo -e " - The meta2amr database is present"
+	echo -e " - The mgs2amr database is present"
 fi
 
 #Register the start of the script in the DB
@@ -200,8 +200,8 @@ if [ "$runTests" == "true" ]; then
 
 	#... input data
 
-	#Run meta2amr.sh
-	# $baseFolder/meta2amr.sh -f ...
+	#Run mgs2amr.sh
+	# $baseFolder/mgs2amr.sh -f ...
 
 	$sqlite3 "$database" \
 		"INSERT INTO logs (runId,tool,timeStamp,actionId,actionName)

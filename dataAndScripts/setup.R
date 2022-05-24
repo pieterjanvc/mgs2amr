@@ -1,6 +1,6 @@
-#**************************
-# ---- Meta2AMR Setup ----
 #*************************
+# ---- MGS2AMR Setup ----
+#************************
 
 #Check R version
 if(as.integer(R.version$major) < 4){
