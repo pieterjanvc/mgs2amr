@@ -42,8 +42,10 @@ blastArgs = list(
   db = "nt",
   evalue = "1e-20",
   word_size = 64,
-  max_target_seqs = 250,
+  max_target_seqs = 500,
   max_hsps = 3,
+  qcov_hsp_perc = 50, 
+  perc_identity = 75,
   taxidlist = sprintf("%sdataAndScripts/%s", baseFolder, "bact.txids"),
   outfmt = "6 qseqid sallacc staxids sscinames salltitles qlen slen qstart qend sstart send bitscore score length pident nident qcovs qcovhsp"
 )
@@ -191,10 +193,11 @@ tryCatch({
                                       nextSubmit$submId[i], i, nrow(nextSubmit)))}
           
           # First blast run
-          system(sprintf('%s -db "%s" -query "%s" -task megablast -evalue %s -word_size %i -max_target_seqs %i -max_hsps %i -taxidlist %s -num_threads %i -outfmt "%s" | %s > "%s"',
+          system(sprintf('%s -db "%s" -query "%s" -task megablast -evalue %s -word_size %i -max_target_seqs %i -max_hsps %i -taxidlist %s -num_threads %i -qcov_hsp_perc %.2f -perc_identity %.2f -outfmt "%s" | %s > "%s"',
                          blastn, blastArgs$db, paste0(nextSubmit$folder[i], nextSubmit$fastaFile[i]),
                          blastArgs$evalue, blastArgs$word_size, blastArgs$max_target_seqs, 
-                         blastArgs$max_hsps, blastArgs$taxidlist, maxCPU, blastArgs$outfmt, zipMethod,
+                         blastArgs$max_hsps, blastArgs$taxidlist, maxCPU, blastArgs$qcov_hsp_perc,
+                         blastArgs$perc_identity, blastArgs$outfmt, zipMethod,
                          paste0(nextSubmit$folder[i], str_replace(nextSubmit$fastaFile[i], ".fasta", ".csv.gz"))))
           
           if(verbose > 0){cat("done\n")}
@@ -215,9 +218,10 @@ tryCatch({
         #Get segments that have identical blast results (thus might miss some because of 250 lim)
         rerun = blastOut %>% 
           select(segmentId = qseqid, bitscore, geneId, nident, 
-                 qlen, length) %>% 
-          group_by(segmentId, geneId) %>% 
+                 qlen, length, sallacc) %>% 
+          group_by(segmentId, geneId, sallacc) %>% 
           filter(bitscore == max(bitscore)) %>% 
+          group_by(segmentId, geneId) %>% 
           summarise(x = n_distinct(bitscore) == 1, .groups = "drop",
                     identity = nident[1] / qlen[1],
                     cover = length[1] / qlen[1]) %>% 
