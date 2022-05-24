@@ -76,8 +76,7 @@ if [ -z ${database+x} ]; then
 fi
 
 if [ ! -f "$database" ]; then
-	sqlite3 "$database" -cmd \
-	".read $baseFolder/dataAndScripts/createMgs2amrDB.sql"
+	sqlite3 "$database" ".read $baseFolder/dataAndScripts/createMgs2amrDB.sql"
 	echo -e " - No existing mgs2amr database found, a new database was created"
 else 
 	echo -e " - The mgs2amr database is present"
