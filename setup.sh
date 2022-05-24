@@ -156,7 +156,7 @@ fi
 
 if blastdbcmd -list "$BLASTDB" | grep -q Nucleotide ; then 
 	message=$message"nt DB detected"
-	echo -e " - Nucleotide database found\n"
+	echo -e " - Nucleotide database found"
 else 
 	message=$message"nt DB not detected"
 	echo -e " - The \$BLASTDB variable is not found\n"\
