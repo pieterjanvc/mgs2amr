@@ -1017,9 +1017,9 @@ tryCatch({
 
       #Feedback and Logs
       if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S -"),
-                          "Skip GFA simplification, already done\n")}
+                          "Skip GFA path detection, already done\n")}
       newLogs = rbind(newLogs, list(as.integer(Sys.time()), 12,
-                                    "Skip GFA simplification, already done"))
+                                    "Skip GFA path detection, already done"))
 
       blastSegments = read.csv(sprintf("%sblastSegments.csv", outputFolder))
 
@@ -1039,7 +1039,7 @@ tryCatch({
                 
             fullGFA = gfa_read(sprintf("%sgenesDetected/%s.gfa", outputFolder, myGene))
             
-            #! Get the info before simplification
+            #! Get the info before path detection
             tempStats = fullGFA$segments %>% 
               summarise(
                 geneId = {{myGene}}, when = "before", 
@@ -1135,7 +1135,7 @@ tryCatch({
             gfa_write(fullGFA, sprintf("%s/genesDetected/simplifiedGFA/%s_simplified.gfa",
                                      outputFolder, myGene))
             
-            #! Get the info after simplification
+            #! Get the info after path detection
             tempStats = bind_rows(
               tempStats, fullGFA$segments %>% 
                 summarise(
@@ -1152,8 +1152,8 @@ tryCatch({
 
       }
 
-      #! Get the info after simplification - reduction in cases more than 3 seg
-      # myStats$simplification = bind_rows(lapply(blastSegments, "[[", 2)) %>%
+      #! Get the info after path detection - reduction in cases more than 3 seg
+      # myStats$path detection = bind_rows(lapply(blastSegments, "[[", 2)) %>%
       #   group_by(geneId) %>% filter(nSeg[when == "before"] > 3) %>%  summarise(
       #     segReduction = nSeg[when == "after"] / nSeg[when == "before"],
       #     avgLNincrease = avgLN[when == "after"] / avgLN[when == "before"],
@@ -1162,7 +1162,7 @@ tryCatch({
       #     .groups = "drop"
       #   ) %>% mutate(pipelineId = pipelineId)
       
-      myStats$simplification = bind_rows(lapply(blastSegments, "[[", 2)) 
+      myStats$pathDetection = bind_rows(lapply(blastSegments, "[[", 2)) 
       #!
       
       blastSegments = bind_rows(lapply(blastSegments, "[[", 1))
