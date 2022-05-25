@@ -394,7 +394,7 @@ if [ $step -gt 3 ]; then
 		echo "***************************************"
 	fi
 	
-	$baseFolder/annotation.sh -v "$verbose" -p "$pipelineId" -d "$database"
+	$baseFolder/annotation.sh -v "$verbose" -p "$pipelineId" -d "$database" -c "$cpu"
 fi
 
 

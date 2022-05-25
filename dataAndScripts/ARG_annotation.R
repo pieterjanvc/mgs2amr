@@ -3,13 +3,11 @@
 #*************************
 
 suppressPackageStartupMessages(library(gfaTools))
-suppressPackageStartupMessages(library(xgboost))
 suppressPackageStartupMessages(library(tidyverse, warn.conflicts = FALSE))
 suppressPackageStartupMessages(library(RSQLite))
-suppressPackageStartupMessages(library(igraph))
-suppressPackageStartupMessages(library(visNetwork))
+# suppressPackageStartupMessages(library(igraph))
 suppressPackageStartupMessages(library(rmarkdown))
-suppressPackageStartupMessages(library(doParallel))
+# suppressPackageStartupMessages(library(doParallel))
 suppressPackageStartupMessages(library(foreach))
 
 args = commandArgs(trailingOnly = TRUE) 
@@ -19,15 +17,17 @@ runId = as.integer(args[[3]])
 verbose = abs(as.integer(args[[4]]))
 pipelineIds = str_trim(unlist(strsplit(args[[5]], ",")))
 generateReport = as.logical(args[[6]])
+maxCPU = as.integer(args[[7]])
+
 # forceRedo = as.logical(as.logical(args[[7]]))
 forceRedo = T
-  
-maxCPU = 14 #!!!!!!!!!!!!!!!
+minBlastLength = 250
 
 #Load the ARG and the sample list to process
 myConn = myConn = dbConnect(SQLite(), database,  synchronous = NULL)
 
 ARG = dbReadTable(myConn, "ARG") 
+
 
 #Pick the samples to process
 if(forceRedo & length(pipelineIds) > 0){
@@ -52,20 +52,13 @@ settings = settings[str_detect(settings,"^\\s*[^=#]+=.*$")]
 settings = str_match(settings, "\\s*([^=\\s]+)\\s*=\\s*(.*)")
 settings = setNames(str_trim(settings[,3]), settings[,2])
 
-#Get the AMR prediction models
-predictionModels = readRDS(
-  sprintf("%sdataAndScripts/predictionModels.rds",baseFolder))
-myAntibiotics = tbl(myConn, "antibiotics") %>% 
-  filter(name %in% local(names(predictionModels))) %>% 
-  as.data.frame()
-
 bactGenomeSize = 
   read.csv(sprintf("%sdataAndScripts/bactGenomeSize.csv",baseFolder))
 
 dbDisconnect(myConn)
 
 #Check if the temp folders still exist
-toProcess$exists = dir.exists(toProcess$tempFolder)
+toProcess$exists = dir.exists(toProcess$outputFolder)
 if(!all(toProcess$exists)){
   cat("\n!! The data for the following pipelineIds cannot be found", 
       "(deleted? moved?) and will be skipped:", 
@@ -82,8 +75,53 @@ softmax = function(vals, normalise = F, log = T){
   return(exp(vals) / sum(exp(vals)))
 }
 
-normalise = function(x){
-  (x - min(x)) / (max(x) - min(x))
+blast_readOutput = function(file, separate = T, includeIssues = F, verbose = 1){
+  
+  outfmt = "6 qseqid sallacc staxids sscinames salltitles qlen slen qstart qend sstart send bitscore score length pident nident qcovs qcovhsp"
+  
+  #Load the output csv (zipped)
+  blastOut = read.table(file, sep = "\t", quote = "", comment.char = "")
+  colnames(blastOut) = strsplit(outfmt, " ")[[1]][-1]
+  
+  #split multiple matches
+  blastOut = blastOut %>% 
+    mutate(x = str_count(staxids, ";"), y = str_count(sallacc, ";"), 
+           z = x == y | x == 0, 
+           plasmid = str_detect(salltitles, "lasmid |ntegron |ransposon |ransposase ")) 
+
+  if(!includeIssues){
+    blastOut = blastOut %>% filter(!(x > 0 & !z))
+    issues = data.frame()
+  } else {
+    #Multiple taxid but not the same number of accessions
+    issues = blastOut %>% filter(x > 0 & !z) 
+  }
+  
+  if(nrow(issues) > 0){
+    warning(nrow(issues), " rows contain ambiguous accession / taxid results")
+  }
+  
+  if(separate){
+    return(bind_rows(
+      
+      #No merged data
+      blastOut %>% filter(y == 0),
+      #Identical number of accession and taxids 
+      blastOut %>% 
+        filter(x > 0 & z) %>% 
+        separate_rows(sallacc, staxids, sscinames, sep = ";"),
+      #One taxId for multiple accessions
+      blastOut %>% 
+        filter(x == 0 & y > 0 & z) %>% 
+        separate_rows(sallacc, staxids, sscinames, sep = ";"),
+      issues
+      
+    ) %>% select(-x, -y, -z) %>% mutate(staxids = as.character(staxids)))
+  } else {
+    return(blastOut %>% select(-x, -y, -z) %>% 
+             mutate(staxids = as.character(staxids))) 
+  }
+  
 }
 
 # ---- Annotate for all pipelineIds ----
@@ -117,18 +155,25 @@ if(nrow(toProcess) == 0) {
   
 } else {
   
-
   sampleIndex = 1:nrow(toProcess)
-  registerDoParallel(cores=min(maxCPU, length(sampleIndex)))
-  
-  result = foreach(sampleIndex = sampleIndex) %dopar% {
-    
+  # registerDoParallel(cores=min(maxCPU, length(sampleIndex)))
+  result = foreach(sampleIndex = sampleIndex, 
+                   packages = c("gfaTools","tidyverse","RSQLite")) %do% {
+                     
+    newLogs = data.frame(
+      timeStamp = as.integer(Sys.time()), 
+      actionId = 1, actionName = "Start Annotation")
+                     
     #Process each sample
     tryCatch({
-      success = F
-      sample = toProcess$tempFolder[sampleIndex]
+
+      sample = toProcess$outputFolder[sampleIndex]
       myPipelineId = toProcess$pipelineId[sampleIndex]
-      sampleName = str_extract(sample, "[^\\/]+(?=_\\d+$)")
+      sampleName = toProcess$name
+      
+      if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S -"), 
+                          sprintf("Start Annotation for pipeline ID %i\n", 
+                                  myPipelineId))}
       
       inputfileBP = grep("sequences length",
                          readLines(sprintf("%s/metacherchant_logs/log", sample)),
@@ -136,24 +181,7 @@ if(nrow(toProcess) == 0) {
         str_extract("([\\d'])+(?=\\s\\()") %>%
         str_replace_all("'", "") %>% as.numeric()
       
-      #Grab the detected ARG from the previous step
-      myConn = dbConnect(SQLite(), database,synchronous = NULL)
-      sqliteSetBusyHandler(myConn, 30000)
-      
-      genesDetected = tbl(myConn, "detectedARG") %>% 
-        filter(pipelineId == myPipelineId) %>% as.data.frame() %>% 
-        mutate(cover = ifelse(type == 'noFragments', cover1, cover2))
-      dbDisconnect(myConn)
-      
-      newLogs = data.frame(
-        timeStamp = as.integer(Sys.time()), 
-        actionId = 1, actionName = "Start Annotation & Prediction")
-      
-      if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S -"), 
-                          sprintf("Start Annotation & Prediction for pipelineId %i (%i/%i)\n", 
-                          myPipelineId, sampleIndex, nrow(toProcess)))}
-      
-      # ---- FILTERING DATA ----
+      # ---- LOAD DATA ----
       #*************************
       if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S -"), 
                           "Loading BLASTn output ... ")}
@@ -163,37 +191,57 @@ if(nrow(toProcess) == 0) {
       #Read all blast output
       blastOut = lapply(
         list.files(sample, full.names = T,
-                   pattern = "blastSegmentsClustered\\d+.json.gz"),
-        blast_readResults, outFormat = "dataFrame1") %>% bind_rows()
+                   pattern = "blastSegmentsClustered\\d+.csv.gz"),
+        blast_readOutput) %>% bind_rows() 
+      
+      if(nrow(blastOut) == 0) {
+        allBact = data.frame()
+        stop()
+      }
+      
+      expandBlast = list.files(sample, full.names = T, pattern = "expand_\\d+.csv.gz")
+      
+      if(length(expandBlast) > 0){
+        
+        #Get the new results
+        blastOut2 = lapply(
+          list.files(sample, full.names = T,
+                     pattern = "expand_\\d+.csv.gz"),
+          blast_readOutput) %>% 
+          bind_rows()
+        
+        blastOut = bind_rows(
+          blastOut %>% filter(!qseqid %in% unique(blastOut2$qseqid)),
+          blastOut2
+        )
+        
+        rm(blastOut2)
+      }
       
       #Extract data we need + transform
       blastOut = blastOut %>% 
-        select(query_title, hitId, taxid, accession , bact = title, bit_score, 
-               score, evalue, identity, query_len, query_from, 
-               query_to, hit_from, hit_to, align_len) %>% 
+        select(query_title = qseqid, taxid = staxids, accession = sallacc, 
+               bact = sscinames, plasmid, bit_score = bitscore, score, 
+               identity = nident, query_len = qlen, query_from = qstart, query_to = qend, 
+               hit_from = sstart, hit_to = send, align_len = length) %>% 
         mutate(bact = str_remove_all(bact, "[^\\w\\s]")) %>% 
         extract(bact, c("genus", "species", "extra"), 
                 regex = "(\\w+)\\s+(\\w+)($|\\s+.*)") %>% 
         #Sp. will be pasted with taxid to make it unique
         mutate(species = ifelse(species == "sp", paste0(species, taxid), species)) %>% 
-        filter(!genus %in% c("uncultured", "Uncultured", "mixed", "Bacterium"),
-               !species %in% c("bacterium", "Bacterium") & 
-                 !is.na(species)) %>% 
+        filter(!genus %in% c("uncultured", "Uncultured", "mixed"), !is.na(species)) %>%
         #Extract subspecies, strain and plasmid info
         mutate(
           subspecies = str_extract(extra, "(?<=subsp\\s)[^\\s]+"),
           strain = str_extract(extra, "(?<=strain\\s)[^\\s]+") %>% 
-            str_remove(" chromosome.*| plasmid.*| complete.*"),
-          plasmid = str_detect(extra, "plasmid|Plasmid"),
-          plasmidName = str_extract(extra, "(?<=plasmid\\s)[^\\s]+")
+            str_remove(" chromosome.*| plasmid.*| complete.*")
         )
       
       #Expand results from clustering segments before blast
       clusterOut = read.table(paste0(sample, "/blastSegments.out")) %>% 
         select(segmentId = V9, clusterId = V10) %>% distinct() %>% 
         mutate(
-          clusterId = ifelse(clusterId == "*", segmentId, clusterId),
-          geneId = str_extract(segmentId, "^([^_]+)")
+          clusterId = ifelse(clusterId == "*", segmentId, clusterId)
         ) %>% 
         filter(clusterId %in% blastOut$query_title) 
       
@@ -203,27 +251,40 @@ if(nrow(toProcess) == 0) {
         rowwise() %>% 
         mutate(
           ident = identity / align_len,
-          coverage = min(align_len / query_len, 1),
+          coverage = min(align_len / query_len, 1), #In case of gap can be > 1
         ) %>% ungroup() 
       
       #Fix some known issues with naming
       blastOut[blastOut$genus == "Enterobacter" & 
                  blastOut$species == "aerogenes","genus"] = "Klebsiella"
       
-      # blastOut[blastOut$genus == "Enterobacter","species"] = "sp."
-      
       
       if(verbose > 0){cat("done\n")}
       newLogs = rbind(newLogs, list(as.integer(Sys.time()), 3, 
                                     "Finished loading BLASTn output"))
       
+      #Check
+      blastSegments = 
+        read.csv(paste0(sample, "/blastSegments.csv")) %>% 
+        select(name, LN, KC) %>% 
+        mutate(
+          start = ifelse(str_detect(name, "_start$"), T, F),
+          geneId = as.integer(str_extract(name, "\\d+"))) %>% 
+        #Correct KC where depth is an outlier
+        group_by(geneId) %>% mutate(
+          depth = KC / LN,
+          z = (depth - mean(depth)) / sd(depth),
+          depth = ifelse(z > 1.96,  sum(KC[z <= 1.96 & LN >= 250]) / 
+                           sum(LN[z <= 1.96 & LN >= 250]), depth),
+          depth = ifelse(is.na(depth) | is.nan(depth), KC / LN, depth),
+          KC = depth * LN
+        ) %>% ungroup() %>% select(-z, -depth)
       
-      # #test
-      # toRemove = ARG %>% filter(str_detect(gene, "tet.+\\/")) %>% 
-      #   pull(geneId)
-      # genesDetected = genesDetected %>% filter(!geneId %in% toRemove)
-      # blastOut = blastOut %>% filter(!geneId %in% toRemove)
+      blastOut = blastOut %>% 
+        left_join(blastSegments, by = c("segmentId" = "name")) %>% 
+        mutate(KC = KC * coverage * ident) #Lower coverage is lower KC score
       
+
       # ---- MAPPING DATA TO GFA ----
       #******************************
       
@@ -232,6 +293,7 @@ if(nrow(toProcess) == 0) {
       newLogs = rbind(newLogs, list(as.integer(Sys.time()), 4, 
                                     "Start mapping"))
       
+      segmentsOfInterest = read.csv(paste0(sample, "/segmentsOfInterest.csv"))
       
       #Get information about the blasted seq where they are in the path of GFA
       pathData = list.files(
@@ -239,284 +301,158 @@ if(nrow(toProcess) == 0) {
         pattern = ".gfa", full.names = T)
       
       pathData = map_df(pathData, function(myGFA){
-        #Read the GFA
-        gfa = gfa_read(myGFA)
         
-        #If there are linked segments ...
-        if(nrow(gfa$links) > 0){
+        #Read the GFA
+        fullGFA = gfa_read(myGFA)
+        
+        myGene = str_extract(fullGFA$segments$name[1], "^\\d+")
+        
+        segmentOfInterest = segmentsOfInterest %>% 
+          filter(geneId == myGene, type != "fragmentsOnly") 
+        
+        maxPathId = 0
+        result = data.frame()
+        
+        for(i in 1:nrow(segmentOfInterest)){
           
-          #Get the (largest) start segment
-          segmentOfInterest = gfa$segments %>% 
-            filter(str_detect(name, "_start$")) %>%
-            filter(LN == max(LN)) %>% filter(KC == max(KC)) %>% 
-            dplyr::slice(1) %>% pull(name)
+          myGroup = segmentOfInterest %>% filter(name == segmentOfInterest$name[i]) %>% 
+            pull(group)
           
-          if(length(segmentOfInterest) == 0){
-            return(data.frame())
-          }
+          gfa = gfa_filterSegments(fullGFA, segments = (fullGFA$segments %>% 
+                                                          filter(group == myGroup) %>% pull(name)))
           
-          #Get all semenents in path to start
-          x = gfa_pathsToSegment(gfa, segmentOfInterest, returnList = T, 
-                                 pathSegmentsOnly = T, verbose = F) %>% 
-            map_df(function(path){
-              data.frame(
-                pathId = path$id,
-                orientation = path$orientation,
-                segmentId = path$segmentOrder)
-            })
           
-         
-          #If no paths, return empty frame
-          if(nrow(x) == 0 ){
-            data.frame()
-          }
-          #Otherwise add the path data 
-          else{
-             
-            x = x %>% 
-              left_join(
-                pathsToSegmentTable(gfa, segmentOfInterest) %>% 
-                  filter(dist < Inf) %>% group_by(segment) %>% 
-                  filter(dist == min(dist)) %>% 
-                  select(segment, KC, LN, dist) %>% 
-                  mutate(geneId = str_extract(segment, "^\\d+")) %>% 
-                  distinct(),
-                by = c("segmentId" = "segment")
-              ) %>% 
-              filter(LN >=250) %>% 
-              group_by(geneId, pathId) %>% mutate(
-                pathId = as.integer(pathId),
-                order = n():1,
-                #These files contain full GFA structures, no fragments
-                type = "full")
+          #If there are linked segments ...
+          if(nrow(gfa$links) > 0){
             
-            if(any(x$pathType == 2)){
+            #Get all semenents in path to start
+            x = gfa_pathsToSegment(gfa, segmentOfInterest$name[i], returnList = T, 
+                                   pathSegmentsOnly = T, verbose = F, allowReverse = F,
+                                   maxDistance = 2000) %>% 
+              map_df(function(path){
+                data.frame(
+                  pathId = path$id,
+                  orientation = path$orientation,
+                  pathType = path$pathType,
+                  segmentId = path$segmentOrder,
+                  dist = path$dist,
+                  LN = path$LN,
+                  KC = path$KC)
+              }) %>% 
+              mutate(geneId = str_extract(segmentId, "^\\d+"),
+                     group = myGroup)
+            
+            
+            #If no paths, return empty frame
+            if(nrow(x) != 0 ){
               
-              #In case of circular loop, only keep 1 path that has least competition
-              toRemove = x %>% filter(pathType != 2) %>% group_by(pathId, orientation) %>% 
-                summarise(LN = sum(LN) - 30*(n() - 1), .groups = "drop") %>% 
-                filter(LN == max(LN)) %>% slice(1) %>% pull(orientation)
+              x = x %>% 
+                group_by(geneId, pathId) %>% mutate(
+                  pathId = pathId + maxPathId,
+                  order = n():1,
+                  #These files contain full GFA structures, no fragments
+                  type = segmentOfInterest$type[i]) %>% 
+                ungroup()
               
-              x = x %>% filter(!(pathType == 2 & orientation == toRemove))
+              maxPathId = max(x$pathId)
+              
+              result = bind_rows(result, x)
+              
             }
             
-            return(x)
-          }
-          
-          
-          
-        } else if(nrow(gfa$segments) > 0){
-          #Case where there are no links, just one or more segments
-          gfa$segments %>% 
-            select(segmentId = name, KC, LN) %>% 
-            mutate(
-              pathId = 1:n(),
-              orientation = 0,
-              geneId = str_extract(segmentId, "^\\d+"),
-              dist = ifelse(str_detect(segmentId, "_start$"), -LN, 0),
-              order = 1,
-              type = "full"
-            )
-          
-        } else{
-          #File is empty
-          data.frame()
+          } else if(nrow(gfa$segments) > 0){
+            
+            #Case where there are no links, just one or more segments
+            x = gfa$segments %>% 
+              select(segmentId = name, KC, LN) %>% 
+              mutate(
+                pathId = 1:n() + maxPathId,
+                orientation = 0,
+                geneId = str_extract(segmentId, "^\\d+"),
+                dist = ifelse(str_detect(segmentId, "_start$"), -LN, 0),
+                order = 1,
+                type = "full"
+              )
+            
+            maxPathId = max(x$pathId)
+            
+            result = bind_rows(result, x)
+            
+          } 
         }
         
-      })
+        return(result)
+        
+      }) %>% mutate(geneId = as.integer(geneId))
+      
+      
+      #Interpolate bit_score FOR non-blasted < 250 pieces
+      #Calculate the score to bit_score conversion factor for each gene
+      extraBits = blastOut %>% filter(ident == 1, coverage == 1) %>% 
+        group_by(geneId) %>% 
+        summarise(bitConst = mean(bit_score / score), .groups = "drop")
+      
+      extraBits = pathData %>% 
+        mutate(LN = ifelse((LN < minBlastLength & dist >= 0 ) | (dist < 0 & LN < 75),
+                           LN, 0)) %>% 
+        group_by(geneId, orientation, pathId) %>% 
+        transmute(order, score = cumsum(LN) - 30*(1:n()),
+                  score = ifelse(score < 0 , 0, score)) %>% 
+        ungroup() %>% 
+        left_join(extraBits, by = "geneId") %>% 
+        mutate(bitScore = bitConst * score)
+      
+      #Only work with segments >= 250 in paths
+      pathData = pathData %>% 
+        filter(LN >= minBlastLength | (dist < 0 & LN > 74)) %>% 
+        group_by(geneId, pathId) %>% 
+        arrange(geneId, pathId, desc(order)) %>% 
+        mutate(oldOrder = order, order = n():1) %>% 
+        ungroup()
       
       #Also add the fragment data to the paths
-      fragments = gfa_read(paste0(sample, "/fragmentsOnly.gfa"))
+      fragments = gfa_read(paste0(sample, "/fragmentGFA.gfa"))
       
       if(nrow(fragments$segments) > 0){
         #Fragments were merged, so treated as a non-start piece
         fragments = fragments$segments %>% 
           select(segmentId = name, LN, KC, geneId) %>% 
           group_by(geneId) %>% 
-          mutate(pathId = 1, orientation = 0:(n()-1),
-                 order = 1, type = "fragment", dist = -1)
+          mutate(pathId = 0, orientation = 0:(n()-1),
+                 order = 1, type = "fragment", dist = -1,
+                 geneId = as.integer(geneId), depth = KC / LN)
       } else {
         fragments = data.frame()
       }
       
-      pathData = bind_rows(pathData, fragments)  %>%  ungroup()
+      pathData = bind_rows(pathData, fragments)  %>% group_by(geneId) %>% 
+        mutate(orientation = ifelse(type == "fragment" & any(type == "full"), 
+                                    abs(orientation[type == "full"][1]-1), orientation)) %>% 
+        ungroup()
       
       
       pathData = pathData %>% group_by(geneId, pathId, orientation) %>% 
-        mutate(
-          depth = KC / LN,
-          totalLN = sum(LN[dist >= 0])) %>% ungroup()
-      
-      #Only keeps paths that have results from blast
-      pathData = pathData %>% left_join(data.frame(
-        segmentId = unique(blastOut$segmentId),
-        result = T
-      ),by = "segmentId") %>% 
-        group_by(geneId, pathId) %>% 
-        filter(!any(is.na(result))) %>% ungroup() %>% select(-result)
-      
+        mutate(totalLN = sum(LN[dist >= 0]) - 30*sum(dist >= 1)) %>% ungroup()
       
       if(verbose > 0){cat("done\n")}
       newLogs = rbind(newLogs, list(as.integer(Sys.time()), 5, 
                                     "Finished mapping"))
       
-      
-      #---- Remove duplicate genes ---
-      #-------------------------------
-      
-      # if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S -"), 
-      #                     "Detect duplicate genes ... ")}
-      # newLogs = rbind(newLogs, list(as.integer(Sys.time()), 6, 
-      #                               "Start detecting duplicate genes"))
-      # 
-      # #Get the segment info for ALL segments (not just blasted ones) 
-      # getSegments = map_df(list.files(
-      #   paste0(sample, "/genesDetected/simplifiedGFA"), 
-      #   pattern = ".gfa", full.names = T), function(x) gfa_read(x)$segments)
-      # 
-      # #Only keep the start segments and the ones directly connecting to them 
-      # myFilter = pathData %>% filter(order < 3) %>% pull(segmentId) %>% unique()
-      # getSegments = getSegments %>% filter(name %in% myFilter)
-      # 
-      # #Write these segments to a fasta file
-      # fasta_write(getSegments$sequence, 
-      #             sprintf("%s/ARGsim.fasta", sample),
-      #             getSegments$name, type = "n")
-      # 
-      # #Add the reverse complement (usearch does not do that when calc_distmx)
-      # system(sprintf("%s -fastx_revcomp %s -label_suffix _RC -fastaout %s >/dev/null 2>&1",
-      #                settings["usearch"],
-      #                sprintf("%s/ARGsim.fasta", sample),
-      #                sprintf("%s/ARGsim_RC.fasta", sample)))
-      # system(sprintf("cat %1$s %2$s > %3$s; rm %1$s %2$s >/dev/null 2>&1",
-      #                sprintf("%s/ARGsim.fasta", sample),
-      #                sprintf("%s/ARGsim_RC.fasta", sample),
-      #                sprintf("%s/ARGsimilarities.fasta", sample)))
-      # 
-      # #Use cluster_fast to reduce number of segments by grouping in identity clusters
-      # system(sprintf("%s -calc_distmx %s -tabbedout %s -termdist 0.1 %s",
-      #                settings["usearch"],
-      #                sprintf("%s/ARGsimilarities.fasta", sample),
-      #                sprintf("%s/ARGsimilarities.out", sample),
-      #                ifelse(verbose < 2, " >/dev/null 2>&1", " 2>&1")))
-      # 
-      # #Group identical ARG and remove the duplicate (weak) ones
-      # #Usearch outputs the pairs that are above identity threshold
-      # identicalARG = read.delim(sprintf("%s/ARGsimilarities.out", sample), 
-      #                           header = F, sep = "\t") %>% 
-      #   rename(X1 = V1, X2 = V2, X3 = V3) %>% 
-      #   filter(X1 != X2) %>% 
-      #   mutate(X1 = str_remove(X1, "_RC$"), X2 = str_remove(X2, "_RC$")) %>% 
-      #   distinct() %>% rowwise() %>% 
-      #   #Create a group var of the gene pairs and add start info
-      #   mutate(
-      #     start = str_detect(X1, "_start") & str_detect(X2, "_start"),
-      #     groupId = paste(sort(c(str_extract(X1, "^\\d+"),
-      #                            str_extract(X2, "^\\d+"))), collapse = "_")) %>% 
-      #   #Add the path data
-      #   left_join(pathData %>% filter(order < 3) %>% 
-      #               select(segmentId, d1 = depth, o1 = order, LN1 = LN, KC1 = KC) %>% 
-      #               distinct(), by = c("X1" = "segmentId")) %>% 
-      #   left_join(pathData %>% filter(order < 3) %>% 
-      #               select(segmentId, d2 = depth, o2 = order, LN2 = LN, KC2 = KC) %>% 
-      #               distinct(), by = c("X2" = "segmentId")) %>% 
-      #   #Only keep groups that at least have overlapping start segment
-      #   group_by(groupId) %>% 
-      #   filter(any(start)) %>% ungroup() %>% 
-      #   select(-start, -groupId) %>% distinct() %>%
-      #   #Only keep segments that match in same distance (e.g. start vs start)
-      #   filter(o1 == o2) 
-      # 
-      # if(nrow(identicalARG) > 0){
-      #   identicalARG = identicalARG %>% 
-      #     rowwise() %>% 
-      #     mutate(
-      #       gene1 = str_extract(X1, "^\\d+"),
-      #       gene2 = str_extract(X2, "^\\d+"),
-      #       LNratio = min(LN1, LN2) / max(LN1, LN2),
-      #       LNoverlap = min(LN1, LN2)
-      #     ) %>% 
-      #     #Remove alignments that are too big in size difference, unless start
-      #     filter(LNratio > 0.9 | (X3 == 0 & o1 == 1 & LNoverlap > 250)) %>% 
-      #     mutate(gene = ifelse(d1 > d2, gene1, gene2),
-      #            depth = ifelse(d1 > d2, d1, d2)) %>% ungroup()
-      #   
-      #   #Build a graph to see how the genes are connected
-      #   myFilter = graph_from_data_frame(data.frame(
-      #     from = identicalARG$gene1, to = identicalARG$gene2
-      #   ), directed = F)
-      #   
-      #   #Only consider similarities if at least two pieces align
-      #   myFilter = as_adjacency_matrix(myFilter, sparse = F)
-      #   myFilter = as.data.frame(myFilter) 
-      #   myFilter = myFilter %>% mutate(geneId = colnames(myFilter)) %>% 
-      #     pivot_longer(-geneId) %>% filter(value > 0)
-      #   identicalARG = identicalARG %>% 
-      #     filter(gene1 %in% myFilter$geneId, gene2 %in% myFilter$geneId)
-      #   
-      #   #Build the graph again and evaluate cliques
-      #   identicalARG = graph_from_data_frame(data.frame(
-      #     from = identicalARG$gene1, to = identicalARG$gene2
-      #   ), directed = F)
-      #   
-      #   
-      #   identicalARG = map_df(sapply(max_cliques(identicalARG), names), function(x){
-      #     data.frame(geneId = x)
-      #   }, .id = "ARGgroup")
-      #   
-      #   #Starting with the largest clique, make them unique by removing 
-      #   #duplicates in other ones
-      #   for(i in unique(identicalARG$ARGgroup)[n_distinct(identicalARG$ARGgroup):2]){
-      #     identicalARG = identicalARG %>% 
-      #       filter(ARGgroup == i | 
-      #                (ARGgroup != i & !geneId %in% geneId[ARGgroup == i]))
-      #   }
-      #   
-      #   #Per ARG group, filter out the best by using the gene statistics
-      #   identicalARG = identicalARG %>% 
-      #     left_join(genesDetected %>% 
-      #                 mutate(geneId = as.character(geneId)) %>%
-      #                 select(geneId, startPerc, startDepth, cover), 
-      #               by = "geneId") %>% 
-      #     mutate(val = startPerc * startDepth * cover,
-      #            ARGgroup = as.integer(ARGgroup)) %>% 
-      #     group_by(ARGgroup) %>% mutate(keep = val == max(val)) %>% ungroup()
-      # } else {
-      #   identicalARG = data.frame(geneId = as.character(), 
-      #                             ARGgroup = as.numeric(), keep = as.logical())
-      # }
-      # 
-      # 
-      # 
-      # if(verbose > 0){cat("done\n")}
-      # newLogs = rbind(newLogs, list(as.integer(Sys.time()), 7, 
-      #                               "Finished detecting duplicate genes"))
-      # 
-      # 
-      # #Add the grouping info to detected genes
-      # genesDetected = genesDetected %>%
-      #   left_join(ARG %>% select(geneId, gene, subtype), by = "geneId") %>%
-      #   select(pipelineId, geneId, gene, subtype, everything())
-      # 
-      # genesDetected = genesDetected %>% 
-      #   select(-matches("ARGgroup")) %>% 
-      #   left_join(identicalARG %>% 
-      #               select(geneId, ARGgroup, keep) %>% 
-      #               mutate(geneId = as.integer(geneId)), by = "geneId") %>% 
-      #   mutate(keep = ifelse(is.na(keep), T, keep)) 
-      # 
-      # genesDetected[is.na(genesDetected$ARGgroup),] = 
-      #   genesDetected[is.na(genesDetected$ARGgroup),] %>% 
-      #   group_by(geneId) %>% 
-      #   mutate(ARGgroup = cur_group_id() + 
-      #            max(c(0, genesDetected$ARGgroup), na.rm = T)) %>% 
-      #   ungroup() 
-      
       #Add the grouping info to detected genes
+      #Grab the detected ARG from the previous step
+      myConn = dbConnect(SQLite(), database,synchronous = NULL)
+      sqliteSetBusyHandler(myConn, 30000)
+      
+      genesDetected = tbl(myConn, "detectedARG") %>% 
+        filter(pipelineId == myPipelineId) %>% as.data.frame() %>% 
+        mutate(cover = ifelse(type == 'noFragments', cover1, cover2))
+      dbDisconnect(myConn)
+      
       genesDetected = genesDetected %>%
         left_join(ARG %>% select(geneId, gene, subtype), by = "geneId") %>%
         select(pipelineId, geneId, gene, subtype, everything()) %>% 
         mutate(ARGgroup = 1:n())
+      
       
       # ---- Filter / group bacteria ----
       #**********************************
@@ -525,500 +461,329 @@ if(nrow(toProcess) == 0) {
                           "Group overlapping bacterial species ... ")}
       newLogs = rbind(newLogs, list(as.integer(Sys.time()), 8, 
                                     "Start grouping bacteria"))
-      
-      blastSegments = 
-        read.csv(paste0(sample, "/blastSegments.csv")) %>% 
-        select(name, LN, KC)
-      blastOut = blastOut %>% left_join(blastSegments, 
-                                        by = c("segmentId" = "name")) %>% 
-        mutate(KC = KC * coverage * ident)
-      
-      # blastOut = blastOut %>% group_by(clusterId) %>% 
-      #   filter(bit_score >= 0.90 * max(bit_score)) %>% ungroup()
-      
-      #Make sure that taxid always has the same genus / species name and vice versa
-      blastOut = blastOut %>% 
-        # mutate(bact = paste(genus, species)) %>% 
-        group_by(taxid, genus, species) %>% 
-        mutate(myCount = n()) %>% 
-        group_by(taxid) %>% 
-        mutate(genus = genus[myCount == max(myCount)][1],
-               species = species[myCount == max(myCount)][1]) %>% 
-        group_by(taxid, genus, species) %>% 
-        mutate(myCount = n()) %>% 
-        group_by(genus, species) %>% 
-        mutate(taxid = taxid[myCount == max(myCount)][1]) %>% 
+
+      #Add the group (membership of subgraphs)
+      blastOut = blastOut %>% left_join(
+        pathData %>% select(segmentId, group) %>% distinct(), by = "segmentId") %>% 
+        mutate(geneId = as.integer(geneId))
+
+      #Find duplicate genes if they lie on same pos in genome
+      toCheck = blastOut %>% 
+        group_by(geneId, accession, group) %>% 
+        filter(any(start)) %>% 
+        mutate(sMin = ifelse(hit_from < hit_to, hit_from, hit_to),
+               sMax = ifelse(hit_from >= hit_to, hit_from, hit_to)) %>% 
         ungroup()
       
+      toCheck = bind_rows(
+        toCheck %>% filter(start) %>% 
+          select(accession, geneId, pos = sMin, clusterId) %>% 
+          group_by(accession, pos) %>% filter(n() > 1) %>% 
+          ungroup(),
+        toCheck %>% filter(start) %>% 
+          select(accession, geneId, pos = sMax, clusterId) %>% 
+          group_by(accession, pos) %>% filter(n() > 1) %>% 
+          ungroup()
+      ) %>%
+        group_by(accession) %>% 
+        mutate(n = n()) %>% ungroup() %>% 
+        select(accession, geneId, pos, n, clusterId) %>% 
+        left_join(ARG %>% select(geneId, gene, subtype), by = "geneId") %>% 
+        arrange(desc(n), accession, pos)
+      
+      duplicates = data.frame(geneId = integer(), cluster = double())
+      
+      while(nrow(toCheck) > 0){
+        nextCheck = toCheck %>% 
+          filter(accession == accession[1]) 
+        
+        lastgroup = nextCheck$pos
+        nextCheck = nextCheck %>% 
+          group_by(geneId) %>% mutate(group = min(pos)) %>% 
+          group_by(pos) %>% mutate(group = min(group)) %>% ungroup()
+        
+        while(any(lastgroup != nextCheck$group)){
+          lastgroup = nextCheck$group
+          nextCheck = nextCheck %>% 
+            group_by(geneId) %>% mutate(group = min(group)) %>% 
+            group_by(pos) %>% mutate(group = min(group)) %>% ungroup()
+        }
+        
+        nextCheck = nextCheck %>% select(geneId, group) %>% distinct() %>% 
+          left_join(duplicates, by = "geneId") %>% 
+          group_by(group) %>% 
+          mutate(cluster = ifelse(any(!is.na(cluster)), min(cluster, na.rm = T), group[1])) %>% 
+          ungroup() %>% select(-group)
+        
+        duplicates = bind_rows(duplicates, nextCheck) %>% distinct()
+        
+        toCheck = toCheck %>% group_by(accession) %>% 
+          filter(!all(geneId %in% duplicates$geneId)) %>% ungroup() %>% 
+          arrange(desc(n), accession, pos)
+      }
+      
+      duplicates = duplicates %>% 
+        transmute(geneId, duplicated = as.factor(cluster) %>% as.integer()) 
+      
+      #Add the clusters to detected ARG and fill in blanks
+      genesDetected = genesDetected %>% 
+        left_join(duplicates, by = "geneId") 
+      
+      if(any(is.na(genesDetected$duplicated))){
+        newIdx = max(genesDetected$duplicated, 0, na.rm = T) + 1
+        genesDetected$duplicated[is.na(genesDetected$duplicated)] = 
+          newIdx:(sum(is.na(genesDetected$duplicated))+newIdx-1)
+      }
+      
+      blastOut$start[blastOut$start & ! blastOut$segmentId %in% 
+                       segmentsOfInterest$name[segmentsOfInterest$type != "fragmentsOnly"]] = F
+      
+      
+      # When a strain flanks both sides of a the start segment, but the segment itself has no match,
+      # this likely results from too strict cutoffs by BLASTn. Add a start match with 99%
+      # of the bit_score of the other matches to keep the accession in the running
+      addSeedHit = pathData %>% 
+        select(geneId, orientation, segmentId, order, dist, group) %>% 
+        group_by(geneId, orientation) %>% 
+        filter(order < 3) %>% distinct() %>% ungroup() %>% 
+        left_join(
+          blastOut %>% 
+            select(segmentId, accession, genus, species, hit_from, hit_to, 
+                   start, bit_score, identity, coverage, LN, KC) %>% 
+            distinct(),
+          by = "segmentId"
+        ) %>% group_by(geneId, accession) %>% 
+        filter(n_distinct(orientation[order > 1]) > 1) 
+      
+      #Get the bit_scores of the start segment
+      otherSeedHits = addSeedHit %>% ungroup() %>% filter(any(order == 1)) %>% 
+        select(-c(dist, group, orientation, accession:hit_to)) %>% 
+        mutate(geneId = as.integer(geneId)) %>% 
+        filter(order == 1) %>% group_by(geneId) %>% 
+        filter(bit_score == max(bit_score)) %>% distinct() %>% ungroup() %>% 
+        select(-order) %>% mutate(bit_score = 0.99 * bit_score)
+      
+      # Create the start hit in the genome by looking at the positions of the matches on 
+      # either side of the start segment, and 
+      addSeedHit = addSeedHit %>% select(geneId:accession, hit_from, hit_to) %>% 
+        filter(all(order != 1)) %>%
+        mutate(x = hit_from == max(c(hit_from, hit_to)) | 
+                 hit_to == max(c(hit_from, hit_to))) %>% 
+        group_by(geneId, accession, orientation) %>% 
+        mutate(x = ifelse(any(x == T), T, F)) %>% 
+        ungroup() %>% rowwise() %>% 
+        mutate(
+          hit_from = ifelse(x, hit_from - dist, hit_from + dist),
+          hit_to = ifelse(x, hit_to - dist, hit_to + dist),
+          d1 = ifelse(x, min(hit_from, hit_to), max(hit_from, hit_to)),
+          geneId = as.integer(geneId)) %>% 
+        group_by(geneId, accession) %>%
+        mutate(d2 = mean(d1[x]) - mean(d1[!x])) %>% ungroup() %>% 
+        left_join(ARG %>% select(geneId, nBases), by = "geneId") %>% 
+        mutate(d3 = abs(d2 - nBases) - 30) %>% 
+        filter(!is.na(d3 >= 0)) %>% filter(d3 <= 250) %>% 
+        group_by(geneId, accession, group, nBases) %>% 
+        summarise(    d1 = min(d1), d2 = max(d1), .groups = "drop") %>% mutate(
+          hit_from = d1 + ((d1 - d2) - nBases) / 2,
+          hit_to = d2 - ((d1 - d2) - nBases) / 2
+        )
+      
+      addSeedHit = otherSeedHits %>% filter(geneId %in% addSeedHit$geneId) %>% 
+        left_join(addSeedHit %>% 
+                    select(geneId, accession, hit_from, hit_to, group),
+                  by = "geneId") %>% 
+        left_join(
+          blastOut %>% 
+            select(accession, taxid, genus, species, extra, 
+                   subspecies, plasmid) %>% 
+            distinct(), by  = "accession")
+      
+      #Add the new start 'matches' to the blast output
+      blastOut = bind_rows(blastOut, addSeedHit)
+      
+      #GENOME DIST START CHECK
+      
+      #Order the min - max positino of match in target genome
+      tempVar = blastOut %>% 
+        group_by(geneId, accession, group) %>% 
+        filter(any(start)) %>% 
+        mutate(sMin = ifelse(hit_from < hit_to, hit_from, hit_to),
+               sMax = ifelse(hit_from >= hit_to, hit_from, hit_to))
+      
+      #Get the locations of all start matches in same genome
+      tempVar2 = tempVar %>% filter(start) %>% 
+        select(geneId, accession, group, sMin) %>% 
+        mutate(startGroup = 1:n()) %>% 
+        pivot_wider(names_from = startGroup, values_from = sMin) %>% 
+        ungroup()
+      
+      #Add them to the data frame
+      tempVar  = tempVar %>% ungroup() %>% 
+        left_join(tempVar2, by = c("geneId", "accession", "group"))
+      
+      #For each segment, pick the closest start segment for comparison
+      tempVar$startGroup = 
+        apply(tempVar %>% select(sMin, matches(c("1", "2", "3"))), 1, function(x){
+          x = abs(x[-1] - x[1])
+          which(x == min(x, na.rm = T))
+        })
+      
+      #Only keep a segment if it is the correct distance from the start segment
+      tempVar = tempVar %>% 
+        group_by(geneId, accession, group, startGroup) %>% 
+        filter(any(start)) %>% 
+        mutate(
+          after = ifelse(sMin > sMin[start], T, F),
+          dist = ifelse(after, sMin - sMax[start], sMin[start] - sMax) + 29) %>%
+        ungroup() %>% 
+        left_join(pathData %>% select(segmentId, dist1 = dist) %>% 
+                    distinct(), by = "segmentId") %>% 
+        rowwise() %>% 
+        #Repeats can make segments shorter because loop is cut off, so provide some slack
+        mutate(correct = between(dist, dist1 -500, dist1 + 500) | start) %>% 
+        filter(correct) %>% 
+        group_by(geneId, accession, group, startGroup) %>% 
+        mutate(bestMatch = sum(bit_score)) %>% 
+        group_by(geneId, accession, group) %>% 
+        filter(bestMatch == max(bestMatch)) %>% 
+        group_by(segmentId, accession) %>% 
+        filter(bit_score == max(bit_score)) %>% 
+        slice(1) %>% ungroup()
+      
+      wrongLocation = blastOut %>% filter(!segmentId %in% tempVar$segmentId)
+      
+      blastOut = bind_rows(
+        tempVar %>% select(matches(colnames(blastOut))),
+        
+        blastOut %>% 
+          filter(geneId %in% (genesDetected %>% 
+                                filter(!geneId %in% segmentsOfInterest$geneId) %>% 
+                                pull(geneId))) %>% 
+          group_by(segmentId, accession) %>% filter(bit_score == max(bit_score,0)) %>% 
+          slice(1) %>% ungroup(),
+        
+        blastOut %>% 
+          filter(segmentId %in% 
+                   fragments$segmentId[str_detect(fragments$segmentId, "_start$")]) %>% 
+          group_by(segmentId, accession) %>% filter(bit_score == max(bit_score,0)) %>% 
+          slice(1) %>% ungroup()
+      )
+      
+      blastOut$start[blastOut$segmentId %in% 
+                       fragments$segmentId[str_detect(fragments$segmentId, "_start$")]] = T
+      
+      rm(tempVar, tempVar2)
+      
       allBact = blastOut %>%
-        # filter(geneId == "3323") %>%
         select(segmentId, geneId, bit_score, coverage,
-               accession, taxid, genus, species, extra, plasmid, KC, LN) %>%
+               accession, taxid, genus, species, extra, plasmid, KC, LN, start) %>%
+        
+        #Only keep best match per segmentId per accession
         group_by(segmentId, geneId, accession) %>%
         filter(bit_score == max(bit_score)) %>% 
         dplyr::slice(1) %>% ungroup() %>%
-        mutate(start = str_detect(segmentId, '_start$')) %>%
         
-        mutate(pathScore = bit_score * coverage) %>% 
-        group_by(segmentId, taxid, plasmid) %>% 
-        filter(pathScore == max(pathScore)) %>% dplyr::slice(1) %>% ungroup() %>% 
+        #Adjust path score based on coverage (???)
+        mutate(pathScore = bit_score * coverage) %>%
+        
+        #Add the path data and only keep consecutive segments (ignore < 250)
         left_join(pathData %>% 
-                    select(pathId, segmentId, order, orientation) %>% 
+                    select(pathId, segmentId, order, oldOrder, orientation) %>% 
                     mutate(orientation = ifelse(str_detect(segmentId, "_start$"),
-                                                     -1, orientation)) %>% 
+                                                -1, orientation)) %>% 
                     distinct(), by = "segmentId") %>% 
         filter(!is.na(order))  %>% 
-        group_by(geneId, pathId, taxid, plasmid, orientation) %>% 
-        filter(all(2:max(order) %in% order) | all(order == 1)) %>% 
-        group_by(geneId, taxid, plasmid, orientation, pathId) %>% 
-        mutate(fullPath = sum(pathScore)) %>% 
-        group_by(geneId, taxid, plasmid, orientation) %>% 
-        filter(pathId == pathId[fullPath == max(fullPath)][1]) %>% 
-        group_by(geneId, taxid, plasmid) %>% 
-        mutate(fullPath = sum(pathScore)) %>% 
-        group_by(geneId, taxid) %>% 
-        filter(plasmid == plasmid[fullPath == max(fullPath)][1])
+        arrange(geneId, pathId, accession, plasmid, order) %>% 
+        group_by(geneId, pathId, accession, plasmid) %>% 
+        filter(order == 1:n() | orientation == -1) %>% 
+        
+        #Calculate the total path score
+        group_by(geneId, accession, plasmid, orientation, pathId) %>%
+        mutate(fullPath = sum(pathScore)) %>% ungroup()
       
+      #Add the extra bits to each fullPath score
+      tempVar = allBact %>% filter(orientation != -1) %>% 
+        select(geneId, pathId, oldOrder, accession) %>% distinct() %>% 
+        left_join(extraBits, by = c("geneId", "pathId", "oldOrder" = "order")) %>% 
+        select(geneId, accession, pathId, oldOrder, extraBits = bitScore)
       
-      #Remove genes with no blast data
-      geneIds = genesDetected %>% pull(geneId)
-      geneIds = geneIds[geneIds %in% unique(allBact$geneId)]
+      allBact = allBact %>% left_join(
+        tempVar, by = c("geneId", "pathId", "oldOrder", "accession")
+      ) %>% group_by(geneId, accession, pathId, orientation) %>% 
+        mutate(extraBits = max(extraBits, 0, na.rm = T),
+               fullPath = fullPath + extraBits,
+               extraBits = c(rep(0, n() - 1), extraBits[n()])) %>% ungroup()
       
-      #Check the overlap between segments of different species
-      # if one is completely contained within another (and smaller), it's a duplicate
-      allBact = map_df(geneIds, function(geneId){
+      allBact = allBact %>%
         
-        #Examine the paths of one ARG
-        myGene = allBact %>% filter(geneId %in% {{geneId}})
+        #Pick best path for each orientation
+        group_by(geneId, accession, plasmid, orientation) %>%
+        filter(pathId == pathId[fullPath == max(fullPath)][1]) %>%
         
-        #Get all the segmetents per path
-        bactSegments = myGene %>% 
-          group_by(segmentId, taxid, pathId) %>% 
-          summarise(.groups = "drop") %>% 
-          group_by(taxid, pathId) %>% 
-          summarise(x = list(segmentId), .groups = "drop") 
-        
-        if(length(bactSegments$taxid) == 0){
-          
-          #There is no blast output for this gene
-          return(data.frame())
-          
-        } else if(length(bactSegments$taxid) == 1){
-          
-          #There is only one taxid for the gene
-          myGene = myGene %>% 
-            group_by(geneId, taxid, genus, species, plasmid) %>% 
-            summarise(n = n(), 
-                      extension = sum(pathScore[!start]),
-                      pathScore = sum(pathScore), 
-                      KC = sum(KC), LN = sum(LN),
-                      .groups = "drop") %>%
-            group_by(taxid) %>% filter(pathScore == max(pathScore)) %>% 
-            arrange(desc(pathScore))
-          
-          myTaxid = bactSegments$taxid
-          
-          return(myGene %>% filter(taxid %in% myTaxid) %>% 
-                   group_by(taxid) %>% filter(pathScore == max(pathScore)) %>% 
-                   dplyr::slice(1) %>% ungroup())
-          
-        } else {
-          
-          #There are multiple taxids for the gene
-          #Check per path if there are redundant taxids (contained within other)
-          pathResult = map_df(unique(bactSegments$pathId), function(pathId){
-            
-            #Get segments for the path
-            pathSegments = bactSegments %>% filter(pathId == {{pathId}})
-            
-            if(nrow(pathSegments) > 1){
-              #Build a matrix for species overlap per segment
-              gfaMatrix = sapply(pathSegments$x, function(x){
-                len = length(x)
-                sapply(pathSegments$x, function(y){
-                  sum(x %in% y) / len
-                })
-              })
-              
-              rownames(gfaMatrix) = pathSegments$taxid
-              colnames(gfaMatrix) = pathSegments$taxid
-            }
-            
-            myPath = myGene %>% 
-              filter(taxid %in% pathSegments$taxid) %>% 
-              group_by(geneId, taxid, genus, species, plasmid) %>% 
-              summarise(n = n(), 
-                        extension = sum(pathScore[!start]),
-                        pathScore = sum(pathScore), 
-                        KC = sum(KC), LN = sum(LN),
-                        .groups = "drop") %>%
-              group_by(taxid) %>% filter(pathScore == max(pathScore)) %>% 
-              arrange(desc(pathScore))
-            
-            myTaxid = myPath$taxid %>% unique()
-            i = 1
-            
-            while(i < length(myTaxid)){
-              myIndex = which(colnames(gfaMatrix) == myTaxid[i])
-              duplicates = data.frame(
-                name = colnames(gfaMatrix),
-                row = gfaMatrix[myIndex,],
-                col = gfaMatrix[,myIndex]
-              ) %>% filter(row == 1, col != 1) %>% pull(name)
-              
-              myTaxid = setdiff(myTaxid, duplicates)
-              i = i + 1
-            }
-            
-            return(myPath %>% filter(taxid %in% myTaxid) %>% 
-                     group_by(taxid) %>% filter(pathScore == max(pathScore)) %>% 
-                     dplyr::slice(1) %>% ungroup())
-            
-          })
-          
-          return(pathResult)
-          
-        } 
-        
-      }) %>% mutate(depth = KC / LN) %>% 
-        left_join(
-          genesDetected %>% mutate(geneId = as.character(geneId)) %>% 
-            select(geneId, gene, subtype, cover, type), 
-          by = "geneId"
-        )
-      
-      #Adjust the scored for genes by presences of other genes in the same bact
-      # myData = allBact %>% filter(!geneId %in% AMRclusters$geneId)
-      # bactGroupStart = max(AMRclusters$bactGroup)
-      
-      adjustBact = function(myData, bactGroupStart = 0){
-        
-        if(nrow(myData) == 0) {
-          return(list(myClusters = data.frame(), bactList = data.frame()))
-        }
-        
-        if(n_distinct(myData$geneId) == 1 | n_distinct(myData$taxid) == 1){
-          if(n_distinct(myData$taxid) == 1){
-            
-            #There is only one taxid
-            bactList = myData %>% 
-              select(taxid, genus, species, depth, pathScore) %>% 
-              mutate(bactGroup = 1 + bactGroupStart, prob = 1, val = NA,
-                     runId, pipelineId = myPipelineId) %>% 
-              filter(depth == max(depth)) %>% dplyr::slice(1) %>% 
-              left_join(bactGenomeSize %>% select(genus, species, size) %>% distinct(),
-                        by = c("genus", 'species')) 
-            
-            return(list(
-              myClusters = data.frame(
-                bactGroup = 1 + bactGroupStart,
-                geneId = myData$geneId[1]),
-              bactList = bactList))
-          } else {
-            
-            #There is only one gene but multiple taxid
-            geneMatrix = matrix(myData$pathScore / max(myData$pathScore), ncol = 1)
-            colnames(geneMatrix) = unique(myData$geneId)
-            rownames(geneMatrix) = myData$taxid
-            myClusters = data.frame(
-              taxid =  myData$taxid,
-              bactGroup = 1 + bactGroupStart,
-              primary = geneMatrix[,1] == 1,
-              geneId = as.integer(unique(myData$geneId)),
-              val = geneMatrix[,1])
-          }
-          
-          
-        } else {
-          
-          #There are multiple genes
-          geneMatrix = myData %>%
-            group_by(geneId, bact = taxid) %>%
-            summarise(pathScore = round(max(pathScore),2), 
-                      extension = round(max(extension),2), 
-                      .groups = "drop") %>%
-            left_join(genesDetected %>%
-                        select(geneId, ARGgroup) %>%
-                        mutate(geneId = as.character(geneId)), by = "geneId")
-          
-          geneMatrix = geneMatrix %>%
-            select(bact, geneId, pathScore) %>%
-            pivot_wider(bact,
-                        names_from = "geneId", values_from = "pathScore",
-                        values_fill = 0) %>%
-            column_to_rownames("bact") %>% as.matrix()
-          
-          #Normalise the matrix per column
-          geneMatrix = apply(geneMatrix, 2, function(x) x / max(x))
-          
-          # Adjust by cover
-          myAdjustment = data.frame(
-            geneId = colnames(geneMatrix)
-          ) %>% left_join(
-            genesDetected %>% select(geneId, cover) %>%
-              mutate(geneId = as.character(geneId)), by = "geneId")
-          
-          #-----------
-          # During adjustment make sure to weigh the influence of other ARG based
-          # on the similarity in coverage. If the coverage is very different, the
-          # weight of adjustment in lower (prevents FP association of low cover to high)
-          ncols = ncol(geneMatrix)
-          myAdjustment = (1 - abs(matrix(myAdjustment$cover, nrow = ncols, ncol = ncols) -
-                                    matrix(myAdjustment$cover, nrow = ncols, ncol = ncols, byrow = T)))
-          
-          
-          myAdjustment = sapply(1:ncols, function(col){
-            t(t(geneMatrix[,-col]) * myAdjustment[col,-col]) %>% rowSums() / 
-              (ncols - 1)
-          }) + 1
-          
-          #---------------
-          ##Old adjustment techinique
-          # geneMatrix = t(t(geneMatrix) * myAdjustment$cover)
-          # 
-          # #Calulcate the adjustment for each cell based on other scores in the row
-          # # the higher the scores (e.g. other gened detected), the more scaled up
-          # myAdjustment = (matrix(rowSums(geneMatrix), nrow = nrow(geneMatrix), 
-          #                        ncol = ncol(geneMatrix)) - geneMatrix) /
-          #   (ncol(geneMatrix) - 1) + 1
-          
-          #----------------
-          
-          geneMatrix = geneMatrix * myAdjustment
-          geneMatrix = apply(geneMatrix, 2, function(x) x / max(x))
-          
-          
-          myClusters = as_tibble(geneMatrix > 0, rownames = "taxid") %>%
-            group_by(across(c(-taxid))) %>% 
-            mutate(bactGroup = cur_group_id()) %>% ungroup()
-          
-          myClusters = as_tibble(geneMatrix, rownames = "taxid") %>% 
-            left_join(myClusters %>% select(taxid, bactGroup), by = "taxid") 
-          myClusters$primary = apply(myClusters[,!colnames(myClusters) %in% c("taxid", "bactGroup")], 1,
-                                     function(x) any(x == 1))
-          myClusters = myClusters %>% group_by(bactGroup) %>% filter(!all(!primary)) %>% 
-            ungroup() %>% mutate(bactGroup = bactGroupStart + as.factor(bactGroup) %>% as.integer()) %>% 
-            pivot_longer(c(-taxid, -bactGroup, -primary), names_to = "geneId", values_to = "val") %>% 
-            mutate(geneId = as.integer(geneId), taxid = as.integer(taxid)) #%>% 
-          
-        }
-        
-        bactList = myClusters %>% group_by(bactGroup, taxid) %>% 
-          summarise(prob = sum(val), .groups = "drop") %>% 
-          group_by(bactGroup) %>% 
-          mutate(prob = softmax(prob)) %>% ungroup() %>%
-          mutate(taxid = as.integer(taxid), bactGroup = as.integer(bactGroup)) %>% 
-          left_join(allBact %>% select(taxid, genus, species) %>% 
-                      distinct(), by = "taxid") %>% 
-          group_by(bactGroup) %>% 
-          filter(prob >= min(
-            sort(unique(prob), decreasing = T)[1:(min(11, n_distinct(prob)))])
-          ) %>% 
-          mutate(val = prob / max(c(-Inf, prob), na.rm = T)) %>% 
-          ungroup() %>% 
-          arrange(bactGroup, desc(prob)) %>% ungroup() %>% 
-          mutate(species = str_replace(species, "sp\\d+", "sp.")) %>% 
-          left_join(bactGenomeSize %>% select(genus, species, size) %>% distinct(),
-                    by = c("genus", 'species')) %>% 
-          mutate(runId = {{runId}},
-                 pipelineId = toProcess$pipelineId[sampleIndex]) %>% 
-          left_join(
-            myData %>% group_by(taxid) %>% 
-              summarise(
-                depth = sum(depth * softmax(cover, normalise = T)),
-                pathScore = sum(pathScore), 
-                .groups = "drop"
-              ),
-            by = "taxid"
-          ) 
-        
-        return(list(myClusters = myClusters, bactList = bactList))
-      }
-      
-      #Get all the ARG that are exclusively found in genomes
-      genomeARG = allBact %>% 
-        group_by(geneId) %>% filter(all(!plasmid)) %>% 
+        #Sum the 3 orientations to get full path score
+        group_by(geneId, accession, plasmid) %>%
+        mutate(fullPath = sum(pathScore) + sum(extraBits)) %>%
+        group_by(geneId, accession) %>%
+        filter(plasmid == plasmid[fullPath == max(fullPath)][1]) %>%
         ungroup()
       
-      #Check if there are any, proceed accordingly
-      if(nrow(genomeARG) > 0){
-        
-        #Adjust the bact presence across ARG
-        genomeARG = adjustBact(genomeARG)
-        
-        #Get the clusters and bact list
-        AMRclusters = genomeARG$myClusters %>%
-          select(-primary) %>% filter(val > 0) %>% 
-          mutate(origin = "genome")
-        
-        bactList = genomeARG$bactList
-        
-        #Check if any of the remaining ARG match a genome ARG species
-        genomeWithPlasmid = allBact %>% 
-          filter(!geneId %in% genomeARG$myClusters$geneId) %>% 
-          left_join(
-            genomeARG$bactList %>% 
-              # filter(val == 1) %>% #maybe remove?
-              select(taxid, bactGroup, prob, genomeDepth = depth,
-                     genomePathscore = pathScore, val) %>%  
-              mutate(genomePathscore = genomePathscore),
-            by = "taxid"
-          ) %>% left_join(
-            AMRclusters %>% 
-              # filter(val == 1) %>% 
-              select(taxid, geneId) %>% 
-              left_join(genesDetected %>% 
-                          select(geneId, cover, startDepth, type),
-                        by = "geneId") %>% 
-              group_by(taxid) %>% 
-              summarise(
-                genomeCover = weighted.mean(cover, cover),
-                genomeType = case_when(
-                  all(type == "noFragments") ~ "noFragments",
-                  all(type == "fragmentsOnly") ~ "fragmentsOnly",
-                  TRUE ~ "mixed"
-                ), .groups = "drop"),
-            by = "taxid"
-          )
-        
-        #Only match if the quality of ARG is comparable (type, cover, ...)
-        # EXPERIMENTAL ...
-        genomeWithPlasmid = genomeWithPlasmid %>% 
-          #Pathscore should be at in the top range
-          group_by(geneId) %>% filter(pathScore >= 0.75*max(pathScore)) %>% 
-          ungroup() %>% 
-          filter(cover >= genomeCover*0.75, depth >= 0.25*genomeDepth,
-                 genomeCover >= cover*0.75)
-        
-        #Only continue if there are matches
-        if(nrow(genomeWithPlasmid) > 0){
-          
-          genomeWithPlasmid = bind_rows(
-            genomeWithPlasmid %>% filter(is.na(bactGroup)),
-            genomeWithPlasmid %>% 
-              filter(!is.na(bactGroup)) %>% 
-              group_by(geneId, bactGroup) %>%
-              filter(prob == max(prob)) %>% dplyr::slice(1) %>% 
-              ungroup()
-          ) %>% 
-            mutate(across(c(genomeDepth, genomePathscore, val), function(x) ifelse(is.na(x), 0, x)))
-          
-          #Keep the best scoring bacterium per gene
-          genomeWithPlasmid = genomeWithPlasmid %>% 
-            group_by(geneId) %>% filter(pathScore == max(pathScore))
-          
-          #Add the ARG to the exisintg clusters (no new clusters)
-          AMRclusters = bind_rows(
-            AMRclusters,
-            genomeWithPlasmid %>% 
-              filter(!is.na(bactGroup)) %>% 
-              select(taxid, bactGroup, geneId) %>% 
-              mutate(geneId = as.integer(geneId), origin = "linkedPlasmid")
-          )
-          
-        }
-        
-        #Check if if there are any remaining ARG that are isolated plasmids
-        isolatePlasmid = adjustBact(
-          allBact %>% 
-            filter(!geneId %in% AMRclusters$geneId), 
-          bactGroupStart = max(AMRclusters$bactGroup))
-        
-        #Update the cluster info if any results
-        if(nrow(isolatePlasmid$myClusters) > 0){
-          AMRclusters = bind_rows(
-            AMRclusters,
-            isolatePlasmid$myClusters %>%
-              select(-primary) %>% filter(val > 0) %>% 
-              mutate(origin = "isolatePlasmid")
-          )
-          
-          bactList = bind_rows(bactList, isolatePlasmid$bactList)
-        }
-        
-      } else {
-        
-        #No pure genome ARG are found, only plasmids
-        isolatePlasmid = adjustBact(allBact)
-        
-        AMRclusters = isolatePlasmid$myClusters %>%
-          select(-primary) %>% filter(val > 0) %>% 
-          mutate(origin = "isolatePlasmid")
-        
-        bactList = isolatePlasmid$bactList
-      }
-
-      #add the most likely gene match to the detectedARG
-      genesDetected = genesDetected %>% select(-bactGroup) %>% left_join(
-        AMRclusters %>% filter(val == 1 | is.na(val)) %>% 
-          select(geneId, bactGroup) %>% distinct(),
-        by = "geneId"
-      )
-      
-      #Add the IDs
-      AMRclusters = AMRclusters %>% mutate(
-        pipelineId = {{myPipelineId}}, runId = {{runId}}
-      )
+      allBact = allBact %>% 
+        left_join(
+          allBact %>% group_by(geneId, accession) %>% 
+            summarise(fullPath = max(fullPath), .groups = "drop") %>% 
+            group_by(accession) %>% 
+            summarise(fullPath = sum(fullPath),.groups = "drop") %>% 
+            transmute(accession, rank = rank(fullPath)),
+          by = "accession"
+        ) %>% 
+        group_by(geneId, accession) %>% 
+        mutate(path0 = pathId[orientation == 0][1],
+               maxOrder0 = max(0,order[orientation == 0]),
+               path1 = pathId[orientation == 1][1],
+               maxOrder1 = max(0,order[orientation == 1]),
+               LN = sum(LN), KC = sum(KC)) %>% 
+        ungroup() 
       
       
-      #Estimate the relative abundance of the bacteria
-      bactList = bactList %>% 
-        mutate(estimatedAbundance = depth * size * 1e6 / inputfileBP,
-               across(c(prob, estimatedAbundance), round, digits = 4),
-               runId = {{runId}})
+      allBact = allBact %>% 
+        group_by(geneId, accession, taxid, genus, species, plasmid, LN, KC) %>% 
+        summarise(extension = sum(pathScore[!start]) + sum(extraBits),
+                  across(c(fullPath:maxOrder1), max), .groups = "drop") %>% 
+        left_join(
+          genesDetected %>%
+            select(geneId, gene, subtype, cover, type), 
+          by = "geneId"
+        ) %>% distinct() %>% 
+        mutate(pathScore = fullPath, depth = KC / LN) %>% 
+        group_by(geneId) %>% 
+        filter(extension >  0 | all(extension == 0)) %>% #Remove only start hits if any have extension
+        ungroup()
+      
+      
+      # Bact on the same path represent the same species
+      allBact = allBact %>% group_by(geneId, path0, path1) %>% 
+        mutate(pathGroup = cur_group_id())
+      allBact = allBact %>% group_by(geneId, pathGroup) %>% 
+        mutate(maxGroupScore = max(fullPath)) %>% 
+        ungroup()
+      
+      # Add plasmid prob per gene
+      allBact = allBact %>% 
+        group_by(geneId) %>% mutate(top = fullPath  / maxGroupScore) %>% ungroup() %>% 
+        left_join(
+          allBact %>% group_by(geneId, plasmid) %>% 
+            summarise(val = max(fullPath), .groups = "drop") %>% 
+            group_by(geneId) %>% summarise(
+              probPlas = max(0, val[plasmid]) / sum(val), .groups = "drop"
+            ), by  = "geneId")
+      
+      allBact = allBact %>% 
+        mutate(pipelineId = myPipelineId, runId = runId) %>% 
+        select(-c(gene:type, maxGroupScore:probPlas))
       
       if(verbose > 0){cat("done\n")}
-      newLogs = rbind(newLogs, list(as.integer(Sys.time()), 9, 
-                                    "Finished grouping bacteria"))
-      
-      #need to edit the database to add new amrCluster table and check genedDetected
-      
-      
-      # ---- MAKE PREDICTIONS ----
-      #***************************
-      if(verbose > 0){cat(format(Sys.time(), "%H:%M:%S -"), 
-                          "Predicting AMR ... ")}
-      newLogs = rbind(newLogs, list(as.integer(Sys.time()), 10, 
-                                    "Start AMR prediction"))
-      
-      myInputs = genesDetected %>%
-        mutate(id = paste(pipelineId,  bactGroup, sep = "_")) %>%
-        group_by(pipelineId, bactGroup, gene) %>%
-        mutate(val = startPerc * startDepth * cover) %>% 
-        filter(val == max(val)) %>% dplyr::slice(1) %>%
-        ungroup() %>% 
-        select(id, gene, cover) %>%
-        pivot_wider(gene, names_from = id, values_from = cover)
-      
-      myInputs = map_df(sapply(predictionModels, function(x) x$feature_names), function(y){
-        data.frame(
-          gene = y
-        )
-      }, .id = "antibiotic") %>%
-        left_join(myInputs, by = "gene")
-      
-      myInputs[is.na(myInputs)] = 0
-      
-      predictions = map_df(myAntibiotics$name, function(myAntibiotic){
-        
-        testInput = myInputs %>% filter(antibiotic == myAntibiotic) %>%
-          select(-antibiotic, -gene) %>% as.matrix() %>% t()
-        
-        data.frame(
-          id = rownames(testInput),
-          antibiotic = myAntibiotic,
-          value = round(predict(predictionModels[[myAntibiotic]], testInput),4)
-        ) %>% mutate(resistance = ifelse(value < 0.5, "S", 'R')) %>% 
-          separate(id, into = c("pipelineId", "bactGroup"), "_")
-        
-      }) %>% left_join(myAntibiotics %>% select(name, antibioticId), 
-                       by = c("antibiotic" = "name")) %>% 
-        mutate(runId = runId)
-      
-      if(verbose > 0){cat("done\n")}
-      newLogs = rbind(newLogs, list(as.integer(Sys.time()), 11, 
-                                    "Finished AMR prediction"))
-      
+      newLogs = rbind(newLogs, list(as.integer(Sys.time()), 5, 
+                                    "Finished grouping"))
       
       # ---- Save results ----
       #***********************
@@ -1033,68 +798,56 @@ if(nrow(toProcess) == 0) {
       #Add the ARGgroup to the detectedARG table (remove?)
       q = dbSendStatement(myConn, 
                     "UPDATE detectedARG 
-            SET runId = ?, ARGgroup = ?, bactGroup = ?, plasmid = ?
+            SET runId = ?, ARGgroup = ?
             WHERE pipelineId = ? AND geneId = ?", 
-                    params = list(genesDetected$runId, genesDetected$ARGgroup, 
-                                  genesDetected$bactGroup, genesDetected$plasmid,
+                    params = list(genesDetected$runId, genesDetected$duplicated,
                                   genesDetected$pipelineId, genesDetected$geneId))
       q = dbClearResult(q)
-      #Add the detected bacteria to the detectedBact table
-      q = dbSendStatement(
-        myConn, 
-        sprintf("DELETE FROM detectedBact WHERE pipelineId = %i", 
-                bactList$pipelineId[1]))
-      q = dbClearResult(q)
-      q = dbSendStatement(myConn, 
-                    "INSERT INTO detectedBact (pipelineId, runId, taxId, bactGroup, 
-            genus, species, prob, relAbundance, value) 
-            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)", 
-                    params = bactList %>% 
-                      select(pipelineId, runId, taxid, bactGroup, genus, species, 
-                             prob, estimatedAbundance, pathScore) %>% 
-                      as.list() %>% unname())
-      q = dbClearResult(q)
-      #Add the clusters to the AMRclusters table
-      q = dbSendStatement(
-        myConn, 
-        sprintf("DELETE FROM AMRclusters WHERE pipelineId = %i", 
-                bactList$pipelineId[1]))
-      q = dbClearResult(q)
-      q = dbSendStatement(myConn, 
-                    "INSERT INTO AMRclusters (pipelineId, runId, bactGroup, 
-            taxId, geneId, val, origin) 
-            VALUES(?, ?, ?, ?, ?, ?, ?)", 
-                    params = AMRclusters %>% 
-                      select(pipelineId, runId, bactGroup, taxid, 
-                             geneId, val, origin) %>% 
-                      as.list() %>% unname())
-      q = dbClearResult(q)
-      #Add the AMT predictions bacteria to the AMRprediction table
-      q = dbSendStatement(
-        myConn, 
-        sprintf("DELETE FROM AMRprediction WHERE pipelineId = %i", bactList$pipelineId[1]))
-      q = dbClearResult(q)
-      q = dbSendStatement(myConn, 
-                    "INSERT INTO AMRprediction (pipelineId, runId, 
-            bactGroup, antibioticId, resistance, value) 
-            VALUES(?, ?, ?, ?, ?, ?)", 
-                    params = predictions %>% 
-                      select(pipelineId, runId, bactGroup, antibioticId,
-                             resistance, value) %>% 
-                      as.list() %>% unname())
-      q = dbClearResult(q)
-      dbDisconnect(myConn)
-      # write_csv(genes, sprintf("%s/genes.csv", sample, sampleName))
-      # write_csv(bact, sprintf("%s/bacteria.csv", sample, sampleName))
       
-      #Render the markdown report if requested
-      if(generateReport){
-        # render(sprintf("%s/dataAndScripts/report.rmd", baseFolder),
-        #        params = list(pipelineId = myPipelineId, 
-        #                      baseFolder = baseFolder),
-        #        output_file = sprintf("%s/%s_report.html", sample, sampleName))
+      #Add new bacterial taxa and strains
+      newStrains = allBact %>% select(accession, taxid, plasmid) %>% 
+        filter(!accession %in% (tbl(myConn, "bactStrains") %>% pull(accession))) %>% 
+        mutate(taxid = as.integer(taxid)) %>% distinct()
+      
+      if(nrow(newStrains) > 0){
+        q = dbSendStatement(myConn, 
+            "INSERT INTO bactStrains (accession, taxid, plasmid) 
+            VALUES(?, ?, ?)", 
+            params = newStrains %>% as.list() %>% unname())
+        q = dbClearResult(q)
       }
       
+      newTaxa = allBact %>% select(taxid, genus, species) %>% distinct() %>% 
+        mutate(taxid = as.integer(taxid)) %>% 
+        filter(!taxid %in% (tbl(myConn, "bactTaxa") %>% pull(taxid))) 
+      
+      if(nrow(newTaxa) > 0){
+        q = dbSendStatement(myConn, 
+            "INSERT INTO bactTaxa (taxid, genus, species) 
+            VALUES(?, ?, ?)", 
+            params = newTaxa %>% as.list() %>% unname())
+        q = dbClearResult(q)
+      }
+
+      #Add the new annotation data
+      q = dbSendStatement(
+        myConn, 
+        sprintf("DELETE FROM annotation WHERE pipelineId = %i", 
+                myPipelineId))
+      q = dbClearResult(q)
+      
+      q = dbSendStatement(myConn, 
+            "INSERT INTO annotation (pipelineId, runId, geneId, accession, 
+            LN, KC, extension, fullPath, extraBits, path0, maxOrder0, path1, 
+            maxOrder1, pathGroup) 
+            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", 
+            params = allBact %>% 
+              select(pipelineId, runId, accession, geneId, LN, KC, extension, 
+                     extraBits, fullPath, path0, maxOrder0, path1, maxOrder1, 
+                     pathGroup) %>% as.list() %>% unname())
+      q = dbClearResult(q)
+      
+      dbDisconnect(myConn)
       
       if(verbose > 0){cat("done\n")}
       newLogs = rbind(newLogs, list(as.integer(Sys.time()), 13, 
@@ -1106,8 +859,6 @@ if(nrow(toProcess) == 0) {
       
       newLogs = rbind(newLogs, list(as.integer(Sys.time()), 14, 
                                     "Pipeline finished successfully"))
-      
-      success = T
     },
     finally = {
       
@@ -1137,7 +888,7 @@ if(nrow(toProcess) == 0) {
       }
       
       dbDisconnect(myConn)
-      cat(myPipelineId, ifelse(success, 'success', 'fail'), "\n")
+      
     })
     
   }

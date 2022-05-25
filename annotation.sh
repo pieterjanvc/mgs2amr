@@ -1,8 +1,6 @@
 #!/bin/bash
 
 baseFolder=$(realpath -- "$(dirname -- "$0")")
-sqlite3=`grep -oP "sqlite3\s*=\s*\K(.*)" $baseFolder/settings.txt`
-Rscript=`grep -oP "rscript\s*=\s*\K(.*)" $baseFolder/settings.txt`
 
 #Save error to temp file to it can be both displayed to user and put in DB
 touch $baseFolder/dataAndScripts/lastError
@@ -29,7 +27,7 @@ trap 'err_report ${LINENO}' ERR
 
 updateDBwhenError() {
 	#Update the DB
-  $sqlite3 $database \
+  sqlite3 $database \
 	"UPDATE scriptUse
 	SET end = '$(date '+%F %T')', status = 'error',
 	info = '$2'
@@ -37,7 +35,7 @@ updateDBwhenError() {
 }
 
 #Options when script is run
-while getopts ":hg:p:v:d:" opt; do
+while getopts ":hg:p:v:d:c:" opt; do
   case $opt in
 	h) echo -e "\n"
 	   awk '/--- ANNOTATION.SH ---/,/-- END ANNOTATION.SH ---/' $baseFolder/readme.txt
@@ -50,7 +48,9 @@ while getopts ":hg:p:v:d:" opt; do
     ;;
 	v) verbose="${OPTARG}"
     ;;
-  d) database="${OPTARG}"
+    d) database="${OPTARG}"
+    ;;
+	c) cpu="${OPTARG}"
     ;;
     \?) echo "Unknown argument provided"
 	    exit
@@ -81,6 +81,15 @@ if [ $(grep -iE "^(true|t)$" <<< $generateReport) ]; then
 	fi;
 fi
 
+if [ -z ${cpu+x} ]; then 
+	default=4
+	available=`nproc --all`
+	cpu=$(( available > default ? default : available ))
+elif [ ! $(grep -E "^[0-9]+$" <<< $cpu) ] ; then
+	echo -e "\n\e[91mThe number of processors to use needs to be a postive integer \n" \ 
+	"Read the help file (-h) for more info\e[0m"; exit 1;
+fi
+
 if [ -z ${verbose+x} ]; then 
 	verbose=`grep -oP "annotationVerbose\s*=\s*\K(.*)" $baseFolder/settings.txt`
 elif ! grep -qE "^(0|1|-1)$" <<< $verbose; then	
@@ -88,7 +97,7 @@ elif ! grep -qE "^(0|1|-1)$" <<< $verbose; then
 fi
 
 #Register the start of the script in the DB
-runId=$($sqlite3 $database \
+runId=$(sqlite3 $database \
 	"INSERT INTO scriptUse (pipelineId,scriptName,start,status) \
 	values(0,'annotation.sh','$(date '+%F %T')','running'); \
 	SELECT runId FROM scriptUse WHERE runId = last_insert_rowid()")
@@ -98,7 +107,7 @@ if [ ! -z ${pipelineId+x} ]; then
 fi
 	
 #Save the arguments with which the script was run
-$sqlite3 $database \
+sqlite3 $database \
 	"INSERT INTO scriptArguments (runId,scriptName,argument,value)
 	VALUES $pipelineArg
 	($runId,'annotation.sh','generateReport', '$generateReport'),	
@@ -117,11 +126,11 @@ fi
 
 
 #Run annotation script
-$Rscript $baseFolder/dataAndScripts/ARG_annotation.R \
-	"$baseFolder" "$database" "$runId" "$verbose" "$pipelineId" "$generateReport"
+Rscript $baseFolder/dataAndScripts/ARG_annotation.R \
+	"$baseFolder" "$database" "$runId" "$verbose" "$pipelineId" "$generateReport" "$cpu"
 
 #Update the DB
-$sqlite3 $database \
+sqlite3 $database \
 	"UPDATE scriptUse
 	SET end = '$(date '+%F %T')', status = 'finished'
 	WHERE runId = $runId"
