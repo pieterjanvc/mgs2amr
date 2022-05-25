@@ -120,6 +120,7 @@ CREATE TABLE IF NOT EXISTS "bactTaxa" (
 -- Table that stores all AMR predictions
 CREATE TABLE IF NOT EXISTS "annotation" (
 	"pipelineId" integer NOT NULL,
+	"runId" integer NOT NULL,
 	"geneId" integer NOT NULL,
 	"accession" text NOT NULL,
 	"LN" integer,
@@ -132,8 +133,9 @@ CREATE TABLE IF NOT EXISTS "annotation" (
 	"path1" real,
 	"maxOrder1" real,
 	"pathGroup" real,
-	FOREIGN KEY("pipelineId") REFERENCES "pipeline"("pipelineId") ON UPDATE CASCADE ON DELETE CASCADE
-	FOREIGN KEY("geneId") REFERENCES "ARG"("geneId") ON UPDATE CASCADE ON DELETE CASCADE
+	FOREIGN KEY("pipelineId") REFERENCES "pipeline"("pipelineId") ON UPDATE CASCADE ON DELETE CASCADE,
+	FOREIGN KEY("runId") REFERENCES "scriptUse"("runId") ON UPDATE CASCADE ON DELETE CASCADE,
+	FOREIGN KEY("geneId") REFERENCES "ARG"("geneId") ON UPDATE CASCADE ON DELETE CASCADE,
 	FOREIGN KEY("accession") REFERENCES "bactStrains"("accession") ON UPDATE CASCADE ON DELETE CASCADE
 );
 -- Add the antibiotics
