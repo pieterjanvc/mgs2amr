@@ -1,10 +1,6 @@
 #!/bin/bash
 
 baseFolder=$(realpath -- "$(dirname -- "$0")")
-sqlite3=`grep -oP "sqlite3\s*=\s*\K(.*)" $baseFolder/settings.txt`
-Rscript=`grep -oP "rscript\s*=\s*\K(.*)" $baseFolder/settings.txt`
-
-#export PATH=/opt/ncbi-blast-2.13.0+/bin:$PATH
 
 #Save error to temp file to it can be both displayed to user and put in DB
 touch $baseFolder/dataAndScripts/lastError
@@ -31,7 +27,7 @@ trap 'err_report ${LINENO}' ERR
 
 updateDBwhenError() {
 	#Update the DB
-    $sqlite3 -cmd ".timeout 30000" $database \
+    sqlite3 -cmd ".timeout 30000" $database \
 	"UPDATE scriptUse
 	SET end = '$(date '+%F %T')', status = 'error',
 	info = '$2'
@@ -101,11 +97,11 @@ fi
 
 if ! blastdbcmd -list "$BLASTDB" | grep -q Nucleotide ; then 
 	echo -e "\n\e[91mThe \$BLASTDB variable is not found\n"\
-	"  Set by: export BLASTDB=/path/to/ntDBfolder\e[0m"
+	"  Set by: export BLASTDB=/path/to/ntDBfolder or edit in settings.txt\e[0m"
 fi
 
 #Register the start of the script in the DB
-runId=$($sqlite3 -cmd ".timeout 30000" $database \
+runId=$(sqlite3 -cmd ".timeout 30000" $database \
 	"INSERT INTO scriptUse (pipelineId,scriptName,start,status) \
 	values(0,'localBlast.sh','$(date '+%F %T')','running'); \
 	SELECT runId FROM scriptUse WHERE runId = last_insert_rowid()")
@@ -120,12 +116,12 @@ if [ $verbose -gt 0 ]; then
 fi
 
 #Run BLASTn for all in the queue (unless runId specified)
-$Rscript $baseFolder/dataAndScripts/localBlast.R \
+Rscript $baseFolder/dataAndScripts/localBlast.R \
 	"$baseFolder" "$database" "$runId" "$verbose" "$blastn" "$BLASTDB" "$pipelineId" "$forceRedo"
 
 
 #Update the DB
-$sqlite3 -cmd ".timeout 30000" $database \
+sqlite3 -cmd ".timeout 30000" $database \
 	"UPDATE scriptUse
 	SET end = '$(date '+%F %T')', status = 'finished'
 	WHERE runId = $runId"
@@ -136,4 +132,3 @@ if [ "$verbose" -gt 0 ]; then
 	echo -e "\n\e[32m--- Local BLASTn finished successfully ---\n"\
 						"         Time elapsed: $(($duration / 60)) minutes \e[0m"
 fi
-
