@@ -837,13 +837,14 @@ if(nrow(toProcess) == 0) {
       q = dbClearResult(q)
       
       q = dbSendStatement(myConn, 
-            "INSERT INTO annotation (pipelineId, runId, geneId, accession, 
+            "INSERT INTO annotation (pipelineId, runId, geneId, accession,
             LN, KC, extension, fullPath, extraBits, path0, maxOrder0, path1, 
             maxOrder1, pathGroup) 
             VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", 
             params = allBact %>% 
-              select(pipelineId, runId, accession, geneId, LN, KC, extension, 
-                     extraBits, fullPath, path0, maxOrder0, path1, maxOrder1, 
+              mutate(across(c("KC", "extension", "fullPath", "extraBits"), round, digits = 2)) %>% 
+              select(pipelineId, runId, geneId, accession, LN, KC, extension, 
+                     fullPath, extraBits, path0, maxOrder0, path1, maxOrder1, 
                      pathGroup) %>% as.list() %>% unname())
       q = dbClearResult(q)
       

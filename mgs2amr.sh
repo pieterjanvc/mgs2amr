@@ -389,9 +389,9 @@ if [ $step -gt 3 ]; then
 
 	if [ "$verbose" -ne 0 ]; then 
 		echo -e "\n"
-		echo "***************************************"
-		echo "--- STEP 4: ANNOTATION & PREDICTION ---"
-		echo "***************************************"
+		echo "**************************"
+		echo "--- STEP 4: ANNOTATION ---"
+		echo "**************************"
 	fi
 	
 	$baseFolder/annotation.sh -v "$verbose" -p "$pipelineId" -d "$database" -c "$cpu"
