@@ -378,8 +378,9 @@ if [ $step -gt 2 ]; then
 	if [ `command -v "blastn"` ]; then 
 		$baseFolder/localBlast.sh -v "$verbose" -p "$pipelineId" -d "$database"
 	else
-		echo -e "\e[91mRemote BLASTn has not been implemented yet.\n Please setup local version for now...\e[0m"
+		echo -e "\e[91mThe blastn command was not found, please make sure it's in $PATH\e[0m"
 		step=2
+		exit 1;
 	fi
 	
 fi
