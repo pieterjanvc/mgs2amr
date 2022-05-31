@@ -5,7 +5,6 @@
 #  ex.1: var=test 1; NOT var="test 1"
 
 --- mgs2amr.sh
-mgs2amrTemp=
 mgs2amrVerbose=1
 mgs2amrForceOverwrite=FALSE
 mgs2amrStep=4
@@ -15,5 +14,4 @@ localBlastVerbose=1
 localBlastDB=/mnt/meta2amrData/ncbi/blastdb
 
 --- annotation.sh
-annotationHTMLreport=true
 annotationVerbose=1

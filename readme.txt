@@ -9,19 +9,21 @@ Arguments [h|t]
  -h Read the help documentation
  -t Run pipeline tests with dummy data (will take some time)
 
-The following software needs to be installed and available in PATH:
+The following software needs to be installed and available in $PATH:
 - SQLite3 
   * Precompiled 32-bit version: https://www.sqlite.org/download.html
   * Precompiled 64-bit version: https://github.com/boramalper/sqlite3-x64/releases
-- R version 4+
+- R version 4+ (Rscript is called)
   * Packages: gfaTools, RSQLite, igraph, tidyverse (with dplyr 1.0+), parallel,
               foreach, rmarkdown
   * Precompiled versions: https://www.r-project.org/ 
 - usearch (v11+)
   * https://www.drive5.com/usearch/download.html
-  * ! Make sure to rename the file 'usearch' if version info is attached 
+  * ! Make sure to rename the file 'usearch' if version info is attached
+    mgs2amr will look for 'usearch' in $PATH
 - MetaCherchant
-  * https://github.com/ctlab/metacherchant
+  * This tool uses an older version of MetaChechant wich is provided
+  * Source https://github.com/ctlab/metacherchant
 - BLASTn (Part of the BLAST+ package): 
   * https://blast.ncbi.nlm.nih.gov/Blast.cgi?PAGE_TYPE=BlastDocs&DOC_TYPE=Download
   * Make sure to download and build the nucleotide (nt) database  
@@ -32,9 +34,6 @@ The following software needs to be installed and available in PATH:
 	whilst in the BLASTDB folder
 
 Optional software
-- Pandoc
-  * https://pandoc.org/
-  * Optional but needed if HTML reports required
 - pigz
   * If installed, zipping files will be faster on multi-core machines compared to gzip
    
@@ -51,33 +50,43 @@ export PATH=/pathToDependencyFolder:$PATH
 --- mgs2amr.sh ---
 Evaluate a metagenome for pathogenic bacterial species and their AMR
 The ARG tested obtained from https://www.ncbi.nlm.nih.gov/bioproject/PRJNA313047
- Last update of this list: 2021-06-04
+ Last update of this list: 2022-05-31
 
-Arguments [h|i|j|o|n|t|s|m|v]
- -h Read the help documentation
+Arguments [c|d|f|h|i|j|m|n|o|p|s|v]
+
+REQUIRED
  -i The input file in fastq or fastq.gz format
  -j (optional) The secondary input file in case of pair-end reads
  -o The folder to save the results. A sub-folder will be created
- -n (optional) The name of the output sub-folder and prefix for other filenames
+    Use -n to set the name of the folder and other output files
+
+Special case when resuming an existing pipeline
+ -p Provide only a pipelineId (found in file called pipelineId in output folder). 
+     The tool will resume from the last completed step if all data is available.
+	 All other parameters but step (-s) and verbose (-v) will be ignored.
+	 Note that the pipelineId must be found in the database (see -d)
+
+OPTIONAL
+ -c Default = 4 (or lower if not available); Number of processors to use
+ -d Default = mgs2amr database in the dataAndScripts folder.
+    Supply any file ending in .db to use an alternative database.
+	Make sure to run the setup.sh script fist to initialise new databases
+ -f Force redo and ovewrite of previous runs
+ -h Read the help documentation
+ -m Default = 32G; Memory available (important for MetaCherchant)
+    Input files of > 2Gb easily need 32+Gb of RAM. 
+	If the pipeline fails at the first step, consider increasing the memory 
+ -n The name of the output sub-folder and prefix for other filenames
     If not set, a random name will be generated
- -s (optional) Set the step to which the pipeline must be run
+ -s Set the step to which the pipeline must be run
     * 1: Step 1 - MetaCherchant
 	* 2: previous + Step 2 - BlastPreparations
 	* 3: previous + Step 3 - Blastn
 	* 4: previous + Step 4 - Annotation
- -m (optional) Default = 32G; Memory available (important for MetaCherchant)
-    Input files of > 2Gb easily need 32+Gb of RAM. 
-	If the pipeline fails at the first step, consider increasing the memory 
- -c (optional) Default = 4 (or lower if not available); Number of processors to use
- -v (optional) Default can be changed in the settings file
+ -v Default can be changed in the settings file
     0: Nothing is written to stdout
     1: General progress is posted to stdout
     2: All available details are posted to stdout    
-
-Special case when resuming an existing pipeline
- -p Provide only a pipelineId (found in file called pipelineId in output folder). 
-     Use if an error occurred and you like to resume from a specific temp file
-	 All other parameters but step (-s) and verbose (-v) will be ignored
 
 -- END mgs2amr.sh ---
 
@@ -85,15 +94,20 @@ Special case when resuming an existing pipeline
 --- LOCALBLAST.SH ---
 Run local BLASTn for files in the mgs2amr database awaiting alignment.
 
-This script is separate from the main pipeline as local BLASTn searches require
-a large amount of memory and thus can be run in a separate process
+This script can be run separately from the main pipeline as BLASTn searches require
+a large amount of memory (~150 GB or more). If no specific pipelineId provided,
+the scrip will seach for all runs that finished step 2 (MetaCherchant and blast prep)
+and run BLASTn for all of them at once.
 
-Arguments [b|d|h|r|v]
+The first BLASTn run can take a long time as the database need to be loaded into
+memory, after that, the runtime is significantly recuded for other runs in the
+same session.
+
+Arguments [d|h|r|v]
+ -d Default = mgs2amr database in the dataAndScripts folder.
+    Supply any file ending in .db to use an alternative database.
+	Make sure to run the setup.sh script fist to initialise new databases
  -h Read the help documentation
- -b (optional) The link to the remote blastn API
-	 Default = value from 'localBlastBlastn' in the settings file
- -d (optional) Set the BLAST database to use (should be nt or custom set of bacteria)
-	 Default = value from 'localBlastDB' in the settings file
  -p (optional) Run the BLAST search only for these pipelineIds (e.g. "1,5,20")
      Default = all pipelineIds in the blastSubmissions table of the mgs2amr database 
 	 that have not been blasted yet
@@ -102,44 +116,3 @@ Arguments [b|d|h|r|v]
     1: General progress is posted to stdout
 	
 -- END LOCALBLAST.SH ---
-
-
---- REMOTEBLAST.SH ---
-Run a remote BLASTn service for files in the mgs2amr database awaiting alignment
-The script will keep running until all searches have been completed or
-a timeout has been reached.
-
-Arguments [b|e|f|r|t|v]
- -h Read the help documentation
- -b (optional) The path to the local blastn module
-	 Default = value from 'remoteBlastBlastn' in the settings file
- -e (optional) Entrez query to filter the nt database
-	 Default = value from 'remoteBlastEntrez' in the settings file
-	 Note: changing this might have unforeseen effects on the correct species calling
- -f (optional) The frequency (sec) with which the the script looks for updates on searches 
-	 Default = value from 'remoteBlastCheckFreq' in the settings file
- -p (optional) Run the BLAST search only for these pipelineIds (e.g. "1,5,20")
-     Default = all pipelineIds in the blastSubmissions table of the mgs2amr database 
-	 that have not been blasted yet
- -t (optional) The timeout (sec) after which the the script stops looking new results
-	 The script will end before the timeout if all searches have been completed
-	 Default = value from 'remoteBlastTimeout' in the settings file
- -v (optional) Default can be changed in the settings file
-    0: Nothing is written to stdout (except errors)
-    1: General progress is posted to stdout
-	
--- END REMOTEBLAST.SH ---
-
---- ANNOTATION.SH ---
-Bring everything together to assign ARG to bacteria and predict the AMR
-
-Arguments [b|d|h|r|v]
- -h Read the help documentation
- -p (optional) Annotate only for these pipelineIds (e.g. "1,5,20")
-     Default = all pipelineIds for which annoation has not been completed
- -g (optional) Generate HTML report. Default = TRUE
- -v (optional) Default can be changed in the settings file
-    0: Nothing is written to stdout (except errors)
-    1: General progress is posted to stdout
-	
--- END ANNOTATION.SH ---

@@ -35,14 +35,12 @@ updateDBwhenError() {
 }
 
 #Options when script is run
-while getopts ":hg:p:v:d:c:" opt; do
+while getopts ":hp:v:d:c:" opt; do
   case $opt in
 	h) echo -e "\n"
 	   awk '/--- ANNOTATION.SH ---/,/-- END ANNOTATION.SH ---/' $baseFolder/readme.txt
 	   echo -e "\n"
 	   exit
-    ;;	
-	g) generateReport="${OPTARG}"
 	;;
 	p) pipelineId="${OPTARG}"
     ;;
@@ -71,14 +69,6 @@ if [ -z ${generateReport+x} ]; then
 	generateReport=`grep -oP "annotationHTMLreport\s*=\s*\K(.*)" $baseFolder/settings.txt`
 elif [ ! $(grep -iE "^(true|false|t|f)$" <<< $generateReport) ]; then	
 	echo -e "\n\e[91mThe generateHTMLReport option (-g) needs to be either true or false\e[0m"; exit 1;
-fi
-
-if [ $(grep -iE "^(true|t)$" <<< $generateReport) ]; then
-	#Check if pandoc is present
-	if [ -z `command -v pandoc` ]; then 
-		echo -e "\n\e[91mPandoc is NOT present.\n Set -g (generateHTMLReport) to false or install Pandoc\e[0m"; 
-		exit 1;
-	fi;
 fi
 
 if [ -z ${cpu+x} ]; then 
