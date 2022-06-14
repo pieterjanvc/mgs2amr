@@ -1399,7 +1399,7 @@ finally = {
   #! Wrap up and save 
   myStats$final = data.frame(timeStamp = as.numeric(Sys.time()), 
                              success = 22 %in% newLogs$actionId)
-  write_rds(myStats, sprintf("/mnt/meta2amrData/pipelineTest/after1200/stats/%s_stats.rds", pipelineId))
+  write_rds(myStats, sprintf("%s/pipeline_%s_stats.rds", outputFolder, pipelineId))
   #!
 
   #Garbage collection
