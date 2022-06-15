@@ -1,6 +1,7 @@
 *
 !*/
 !.gitignore
+!.gitattributes
 !*.R
 !*.rmd
 !*.sh
@@ -14,3 +15,4 @@ test*
 working_*
 /backup/*
 settings.txt
+backup*
