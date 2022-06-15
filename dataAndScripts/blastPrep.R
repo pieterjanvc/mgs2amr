@@ -241,7 +241,13 @@ tryCatch({
       genesDetected = read.csv(paste0(outputFolder, "genesDetected/genesDetected.csv"))
       fragments = gfa_read(paste0(outputFolder, "fragmentGFA.gfa"))
       segmentsOfInterest = read_csv(paste0(outputFolder, "segmentsOfInterest.csv"))
-
+	  
+	  startConn = read_csv(paste0(outputFolder, "segmentsOfInterest.csv"))
+	  fragments = gfa_read(paste0(outputFolder, "fragmentGFA.gfa"))
+	  
+	  if(nrow(fragments$segments) == 0){
+		fragments$segments = data.frame(name = character(), LN = integer())
+	  }
 
     } else {
 
@@ -895,7 +901,9 @@ tryCatch({
         # ) 
         
         toKeep = c(toKeep, distMat$geneId)
-      }
+      } else {
+		distMat = data.frame(geneId = integer())
+	  }
       
       
       #Final filter
@@ -1030,12 +1038,14 @@ tryCatch({
       newLogs = rbind(newLogs, list(as.integer(Sys.time()), 13, "Start simplifying GFA files"))
 
       dir.create(sprintf("%sgenesDetected/simplifiedGFA", outputFolder), showWarnings = F)
+	  unfragGFA = list.files(sprintf("%sgenesDetected/", outputFolder), ".gfa") %>% 
+		str_remove(".gfa$")
       
       registerDoParallel(cores=maxCPU)
 
       #Read all GFA files
       #! add .combine = "bind_rows" when removed and chage below too!!
-      blastSegments = foreach(myGene = unique(noFragments$segments$geneId)) %dopar% {
+      blastSegments = foreach(myGene = unfragGFA) %dopar% {
                 
             fullGFA = gfa_read(sprintf("%sgenesDetected/%s.gfa", outputFolder, myGene))
             
@@ -1125,9 +1135,10 @@ tryCatch({
             } else {
               
               fullGFA = myGFA[[1]]
-              fullGFA$segments = fullGFA$segments %>%  mutate(
-                start = replace_na(start, 0), 
-                group = replace_na(group, max(group, na.rm = T))
+              fullGFA$segments = fullGFA$segments %>% mutate(			
+                start = as.numeric(start) %>% replace_na(0), 
+                group = as.integer(group),
+				group =	replace_na(group, max(group, na.rm = T))
               )
               
             }
