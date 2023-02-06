@@ -66,7 +66,8 @@ elif [ ! -f $database ]; then
 fi
 
 if [ -z ${generateReport+x} ]; then 
-	generateReport=`grep -oP "annotationHTMLreport\s*=\s*\K(.*)" $baseFolder/settings.txt`
+	#generateReport=`grep -oP "annotationHTMLreport\s*=\s*\K(.*)" $baseFolder/settings.txt`
+	generateReport=true
 elif [ ! $(grep -iE "^(true|false|t|f)$" <<< $generateReport) ]; then	
 	echo -e "\n\e[91mThe generateHTMLReport option (-g) needs to be either true or false\e[0m"; exit 1;
 fi

@@ -24,7 +24,7 @@ forceRedo = T
 minBlastLength = 250
 
 #Load the ARG and the sample list to process
-myConn = myConn = dbConnect(SQLite(), database,  synchronous = NULL)
+myConn = dbConnect(SQLite(), database,  synchronous = NULL)
 
 ARG = dbReadTable(myConn, "ARG") 
 
@@ -566,41 +566,43 @@ if(nrow(toProcess) == 0) {
       # Create the start hit in the genome by looking at the positions of the matches on 
       # either side of the start segment, and 
       addSeedHit = addSeedHit %>% select(geneId:accession, hit_from, hit_to) %>% 
-        filter(all(order != 1)) %>%
-        mutate(x = hit_from == max(c(hit_from, hit_to)) | 
-                 hit_to == max(c(hit_from, hit_to))) %>% 
-        group_by(geneId, accession, orientation) %>% 
-        mutate(x = ifelse(any(x == T), T, F)) %>% 
-        ungroup() %>% rowwise() %>% 
-        mutate(
-          hit_from = ifelse(x, hit_from - dist, hit_from + dist),
-          hit_to = ifelse(x, hit_to - dist, hit_to + dist),
-          d1 = ifelse(x, min(hit_from, hit_to), max(hit_from, hit_to)),
-          geneId = as.integer(geneId)) %>% 
-        group_by(geneId, accession) %>%
-        mutate(d2 = mean(d1[x]) - mean(d1[!x])) %>% ungroup() %>% 
-        left_join(ARG %>% select(geneId, nBases), by = "geneId") %>% 
-        mutate(d3 = abs(d2 - nBases) - 30) %>% 
-        filter(!is.na(d3 >= 0)) %>% filter(d3 <= 250) %>% 
-        group_by(geneId, accession, group, nBases) %>% 
-        summarise(    d1 = min(d1), d2 = max(d1), .groups = "drop") %>% mutate(
-          hit_from = d1 + ((d1 - d2) - nBases) / 2,
-          hit_to = d2 - ((d1 - d2) - nBases) / 2
-        )
-      
-      addSeedHit = otherSeedHits %>% filter(geneId %in% addSeedHit$geneId) %>% 
-        left_join(addSeedHit %>% 
-                    select(geneId, accession, hit_from, hit_to, group),
-                  by = "geneId") %>% 
-        left_join(
-          blastOut %>% 
-            select(accession, taxid, genus, species, extra, 
-                   subspecies, plasmid) %>% 
-            distinct(), by  = "accession")
-      
-      #Add the new start 'matches' to the blast output
-      blastOut = bind_rows(blastOut, addSeedHit)
-      
+        filter(all(order != 1))
+      if(nrow(addSeedHit) > 0){
+        addSeedHit = addSeedHit %>%
+          mutate(x = hit_from == max(c(hit_from, hit_to)) | 
+                   hit_to == max(c(hit_from, hit_to))) %>% 
+          group_by(geneId, accession, orientation) %>% 
+          mutate(x = ifelse(any(x == T), T, F)) %>% 
+          ungroup() %>% rowwise() %>% 
+          mutate(
+            hit_from = ifelse(x, hit_from - dist, hit_from + dist),
+            hit_to = ifelse(x, hit_to - dist, hit_to + dist),
+            d1 = ifelse(x, min(hit_from, hit_to), max(hit_from, hit_to)),
+            geneId = as.integer(geneId)) %>% 
+          group_by(geneId, accession) %>%
+          mutate(d2 = mean(d1[x]) - mean(d1[!x])) %>% ungroup() %>% 
+          left_join(ARG %>% select(geneId, nBases), by = "geneId") %>% 
+          mutate(d3 = abs(d2 - nBases) - 30) %>% 
+          filter(!is.na(d3 >= 0)) %>% filter(d3 <= 250) %>% 
+          group_by(geneId, accession, group, nBases) %>% 
+          summarise(    d1 = min(d1), d2 = max(d1), .groups = "drop") %>% mutate(
+            hit_from = d1 + ((d1 - d2) - nBases) / 2,
+            hit_to = d2 - ((d1 - d2) - nBases) / 2
+          )
+        
+        addSeedHit = otherSeedHits %>% filter(geneId %in% addSeedHit$geneId) %>% 
+          left_join(addSeedHit %>% 
+                      select(geneId, accession, hit_from, hit_to, group),
+                    by = "geneId") %>% 
+          left_join(
+            blastOut %>% 
+              select(accession, taxid, genus, species, extra, 
+                     subspecies, plasmid) %>% 
+              distinct(), by  = "accession")
+        
+        #Add the new start 'matches' to the blast output
+        blastOut = bind_rows(blastOut, addSeedHit)
+      }
       #GENOME DIST START CHECK
       
       #Order the min - max positino of match in target genome
