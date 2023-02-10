@@ -851,7 +851,6 @@ if(nrow(toProcess) == 0) {
       q = dbClearResult(q)
       
       #Write output file to be used as alternative input for Explorer App
-      print(generateReport)
       if(generateReport){
         td = tempdir()
         dir.create(sprintf("%s/results_id%i", td, myPipelineId), F)
@@ -890,7 +889,8 @@ if(nrow(toProcess) == 0) {
         
         system(sprintf("tar -czvf %s --directory %s %s",
                sprintf("%s/results_id%i.tar.gz", sample, myPipelineId),td,
-               sprintf("results_id%i", myPipelineId)), intern = F)
+               sprintf("results_id%i", myPipelineId)), intern = F,
+               show.output.on.console = F, ignore.stdout = T)
       }
       
       dbDisconnect(myConn)
