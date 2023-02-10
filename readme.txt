@@ -1,6 +1,10 @@
-########## MGS2AMR ##########
-#############################
-   Developed by PJ Van Camp
+ __  __  ____ ____ ____     _    __  __ ____  
+|  \/  |/ ___/ ___|___ \   / \  |  \/  |  _ \ 
+| |\/| | |  _\___ \ __) | / _ \ | |\/| | |_) |
+| |  | | |_| |___) / __/ / ___ \| |  | |  _ < 
+|_|  |_|\____|____|_____/_/   \_|_|  |_|_| \_\
+                                              
+     MGS2AMR - Developed by PJ Van Camp
 
 --- SETUP.SH ---
 Run the setup.sh script to verify all dependencies and to test the pipeline.
@@ -52,7 +56,7 @@ Evaluate a metagenome for pathogenic bacterial species and their AMR
 The ARG tested obtained from https://www.ncbi.nlm.nih.gov/bioproject/PRJNA313047
  Last update of this list: 2022-05-31
 
-Arguments [c|d|f|h|i|j|m|n|o|p|s|v]
+Arguments [c|d|f|h|i|j|m|n|o|p|s|v|z]
 
 REQUIRED
  -i The input file in fastq or fastq.gz format
@@ -86,7 +90,10 @@ OPTIONAL
  -v Default can be changed in the settings file
     0: Nothing is written to stdout
     1: General progress is posted to stdout
-    2: All available details are posted to stdout    
+    2: All available details are posted to stdout
+ -z Generate output as tar.gz file in addition to storing results in the database
+	Default can be changed in the settings file
+	TRUE or FALSE
 
 -- END mgs2amr.sh ---
 
@@ -116,3 +123,12 @@ Arguments [d|h|r|v]
     1: General progress is posted to stdout
 	
 -- END LOCALBLAST.SH ---
+
+--- EXPLORER ---
+The MGS2AMR explorer Shiny app can be run in R to explore the output data.
+
+All results are saved in the mgs2amr database and can be accessed by connecting
+to it through the app. Alternatively, if a zip file with results was generated using
+the -z option, the output can also be loaded that way.  
+
+-- END EXPLORER ---
