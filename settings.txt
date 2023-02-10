@@ -15,4 +15,4 @@ localBlastDB=
 
 --- annotation.sh
 annotationVerbose=1
-generateZipResults=false
+generateZipResults=TRUE
