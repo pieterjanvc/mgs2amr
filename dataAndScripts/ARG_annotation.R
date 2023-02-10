@@ -850,6 +850,49 @@ if(nrow(toProcess) == 0) {
                      pathGroup) %>% as.list() %>% unname())
       q = dbClearResult(q)
       
+      #Write output file to be used as alternative input for Explorer App
+      print(generateReport)
+      if(generateReport){
+        td = tempdir()
+        dir.create(sprintf("%s/results_id%i", td, myPipelineId), F)
+        
+        file1 = tbl(myConn, "pipeline") %>%
+          filter(pipelineId == myPipelineId) %>% 
+          collect()
+        write_csv(file1, sprintf("%s/results_id%i/info.csv", td, myPipelineId))
+        
+        
+        file2 = tbl(myConn, "detectedARG") %>%
+          filter(pipelineId == myPipelineId) %>% 
+          # select(-gene, -subtype) %>% 
+          collect() %>% 
+          left_join(ARG %>% select(-type), by = "geneId") %>% 
+          mutate(
+            cover = ifelse(type == "noFragments", cover1, cover2),
+            across(c(cover, startPerc), function(x) round(x * 100, 2)),
+            startDepth = round(startDepth, 2)) %>% 
+          arrange(desc(cover), desc(startDepth))
+        write_csv(file2, sprintf("%s/results_id%i/detectedARG.csv", td,myPipelineId))
+        
+        file3 = tbl(myConn, "annotation") %>%
+          filter(pipelineId == myPipelineId) %>%
+          left_join(tbl(myConn, "bactStrains"), by = "accession") %>%
+          left_join(tbl(myConn, "bactTaxa"), by = "taxid") %>% 
+          collect() %>% 
+          group_by(geneId) %>% mutate(
+            top = fullPath / max(fullPath),
+            depth = KC / LN
+          ) %>% ungroup() %>% left_join(
+            file2 %>% select(geneId, gene, subtype, cover, type), 
+            by = "geneId") %>% 
+          mutate(plasmid = as.logical(plasmid))
+        write_csv(file3, sprintf("%s/results_id%i/annotation.csv", td, myPipelineId))
+        
+        system(sprintf("tar -czvf %s --directory %s %s",
+               sprintf("%s/results_id%i.tar.gz", sample, myPipelineId),td,
+               sprintf("results_id%i", myPipelineId)), intern = F)
+      }
+      
       dbDisconnect(myConn)
       
       if(verbose > 0){cat("done\n")}
