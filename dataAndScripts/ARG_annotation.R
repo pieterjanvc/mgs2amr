@@ -6,7 +6,7 @@ suppressPackageStartupMessages(library(gfaTools))
 suppressPackageStartupMessages(library(tidyverse, warn.conflicts = FALSE))
 suppressPackageStartupMessages(library(RSQLite))
 # suppressPackageStartupMessages(library(igraph))
-suppressPackageStartupMessages(library(rmarkdown))
+# suppressPackageStartupMessages(library(rmarkdown))
 # suppressPackageStartupMessages(library(doParallel))
 suppressPackageStartupMessages(library(foreach))
 

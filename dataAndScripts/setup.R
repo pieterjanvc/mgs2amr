@@ -12,8 +12,7 @@ if(as.integer(R.version$major) < 4){
 }
 
 #Check R packages
-packages = c("tidyverse", "RSQLite", "igraph", "gfaTools", "parallel",
-			 "visNetwork", "rmarkdown")
+packages = c("tidyverse", "RSQLite", "igraph", "foreach", "doParallel", "seqinr")
 installed = packages %in% installed.packages()[,1]
 
 if(!all(installed)){
@@ -23,4 +22,10 @@ if(!all(installed)){
 
 if(!stringr::str_detect(as.character(packageVersion("dplyr")), "^1")){
   stop("The dplyr package needs to be version 1.0+")
+}
+
+if(! "gfaTools" %in% installed.packages()[,1]){
+  stop("The 'gfaTools' package needs to be installed manually (not on CRAN).",
+       "It can be found in the mgs2amr root folder.\n", "Open R and run:",
+       "\n install.packages(\"gfaTools_<version>.tar.gz\")")
 }

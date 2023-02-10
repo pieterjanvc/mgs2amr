@@ -5,9 +5,15 @@
 |_|  |_|\____|____|_____/_/   \_|_|  |_|_| \_\
                                               
      MGS2AMR - Developed by PJ Van Camp
-
+	 
 --- SETUP.SH ---
 Run the setup.sh script to verify all dependencies and to test the pipeline.
+
+IMPORTANT: In order to run this pipeline, you must download and extract 
+ the zip file from the release containing all necessary files and data.
+ The tracked files on GitHub only contain scripts and not other data.
+ 
+ This pipeline will have to be run in a Linux environment 
 
 Arguments [h|t]
  -h Read the help documentation
@@ -18,8 +24,9 @@ The following software needs to be installed and available in $PATH:
   * Precompiled 32-bit version: https://www.sqlite.org/download.html
   * Precompiled 64-bit version: https://github.com/boramalper/sqlite3-x64/releases
 - R version 4+ (Rscript is called)
-  * Packages: gfaTools, RSQLite, igraph, tidyverse (with dplyr 1.0+), parallel,
-              foreach, rmarkdown
+  * Packages: tidyverse, RSQLite, igraph, foreach, doParallel, seqinr
+	In addition the gfaTools package, created for this pipline needs to be installed
+	The gfaTools_v0.9.0-beta.tar.gz file can be found in the root folder
   * Precompiled versions: https://www.r-project.org/ 
 - usearch (v11+)
   * https://www.drive5.com/usearch/download.html
@@ -32,7 +39,8 @@ The following software needs to be installed and available in $PATH:
   * https://blast.ncbi.nlm.nih.gov/Blast.cgi?PAGE_TYPE=BlastDocs&DOC_TYPE=Download
   * Make sure to download and build the nucleotide (nt) database  
   * Set the nt database folder to the BLASTDB variable and export 
-	 e.g.: `export BLASTDB=/path/to/ntDBfolder` 
+	 e.g.: `export BLASTDB=/path/to/ntDBfolder`, alternatively you can set this
+	 path in the settings.txt file
   * Download the taxid database and extact in the BLASTDB folder
     or use: `perl update_blastdb.pl --passive --timeout 300 --force --verbose taxdb`
 	whilst in the BLASTDB folder
