@@ -114,6 +114,7 @@ result = result %>% left_join(
     mutate(qseqid = str_remove(qseqid, "_\\d+$")) %>% distinct(), 
   by = c("pipelineId", 'gene', "qseqid"))
 
+
 result = result %>% filter(!is.na(sscinames) | detection == "FN") %>% 
   filter(coverage > 0.9 | detection == "FN")
 
@@ -122,4 +123,5 @@ result %>% group_by(pipelineId) %>% summarise(
   perc = detected / nGenes
 )
 
+### NEED TO FIND A WAY FOR OTHER FP GENES
 
