@@ -7,8 +7,8 @@ library(RSQLite)
 
 #Databases 
 supplementalDB = "D:/Desktop/SupplementalDatabase.db"
-metaspadesDB = "D:/Desktop/results.db"
-mgs2amspDB = "D:/Desktop/revisions.db"
+metaspadesDB = "D:/Desktop/metaspadesPipe.db"
+mgs2amrRevDB = "D:/Desktop/mgs2amrRev.db"
 
 #Limit analysis to the following spPipeIds (or c() for all)
 spPipeIds = c()
@@ -16,7 +16,7 @@ spPipeIds = c()
 
 sDB = dbConnect(dbDriver("SQLite"), supplementalDB)
 spDB = dbConnect(dbDriver("SQLite"), metaspadesDB)
-mgsDB = dbConnect(dbDriver("SQLite"), mgs2amspDB)
+mgsDB = dbConnect(dbDriver("SQLite"), mgs2amRevDB)
 
 #Get the results
 info = tbl(spDB, "pipeline") %>%  collect() %>% 
