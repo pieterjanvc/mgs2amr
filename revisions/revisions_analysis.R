@@ -37,30 +37,6 @@ mgs2amrInfo = tbl(mgsDB, "pipeline") %>% filter(name %in% local(info$name)) %>%
   left_join(info %>% select(name, spPipeId), by = "name") %>% 
   rename(mgsPipeId = pipelineId)
 
-#---------------- REMOVE NEXT RUN!!!
-# overlap = function(x, y, amount = 50){
-#   grp = 1
-#   if(length(x) == 1) return(grp)
-#   out = rep(1, length(x))
-#   z = x
-#   x = ifelse(x > y, y, x)
-#   y = ifelse(z < y, y, z)
-#   x = c(x, x[length(x)])
-#   y = c(y, y[length(y)])
-#   for(i in 1:(length(x) - 2)){
-#     if(min(y[i],y[i+1]) - max(x[i], x[i+1]) >= amount){
-#       out[i+1] = grp
-#     } else {
-#       grp = grp + 1
-#       out[i+1] = grp
-#     }
-#   }
-#   return(out)
-# }
-# argInfo = argInfo %>% group_by(qseqid) %>% 
-#   mutate(grp = overlap(qstart, qend)) %>% ungroup %>% collect()
-#----------------
-
 #Get the ground truth
 genotypes = tbl(sDB, "genotypes") %>% 
   filter(Run %in% local(info$isolate)) %>% 
