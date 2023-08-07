@@ -118,6 +118,7 @@ tryCatch({
     
       system(sprintf("%s -d %s", zipMethod, paste0(outputFolder, "masterGFA.db.gz")))
       myConn = dbConnect(SQLite(), sprintf("%smasterGFA.db", outputFolder))
+      sqliteSetBusyHandler(myConn, 30000)
       gfa = list(
         segments = dbReadTable(myConn, "segments"),
         links = dbReadTable(myConn, "links")
@@ -211,6 +212,7 @@ tryCatch({
       newLogs = rbind(newLogs, list(as.integer(Sys.time()), 5, "Start writing master GFA"))
 
       myConn = dbConnect(SQLite(), sprintf("%smasterGFA.db", outputFolder))
+      sqliteSetBusyHandler(myConn, 30000)
       dbWriteTable(myConn, "segments", gfa$segments, overwrite = T)
       dbWriteTable(myConn, "links", gfa$links, overwrite = T)
       dbDisconnect(myConn)
@@ -283,6 +285,7 @@ tryCatch({
         myGenes = myGroups$geneId[myGroups$group == myGroup]
 
         myConn = dbConnect(SQLite(), sprintf("%smasterGFA.db", outputFolder))
+        sqliteSetBusyHandler(myConn, 30000)
         gfaGroup = list(
           segments = dbGetQuery(
             myConn,

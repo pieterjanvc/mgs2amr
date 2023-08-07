@@ -33,7 +33,7 @@ The following software needs to be installed and available in $PATH:
   * ! Make sure to rename the file 'usearch' if version info is attached
     mgs2amr will look for 'usearch' in $PATH
 - MetaCherchant
-  * This tool uses an older version of MetaChechant wich is provided
+  * This tool uses an older version of MetaChechant wich is provided in the release
   * Source https://github.com/ctlab/metacherchant
 - BLASTn (Part of the BLAST+ package): 
   * https://blast.ncbi.nlm.nih.gov/Blast.cgi?PAGE_TYPE=BlastDocs&DOC_TYPE=Download

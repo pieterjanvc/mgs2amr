@@ -27,7 +27,7 @@ trap 'err_report ${LINENO}' ERR
 
 updateDBwhenError() {
 	#Update the DB
-  sqlite3 $database \
+  sqlite3 -cmd ".timeout 30000" $database \
 	"UPDATE scriptUse
 	SET end = '$(date '+%F %T')', status = 'error',
 	info = '$2'
@@ -95,7 +95,7 @@ elif ! grep -qE "^(0|1|-1)$" <<< $verbose; then
 fi
 
 #Register the start of the script in the DB
-runId=$(sqlite3 $database \
+runId=$(sqlite3 -cmd ".timeout 30000" $database \
 	"INSERT INTO scriptUse (pipelineId,scriptName,start,status) \
 	values(0,'annotation.sh','$(date '+%F %T')','running'); \
 	SELECT runId FROM scriptUse WHERE runId = last_insert_rowid()")
@@ -105,7 +105,7 @@ if [ ! -z ${pipelineId+x} ]; then
 fi
 	
 #Save the arguments with which the script was run
-sqlite3 $database \
+sqlite3 -cmd ".timeout 30000" $database \
 	"INSERT INTO scriptArguments (runId,scriptName,argument,value)
 	VALUES $pipelineArg
 	($runId,'annotation.sh','generateReport', '$generateReport'),	

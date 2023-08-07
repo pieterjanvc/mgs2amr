@@ -134,11 +134,11 @@ echo -e " - MetaCherchant is present"
 
 #Check if BLASTn is present
 if [ -z `command -v blastn` ]; then 
-	message="local BLASTn NOT present, "
+	message="local BLASTn NOT present"
 	echo -e " - BLASTn not found\n"\
 	"   Make sure blastn is installed and setup correctly (run setup.sh -h for details)"
 else
-	message="local BLASTn present, "
+	message="local BLASTn present"
 	echo -e " - Local BLASTn instance present"
 fi
 
@@ -148,12 +148,23 @@ if [ -z "$BLASTDB" ]; then
 fi
 
 if blastdbcmd -list "$BLASTDB" | grep -q Nucleotide ; then 
-	message=$message"nt DB detected"
+	message=$message", nt DB detected"
 	echo -e " - Nucleotide database found"
 else 
-	message=$message"nt DB not detected"
+	message=$message", nt DB not detected"
 	echo -e " - The \$BLASTDB variable is not found\n"\
 	"   Set by: export BLASTDB=/path/to/ntDBfolder"
+fi
+
+#Check if the taxid database is present
+
+if [ -f $BLASTDB/taxdb.bti ] ; then 
+	message=$message", taxonomy database found"
+	echo -e " - Taxonomy database found"
+else 
+	message=$message", taxonomy database not found"
+	echo -e " - The taxonomy database (taxid) is not found\n"\
+	"   Run `setup.sh -h` for more info"
 fi
 
 sqlite3 "$database" \

@@ -25,6 +25,7 @@ minBlastLength = 250
 
 #Load the ARG and the sample list to process
 myConn = dbConnect(SQLite(), database,  synchronous = NULL)
+sqliteSetBusyHandler(myConn, 30000)
 
 ARG = dbReadTable(myConn, "ARG") 
 
@@ -140,7 +141,8 @@ if(nrow(toProcess) == 0) {
     tool = "ARG_annotation.R"
     ) %>% select(runId,tool,timeStamp,actionId,actionName)
   
-  myConn = myConn = dbConnect(SQLite(), database, synchronous = NULL)
+  myConn = dbConnect(SQLite(), database, synchronous = NULL)
+  sqliteSetBusyHandler(myConn, 30000)
   
   q = dbSendStatement(
     myConn, 
@@ -162,7 +164,8 @@ if(nrow(toProcess) == 0) {
                      
     newLogs = data.frame(
       timeStamp = as.integer(Sys.time()), 
-      actionId = 1, actionName = "Start Annotation")
+      actionId = 1, actionName = sprintf("Start Annotation for pipelineId %i", 
+                                         toProcess$pipelineId[sampleIndex]))
                      
     #Process each sample
     tryCatch({
@@ -794,7 +797,7 @@ if(nrow(toProcess) == 0) {
       newLogs = rbind(newLogs, list(as.integer(Sys.time()), 12, 
                                     "Save results"))
       
-      myConn = myConn = dbConnect(SQLite(), database, synchronous = NULL)
+      myConn = dbConnect(SQLite(), database, synchronous = NULL)
       sqliteSetBusyHandler(myConn, 30000)
       
       #Add the ARGgroup to the detectedARG table (remove?)
