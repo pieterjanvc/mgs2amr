@@ -64,10 +64,16 @@ fi
 
 #Check if sqlite3 is installed
 if [ -z `command -v sqlite3` ]; then 
-    message="SQLite 3 does not seem to be installed.\n If it is, add 'sqlite3' folder to $PATH"
+    message="SQLite 3 does not seem to be installed.\n If it is, add 'sqlite3' folder to \$PATH"
 	echo -e "\e[91m$message\n" $baseFolder/settings.txt"\e[0m"
 	exit 1;
 fi;
+check=$(sqlite3 --version | grep -oP "(?<=3\.)\d+")
+if [ "$check" -lt "33" ]; then
+  message="SQLite 3 needs to be version 3.33 or higher. Please update"
+	echo -e "\e[91m$message\n\e[0m"
+	exit 1;
+fi
 echo -e " - SQLite 3 is present"
 
 #Check the mgs2amr database and create if needed
@@ -90,7 +96,7 @@ runId=$(sqlite3 "$database" \
 	
 #Check if R is installed
 if [ -z `command -v Rscript` ]; then 
-    message="R does not seem to be installed.\n If it is, add the 'Rscript' folder to $PATH"
+    message="R does not seem to be installed.\n If it is, add the 'Rscript' folder to \$PATH"
 	echo -e "\e[91m$message\n" $baseFolder/settings.txt"\e[0m"
 	updateDBwhenError "$runId" "R does not seem to be installed"
 	exit 1;
@@ -120,9 +126,9 @@ sqlite3 "$database" \
 echo -e " - usearch is present"
 
 #Check if MetaCherchant.sh can be reached
-if [ -z `command -v metacherchant.sh` ]; then 
+if [ -z `command -v $baseFolder/tools/metacherchant.sh` ]; then 
 	echo -e "\e[91mThe MetaCherchant script cannot be found\n"\
-	"Add the 'metacherchant.sh' folder to $PATH or create and alias\n"\
+	"Add the 'metacherchant.sh' folder to \$PATH or create and alias\n"\
 	$baseFolder/settings.txt"\e[0m"
 	updateDBwhenError "$runId" "MetaCherchant script not found"
 	exit 1;
@@ -149,7 +155,7 @@ fi
 
 if blastdbcmd -list "$BLASTDB" | grep -q Nucleotide ; then 
 	message=$message", nt DB detected"
-	echo -e " - Nucleotide database found"
+	echo -e "   - Nucleotide database found"
 else 
 	message=$message", nt DB not detected"
 	echo -e " - The \$BLASTDB variable is not found\n"\
@@ -160,7 +166,7 @@ fi
 
 if [ -f $BLASTDB/taxdb.bti ] ; then 
 	message=$message", taxonomy database found"
-	echo -e " - Taxonomy database found"
+	echo -e "   - Taxonomy database found"
 else 
 	message=$message", taxonomy database not found"
 	echo -e " - The taxonomy database (taxid) is not found\n"\
