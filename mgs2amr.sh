@@ -297,7 +297,7 @@ if [ -z "$MCsuccess" ]; then
 	VALUES($runId,'metacherchant.sh',$(date '+%s'),1,'Start MetaCherchant');"
 	
 	inputFile="$inputFile1 $inputFile2"
-	metacherchant.sh --tool environment-finder \
+	$baseFolder/tools/metacherchant.sh --tool environment-finder \
 		--k 31 \
 		--coverage=5 \
 		--reads $inputFile \
