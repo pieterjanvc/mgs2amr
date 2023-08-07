@@ -7,6 +7,7 @@
 !*.sh
 !*.sql
 !*.txt
+!*.md
 .Rproj.user
 /temp/*
 /sideStuff/*
