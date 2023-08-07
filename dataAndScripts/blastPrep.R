@@ -990,9 +990,9 @@ tryCatch({
             gfa_write(fullGFA, sprintf("%s/genesDetected/simplifiedGFA/%s_simplified.gfa",
                                      outputFolder, myGene))
             
-            return(list(gfa = fullGFA$segments %>% 
-                          filter((LN > minBlastLength) | (start != "0" & LN >= 75)) %>%
-                          mutate(geneId = myGene), tempStats = tempStats))
+            return(fullGFA$segments %>% 
+                     filter((LN > minBlastLength) | (start != "0" & LN >= 75)) %>%
+                     mutate(geneId = myGene))
 
       }
       
