@@ -608,52 +608,57 @@ if(nrow(toProcess) == 0) {
       }
       #GENOME DIST START CHECK
       
-      #Order the min - max positino of match in target genome
+      #Order the min - max position of match in target genome
       tempVar = blastOut %>% 
         group_by(geneId, accession, group) %>% 
         filter(any(start)) %>% 
         mutate(sMin = ifelse(hit_from < hit_to, hit_from, hit_to),
                sMax = ifelse(hit_from >= hit_to, hit_from, hit_to))
       
-      #Get the locations of all start matches in same genome
-      tempVar2 = tempVar %>% filter(start) %>% 
-        select(geneId, accession, group, sMin) %>% 
-        mutate(startGroup = 1:n()) %>% 
-        pivot_wider(names_from = startGroup, values_from = sMin) %>% 
-        ungroup()
+      if(nrow(tempVar) > 0){
       
-      #Add them to the data frame
-      tempVar  = tempVar %>% ungroup() %>% 
-        left_join(tempVar2, by = c("geneId", "accession", "group"))
-      
-      #For each segment, pick the closest start segment for comparison
-      tempVar$startGroup = 
-        apply(tempVar %>% select(sMin, matches(c("1", "2", "3"))), 1, function(x){
-          x = abs(x[-1] - x[1])
-          which(x == min(x, na.rm = T))
-        })
-      
-      #Only keep a segment if it is the correct distance from the start segment
-      tempVar = tempVar %>% 
-        group_by(geneId, accession, group, startGroup) %>% 
-        filter(any(start)) %>% 
-        mutate(
-          after = ifelse(sMin > sMin[start], T, F),
-          dist = ifelse(after, sMin - sMax[start], sMin[start] - sMax) + 29) %>%
-        ungroup() %>% 
-        left_join(pathData %>% select(segmentId, dist1 = dist) %>% 
-                    distinct(), by = "segmentId") %>% 
-        rowwise() %>% 
-        #Repeats can make segments shorter because loop is cut off, so provide some slack
-        mutate(correct = between(dist, dist1 -500, dist1 + 500) | start) %>% 
-        filter(correct) %>% 
-        group_by(geneId, accession, group, startGroup) %>% 
-        mutate(bestMatch = sum(bit_score)) %>% 
-        group_by(geneId, accession, group) %>% 
-        filter(bestMatch == max(bestMatch)) %>% 
-        group_by(segmentId, accession) %>% 
-        filter(bit_score == max(bit_score)) %>% 
-        slice(1) %>% ungroup()
+        #Get the locations of all start matches in same genome
+        tempVar2 = tempVar %>% filter(start) %>% 
+          select(geneId, accession, group, sMin) %>% 
+          mutate(startGroup = 1:n()) %>% 
+          pivot_wider(names_from = startGroup, values_from = sMin) %>% 
+          ungroup()
+        
+        #Add them to the data frame
+        tempVar  = tempVar %>% ungroup() %>% 
+          left_join(tempVar2, by = c("geneId", "accession", "group"))
+        
+        #For each segment, pick the closest start segment for comparison
+        tempVar$startGroup = 
+          apply(tempVar %>% select(sMin, matches(c("1", "2", "3"))), 1, function(x){
+            x = abs(x[-1] - x[1])
+            which(x == min(x, na.rm = T))
+          })
+        
+        #Only keep a segment if it is the correct distance from the start segment
+        tempVar = tempVar %>% 
+          group_by(geneId, accession, group, startGroup) %>% 
+          filter(any(start)) %>% 
+          mutate(
+            after = ifelse(sMin > sMin[start], T, F),
+            dist = ifelse(after, sMin - sMax[start], sMin[start] - sMax) + 29) %>%
+          ungroup() %>% 
+          left_join(pathData %>% select(segmentId, dist1 = dist) %>% 
+                      distinct(), by = "segmentId") %>% 
+          rowwise() %>% 
+          #Repeats can make segments shorter because loop is cut off, so provide some slack
+          mutate(correct = between(dist, dist1 -500, dist1 + 500) | start) %>% 
+          filter(correct) %>% 
+          group_by(geneId, accession, group, startGroup) %>% 
+          mutate(bestMatch = sum(bit_score)) %>% 
+          group_by(geneId, accession, group) %>% 
+          filter(bestMatch == max(bestMatch)) %>% 
+          group_by(segmentId, accession) %>% 
+          filter(bit_score == max(bit_score)) %>% 
+          slice(1) %>% ungroup()
+      } else {
+        tempVar  = tempVar %>% ungroup()
+      }
       
       wrongLocation = blastOut %>% filter(!segmentId %in% tempVar$segmentId)
       
@@ -942,4 +947,3 @@ if(nrow(toProcess) == 0) {
     
   }
 }
-
