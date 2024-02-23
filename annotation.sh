@@ -27,7 +27,7 @@ trap 'err_report ${LINENO}' ERR
 
 updateDBwhenError() {
 	#Update the DB
-  sqlite3 $database \
+  sqlite3 -cmd ".timeout 30000" $database \
 	"UPDATE scriptUse
 	SET end = '$(date '+%F %T')', status = 'error',
 	info = '$2'
@@ -35,7 +35,7 @@ updateDBwhenError() {
 }
 
 #Options when script is run
-while getopts ":hp:v:d:c:" opt; do
+while getopts ":hp:v:d:c:z:" opt; do
   case $opt in
 	h) echo -e "\n"
 	   awk '/--- ANNOTATION.SH ---/,/-- END ANNOTATION.SH ---/' $baseFolder/readme.txt
@@ -50,7 +50,9 @@ while getopts ":hp:v:d:c:" opt; do
     ;;
 	c) cpu="${OPTARG}"
     ;;
-    \?) echo "Unknown argument provided"
+	z) generateReport="${OPTARG}"
+    ;;
+	\?) echo "Unknown argument provided"
 	    exit
 	;;
   esac  
@@ -66,9 +68,15 @@ elif [ ! -f $database ]; then
 fi
 
 if [ -z ${generateReport+x} ]; then 
-	generateReport=`grep -oP "annotationHTMLreport\s*=\s*\K(.*)" $baseFolder/settings.txt`
+	generateReport=`grep -oP "generateZipResults\s*=\s*\K(.*)" $baseFolder/settings.txt`
 elif [ ! $(grep -iE "^(true|false|t|f)$" <<< $generateReport) ]; then	
-	echo -e "\n\e[91mThe generateHTMLReport option (-g) needs to be either true or false\e[0m"; exit 1;
+	echo -e "\n\e[91mThe generateZipResults option (-z) needs to be either true or false\e[0m"; exit 1;
+fi
+
+if [ $(grep -E "^[tT].*" <<< $generateReport) ]; then
+	generateReport=TRUE
+else 
+	generateReport=FALSE
 fi
 
 if [ -z ${cpu+x} ]; then 
@@ -87,7 +95,7 @@ elif ! grep -qE "^(0|1|-1)$" <<< $verbose; then
 fi
 
 #Register the start of the script in the DB
-runId=$(sqlite3 $database \
+runId=$(sqlite3 -cmd ".timeout 30000" $database \
 	"INSERT INTO scriptUse (pipelineId,scriptName,start,status) \
 	values(0,'annotation.sh','$(date '+%F %T')','running'); \
 	SELECT runId FROM scriptUse WHERE runId = last_insert_rowid()")
@@ -97,7 +105,7 @@ if [ ! -z ${pipelineId+x} ]; then
 fi
 	
 #Save the arguments with which the script was run
-sqlite3 $database \
+sqlite3 -cmd ".timeout 30000" $database \
 	"INSERT INTO scriptArguments (runId,scriptName,argument,value)
 	VALUES $pipelineArg
 	($runId,'annotation.sh','generateReport', '$generateReport'),	

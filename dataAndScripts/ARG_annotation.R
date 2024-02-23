@@ -6,7 +6,7 @@ suppressPackageStartupMessages(library(gfaTools))
 suppressPackageStartupMessages(library(tidyverse, warn.conflicts = FALSE))
 suppressPackageStartupMessages(library(RSQLite))
 # suppressPackageStartupMessages(library(igraph))
-suppressPackageStartupMessages(library(rmarkdown))
+# suppressPackageStartupMessages(library(rmarkdown))
 # suppressPackageStartupMessages(library(doParallel))
 suppressPackageStartupMessages(library(foreach))
 
@@ -24,7 +24,8 @@ forceRedo = T
 minBlastLength = 250
 
 #Load the ARG and the sample list to process
-myConn = myConn = dbConnect(SQLite(), database,  synchronous = NULL)
+myConn = dbConnect(SQLite(), database,  synchronous = NULL)
+sqliteSetBusyHandler(myConn, 30000)
 
 ARG = dbReadTable(myConn, "ARG") 
 
@@ -140,7 +141,8 @@ if(nrow(toProcess) == 0) {
     tool = "ARG_annotation.R"
     ) %>% select(runId,tool,timeStamp,actionId,actionName)
   
-  myConn = myConn = dbConnect(SQLite(), database, synchronous = NULL)
+  myConn = dbConnect(SQLite(), database, synchronous = NULL)
+  sqliteSetBusyHandler(myConn, 30000)
   
   q = dbSendStatement(
     myConn, 
@@ -162,7 +164,8 @@ if(nrow(toProcess) == 0) {
                      
     newLogs = data.frame(
       timeStamp = as.integer(Sys.time()), 
-      actionId = 1, actionName = "Start Annotation")
+      actionId = 1, actionName = sprintf("Start Annotation for pipelineId %i", 
+                                         toProcess$pipelineId[sampleIndex]))
                      
     #Process each sample
     tryCatch({
@@ -566,41 +569,43 @@ if(nrow(toProcess) == 0) {
       # Create the start hit in the genome by looking at the positions of the matches on 
       # either side of the start segment, and 
       addSeedHit = addSeedHit %>% select(geneId:accession, hit_from, hit_to) %>% 
-        filter(all(order != 1)) %>%
-        mutate(x = hit_from == max(c(hit_from, hit_to)) | 
-                 hit_to == max(c(hit_from, hit_to))) %>% 
-        group_by(geneId, accession, orientation) %>% 
-        mutate(x = ifelse(any(x == T), T, F)) %>% 
-        ungroup() %>% rowwise() %>% 
-        mutate(
-          hit_from = ifelse(x, hit_from - dist, hit_from + dist),
-          hit_to = ifelse(x, hit_to - dist, hit_to + dist),
-          d1 = ifelse(x, min(hit_from, hit_to), max(hit_from, hit_to)),
-          geneId = as.integer(geneId)) %>% 
-        group_by(geneId, accession) %>%
-        mutate(d2 = mean(d1[x]) - mean(d1[!x])) %>% ungroup() %>% 
-        left_join(ARG %>% select(geneId, nBases), by = "geneId") %>% 
-        mutate(d3 = abs(d2 - nBases) - 30) %>% 
-        filter(!is.na(d3 >= 0)) %>% filter(d3 <= 250) %>% 
-        group_by(geneId, accession, group, nBases) %>% 
-        summarise(    d1 = min(d1), d2 = max(d1), .groups = "drop") %>% mutate(
-          hit_from = d1 + ((d1 - d2) - nBases) / 2,
-          hit_to = d2 - ((d1 - d2) - nBases) / 2
-        )
-      
-      addSeedHit = otherSeedHits %>% filter(geneId %in% addSeedHit$geneId) %>% 
-        left_join(addSeedHit %>% 
-                    select(geneId, accession, hit_from, hit_to, group),
-                  by = "geneId") %>% 
-        left_join(
-          blastOut %>% 
-            select(accession, taxid, genus, species, extra, 
-                   subspecies, plasmid) %>% 
-            distinct(), by  = "accession")
-      
-      #Add the new start 'matches' to the blast output
-      blastOut = bind_rows(blastOut, addSeedHit)
-      
+        filter(all(order != 1))
+      if(nrow(addSeedHit) > 0){
+        addSeedHit = addSeedHit %>%
+          mutate(x = hit_from == max(c(hit_from, hit_to)) | 
+                   hit_to == max(c(hit_from, hit_to))) %>% 
+          group_by(geneId, accession, orientation) %>% 
+          mutate(x = ifelse(any(x == T), T, F)) %>% 
+          ungroup() %>% rowwise() %>% 
+          mutate(
+            hit_from = ifelse(x, hit_from - dist, hit_from + dist),
+            hit_to = ifelse(x, hit_to - dist, hit_to + dist),
+            d1 = ifelse(x, min(hit_from, hit_to), max(hit_from, hit_to)),
+            geneId = as.integer(geneId)) %>% 
+          group_by(geneId, accession) %>%
+          mutate(d2 = mean(d1[x]) - mean(d1[!x])) %>% ungroup() %>% 
+          left_join(ARG %>% select(geneId, nBases), by = "geneId") %>% 
+          mutate(d3 = abs(d2 - nBases) - 30) %>% 
+          filter(!is.na(d3 >= 0)) %>% filter(d3 <= 250) %>% 
+          group_by(geneId, accession, group, nBases) %>% 
+          summarise(    d1 = min(d1), d2 = max(d1), .groups = "drop") %>% mutate(
+            hit_from = d1 + ((d1 - d2) - nBases) / 2,
+            hit_to = d2 - ((d1 - d2) - nBases) / 2
+          )
+        
+        addSeedHit = otherSeedHits %>% filter(geneId %in% addSeedHit$geneId) %>% 
+          left_join(addSeedHit %>% 
+                      select(geneId, accession, hit_from, hit_to, group),
+                    by = "geneId") %>% 
+          left_join(
+            blastOut %>% 
+              select(accession, taxid, genus, species, extra, 
+                     subspecies, plasmid) %>% 
+              distinct(), by  = "accession")
+        
+        #Add the new start 'matches' to the blast output
+        blastOut = bind_rows(blastOut, addSeedHit)
+      }
       #GENOME DIST START CHECK
       
       #Order the min - max positino of match in target genome
@@ -792,7 +797,7 @@ if(nrow(toProcess) == 0) {
       newLogs = rbind(newLogs, list(as.integer(Sys.time()), 12, 
                                     "Save results"))
       
-      myConn = myConn = dbConnect(SQLite(), database, synchronous = NULL)
+      myConn = dbConnect(SQLite(), database, synchronous = NULL)
       sqliteSetBusyHandler(myConn, 30000)
       
       #Add the ARGgroup to the detectedARG table (remove?)
@@ -847,6 +852,49 @@ if(nrow(toProcess) == 0) {
                      fullPath, extraBits, path0, maxOrder0, path1, maxOrder1, 
                      pathGroup) %>% as.list() %>% unname())
       q = dbClearResult(q)
+      
+      #Write output file to be used as alternative input for Explorer App
+      if(generateReport){
+        td = tempdir()
+        dir.create(sprintf("%s/results_id%i", td, myPipelineId), F)
+        
+        file1 = tbl(myConn, "pipeline") %>%
+          filter(pipelineId == myPipelineId) %>% 
+          collect()
+        write_csv(file1, sprintf("%s/results_id%i/info.csv", td, myPipelineId))
+        
+        
+        file2 = tbl(myConn, "detectedARG") %>%
+          filter(pipelineId == myPipelineId) %>% 
+          # select(-gene, -subtype) %>% 
+          collect() %>% 
+          left_join(ARG %>% select(-type), by = "geneId") %>% 
+          mutate(
+            cover = ifelse(type == "noFragments", cover1, cover2),
+            across(c(cover, startPerc), function(x) round(x * 100, 2)),
+            startDepth = round(startDepth, 2)) %>% 
+          arrange(desc(cover), desc(startDepth))
+        write_csv(file2, sprintf("%s/results_id%i/detectedARG.csv", td,myPipelineId))
+        
+        file3 = tbl(myConn, "annotation") %>%
+          filter(pipelineId == myPipelineId) %>%
+          left_join(tbl(myConn, "bactStrains"), by = "accession") %>%
+          left_join(tbl(myConn, "bactTaxa"), by = "taxid") %>% 
+          collect() %>% 
+          group_by(geneId) %>% mutate(
+            top = fullPath / max(fullPath),
+            depth = KC / LN
+          ) %>% ungroup() %>% left_join(
+            file2 %>% select(geneId, gene, subtype, cover, type), 
+            by = "geneId") %>% 
+          mutate(plasmid = as.logical(plasmid))
+        write_csv(file3, sprintf("%s/results_id%i/annotation.csv", td, myPipelineId))
+        
+        system(sprintf("tar -czvf %s --directory %s %s",
+               sprintf("%s/results_id%i.tar.gz", sample, myPipelineId),td,
+               sprintf("results_id%i", myPipelineId)), intern = F,
+               show.output.on.console = F, ignore.stdout = T)
+      }
       
       dbDisconnect(myConn)
       

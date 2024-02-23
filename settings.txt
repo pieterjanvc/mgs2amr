@@ -11,7 +11,8 @@ mgs2amrStep=4
 
 --- localBlast.sh
 localBlastVerbose=1
-localBlastDB=/mnt/meta2amrData/ncbi/blastdb
+localBlastDB=
 
 --- annotation.sh
 annotationVerbose=1
+generateZipResults=TRUE

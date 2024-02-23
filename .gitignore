@@ -1,11 +1,13 @@
 *
 !*/
 !.gitignore
+!.gitattributes
 !*.R
 !*.rmd
 !*.sh
 !*.sql
 !*.txt
+!*.md
 .Rproj.user
 /temp/*
 /sideStuff/*
@@ -14,3 +16,4 @@ test*
 working_*
 /backup/*
 settings.txt
+backup*

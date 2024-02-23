@@ -36,7 +36,7 @@ updateDBwhenError() {
 }
 
 #Options when script is run
-while getopts ":hi:j:o:n:fs:v:p:m:c:d:" opt; do
+while getopts ":hi:j:o:n:fs:v:p:m:c:d:z:" opt; do
   case $opt in
 	h) echo -e "\n"
 	   awk '/--- mgs2amr.sh ---/,/-- END mgs2amr.sh ---/' $baseFolder/readme.txt  
@@ -63,7 +63,9 @@ while getopts ":hi:j:o:n:fs:v:p:m:c:d:" opt; do
     ;;
 	c) cpu="${OPTARG}"
     ;;
-    d) database="${OPTARG}"
+	d) database="${OPTARG}"
+    ;;
+	z) generateReport="${OPTARG}"
     ;;
     \?) echo "Unknown argument provided"
 	    exit
@@ -116,6 +118,12 @@ if [ -z `command -v usearch` ]; then
 else
 	usearch=`which usearch`
 fi;
+
+if [ -z ${generateReport+x} ]; then 
+	generateReport=`grep -oP "generateZipResults\s*=\s*\K(.*)" $baseFolder/settings.txt`
+elif [ ! $(grep -iE "^(true|false|t|f)$" <<< $generateReport) ]; then	
+	echo -e "\n\e[91mThe generateZipResults option (-z) needs to be either true or false\e[0m"; exit 1;
+fi
 
 #Check if to create new pipelineId or check provided one
 if [ -z ${pipelineId+x} ]; then 	
@@ -289,7 +297,7 @@ if [ -z "$MCsuccess" ]; then
 	VALUES($runId,'metacherchant.sh',$(date '+%s'),1,'Start MetaCherchant');"
 	
 	inputFile="$inputFile1 $inputFile2"
-	metacherchant.sh --tool environment-finder \
+	$baseFolder/tools/metacherchant.sh --tool environment-finder \
 		--k 31 \
 		--coverage=5 \
 		--reads $inputFile \
@@ -394,8 +402,8 @@ if [ $step -gt 3 ]; then
 		echo "--- STEP 4: ANNOTATION ---"
 		echo "**************************"
 	fi
-	
-	$baseFolder/annotation.sh -v "$verbose" -p "$pipelineId" -d "$database" -c "$cpu"
+
+	$baseFolder/annotation.sh -v "$verbose" -p "$pipelineId" -d "$database" -c "$cpu" -z "$generateReport"
 fi
 
 
