@@ -518,7 +518,7 @@ tryCatch({
         #check the overlap of identical segments between files
         simMat = fragments$segments %>%
           mutate(val = 1) %>%
-          pivot_wider(sequence, names_from = geneId, values_from = LN,
+          pivot_wider(id_cols = sequence, names_from = geneId, values_from = LN,
                       values_fill = 0, values_fn = length) %>% select(-sequence) %>%
           as.matrix()
         
@@ -669,7 +669,7 @@ tryCatch({
         simMat = noFragments$segments %>%
           filter(!str_detect(name, "_start$")) %>%
           mutate(val = 1) %>%
-          pivot_wider(sequence, names_from = geneId, values_from = LN,
+          pivot_wider(id_cols = sequence, names_from = geneId, values_from = LN,
                       values_fill = 0) %>% select(-sequence) %>%
           as.matrix()
         
@@ -996,7 +996,7 @@ tryCatch({
 
       }
       
-      blastSegments = bind_rows(lapply(blastSegments, "[[", 1))
+      #blastSegments = bind_rows(lapply(blastSegments, "[[", 1))
       
       if(verbose > 0){cat("done\n")}
 
