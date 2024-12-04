@@ -127,7 +127,7 @@ server <- function(input, output, session) {
     } else {
       
       fileName = str_match(filePath$datapath, "([^/]+)\\.tar\\.gz$")[2]
-      td = tempdir()
+      td = tempdir(check = T)
       untar(filePath$datapath, exdir = td)
       td = sprintf("%s/%s", td, fileName)
       myFiles = list.files(td)
