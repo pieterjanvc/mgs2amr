@@ -140,7 +140,8 @@ server <- function(input, output, session) {
       
       isolate(tempDir(list(dir = td, files = myFiles, name = fileName)))
       
-      pipelineTable = read_csv(sprintf("%s/%s", td, myFiles[str_detect(myFiles, "info")])) %>% 
+      pipelineTable = read_csv(sprintf("%s/%s", td, myFiles[str_detect(myFiles, "info")]),
+                               show_col_types = FALSE) %>% 
         select(pipelineId, name, start = startTimestamp, modified = modifiedTimestamp)
     }
     
@@ -163,11 +164,14 @@ server <- function(input, output, session) {
     if(!is.null(tempDir())){
 
       myInfo = read_csv(sprintf(
-        "%s/%s", tempDir()$dir, tempDir()$files[str_detect(tempDir()$files, "info")]))
+        "%s/%s", tempDir()$dir, tempDir()$files[str_detect(tempDir()$files, "info")]),
+        show_col_types = FALSE)
       detectedARG = read_csv(sprintf(
-        "%s/%s", tempDir()$dir, tempDir()$files[str_detect(tempDir()$files, "detectedARG")]))
+        "%s/%s", tempDir()$dir, tempDir()$files[str_detect(tempDir()$files, "detectedARG")]),
+        show_col_types = FALSE)
       output = read_csv(sprintf(
-        "%s/%s", tempDir()$dir, tempDir()$files[str_detect(tempDir()$files, "annotation")]))
+        "%s/%s", tempDir()$dir, tempDir()$files[str_detect(tempDir()$files, "annotation")]),
+        show_col_types = FALSE)
 
     } else {
 
@@ -381,14 +385,10 @@ server <- function(input, output, session) {
       slice(1) %>% 
       group_by(geneId) %>% mutate(fullPath = fullPath / max(fullPath)) %>% 
       ungroup() %>% select(genus, gene, fullPath) %>% 
-      pivot_wider(genus, names_from = "gene", values_from = fullPath,
+      pivot_wider(id_cols = genus, names_from = "gene", values_from = fullPath,
                   values_fill = 0) %>% as.data.frame()
     
     rownames(heatmapData) = heatmapData$genus
-    
-    # test <<- heatmapData
-    # test = rbind(test, test)
-    # heatmapData = test
     
     if(nrow(heatmapData) > 1){
       hm = heatmap(heatmapData %>% select(-genus) %>% as.matrix())
@@ -451,7 +451,7 @@ server <- function(input, output, session) {
     }
 
     bactTable %>%
-      mutate(across(c(totalScore, gDepth), round, digits = 0))
+      mutate(across(c(totalScore, gDepth), function(x){round(x, digits = 0)}))
     
     # bactTable = testData$output %>%
     #   group_by(genus, species) %>% 
