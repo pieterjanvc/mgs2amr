@@ -17,3 +17,5 @@ working_*
 /backup/*
 settings.txt
 backup*
+/tools/*
+/local/*

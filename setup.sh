@@ -9,7 +9,7 @@ exec 2>$baseFolder/dataAndScripts/lastError
 #When error occurs, notify and exit
 err_report() {
 
-    #Use the line number where error occured and the saved error message
+    #Use the line number where error occurred and the saved error message
     errMsg=`cat $baseFolder/dataAndScripts/lastError` 
 	
 	#Insert into DB (make sure quoting is all right)
@@ -59,7 +59,7 @@ echo "1) Check dependencies..."
 
 #Check if settings file exists
 if [ ! -f "$baseFolder/settings.txt" ]; then
-	cp $baseFolder/dataAndScripts/backupSettings.txt $baseFolder/settings.txt
+	cp $baseFolder/dataAndScripts/defaultSettings.txt $baseFolder/settings.txt
 fi
 
 #Check if sqlite3 is installed
@@ -105,8 +105,8 @@ sqlite3 "$database" \
 	"INSERT INTO logs (runId,tool,timeStamp,actionId,actionName)
 	VALUES($runId,'setup.sh',$(date '+%s'),1,'R installed')"
 
-#Check if the correct R packages are installed
-Rscript $baseFolder/dataAndScripts/setup.R
+#Check if the correct R packages are installed and assets are available
+Rscript $baseFolder/dataAndScripts/setup.R "$baseFolder"
 sqlite3 "$database" \
 	"INSERT INTO logs (runId,tool,timeStamp,actionId,actionName)
 	VALUES($runId,'setup.R',$(date '+%s'),2,'R packages installed')"
@@ -179,7 +179,7 @@ sqlite3 "$database" \
 
 #Check if pigz is installed else use gzip (slower but same result)
 if [ -z `command -v pigz` ]; then 
-	message="pigz not found. gzip used instead"
+	message="pigz not found. gzip will be used instead (slower)"
 else
 	message="pigz present"
 fi;
