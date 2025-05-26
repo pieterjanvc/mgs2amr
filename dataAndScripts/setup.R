@@ -2,6 +2,51 @@
 # ---- MGS2AMR Setup ----
 #************************
 
+args = commandArgs(trailingOnly = TRUE)
+folder = file.path(normalizePath(args[[1]]), "dataAndScripts")
+
+# Check assets
+url = "https://github.com/pieterjanvc/mgs2amr/releases/download/assets_v1.0.0/mgs2amr_assets.tar.gz"
+
+files = c(
+  file.path(folder, "bact.txids"),
+  file.path(folder, "ARG.fasta"),
+  file.path(folder, "bactGenomeSize.csv"),
+  file.path(folder, "testData", "testOutput.fastq.gz"),
+  file.path(folder, "..", "tools", "metacherchant.sh"),
+  file.path(folder, "..", "tools", "gfaTools_v0.9.0-beta.tar.gz")
+)
+
+if (!all(sapply(files, file.exists))) {
+  cat(" - Downloading missinng assets ... ")
+  
+  dir.create(file.path(folder, "..", "tools"), showWarnings = F)
+  dir.create(file.path(folder, "testData"), showWarnings = F)
+
+  # Download the data
+  download.file(url, file.path(folder, "assets.tar.gz"), mode = "wb", quiet = T)
+  untar(file.path(folder, "assets.tar.gz"), exdir = folder)
+  unlink(file.path(folder, "assets.tar.gz"))
+
+  dir.create(file.path(folder, "..", "tools"), showWarnings = F)
+  # Put in correct folders
+  x <- file.rename(
+    file.path(folder, "testOutput.fastq.gz"),
+    file.path(folder, "testData", "testOutput.fastq.gz")
+  )
+  x <- file.rename(
+    file.path(folder, "metacherchant.sh"),
+    file.path(folder, "..", "tools", "metacherchant.sh")
+  )
+  x <- file.rename(
+    file.path(folder, "gfaTools_v0.9.0-beta.tar.gz"),
+    file.path(folder, "..", "tools", "gfaTools_v0.9.0-beta.tar.gz")
+  )
+  cat("done\n")
+} else {
+	cat(" - All assets present\n")
+}
+
 #Check R version
 if(as.integer(R.version$major) < 4){
   warning(paste0("R version 4.0 or higher is recommended.\n",
@@ -24,8 +69,10 @@ if(!stringr::str_detect(as.character(packageVersion("dplyr")), "^1")){
   stop("The dplyr package needs to be version 1.0+")
 }
 
+# Check gfaTools
 if(! "gfaTools" %in% installed.packages()[,1]){
+  packagePath <- normalizePath(file.path(folder, "..", "tools", "gfaTools_v0.9.0-beta.tar.gz"),mustWork = T)
   stop("The 'gfaTools' package needs to be installed manually (not on CRAN).",
-       "It can be found in the mgs2amr root folder.\n", "Open R and run:",
-       "\n install.packages(\"gfaTools_<version>.tar.gz\")")
+       "It can be found in the mgs2amr/tools/ folder.\n", "Open R and run:",
+       sprintf("\n install.packages(\"%s\")"), packagePath)
 }
