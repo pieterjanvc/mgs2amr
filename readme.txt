@@ -9,9 +9,10 @@
 --- SETUP.SH ---
 Run the setup.sh script to verify all dependencies and to test the pipeline.
 
-IMPORTANT: In order to run this pipeline, you must download and extract 
- the zip file from the release containing all necessary files and data.
- The tracked files on GitHub only contain scripts and not other data.
+IMPORTANT: In order to run this pipeline, you must first clone the repo (main branch)
+ and make sure you have all dependencies installed, and then run `setup.sh` to check 
+ everything and download any missing assets. If your machine has no internet 
+ connection, you must manually add the assets found in the GitHub release section
  
  This pipeline will have to be run in a Linux environment 
 
